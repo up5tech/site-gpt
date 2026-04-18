@@ -35,7 +35,7 @@ export function Register() {
     <div
       style={{
         maxWidth: 480,
-        margin: '80px auto',
+        margin: '16px auto',
         padding: '0 24px',
       }}
     >

@@ -33,7 +33,7 @@ export const getAuthToken = (): string | null => {
 // API functions
 export const register = (data: any) => api.post('/register', data);
 export const login = (email: string, password: string) =>
-  api.post<LoginResponse>('/token', { username: email, password });
+  api.post<LoginResponse>('/token', { email: email, password });
 export const chat = (q: string) => api.get(`/chat?q=${encodeURIComponent(q)}`);
 export const ingest = (sitemapUrl: string) =>
   api.post('/ingest', { sitemap_url: sitemapUrl });
