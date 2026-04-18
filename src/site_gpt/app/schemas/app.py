@@ -1,5 +1,6 @@
 from datetime import datetime
 from typing import Any, List
+from uuid import UUID
 
 from pydantic import BaseModel
 
@@ -7,11 +8,11 @@ from pydantic import BaseModel
 class PaginatedResponse(BaseModel):
     total: int
     page: int
-    size: int
+    limit: int
     items: List[Any]
 
 
 class ResponseBase(BaseModel):
-    id: int
+    id: UUID
     created_at: datetime
     updated_at: datetime
