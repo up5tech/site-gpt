@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 
-from site_gpt.app.schemas.app import ResponseBase
+from site_gpt.app.schemas.app import PaginatedResponse, ResponseBase
 
 
 class CompanyBase(BaseModel):
@@ -9,7 +9,11 @@ class CompanyBase(BaseModel):
 
 
 class Company(CompanyBase, ResponseBase):
-    pass
+    model_config = {"from_attributes": True}
+
+
+class CompanyPaginated(PaginatedResponse):
+    items: list[Company]
 
 
 class CompanyCreate(CompanyBase):
@@ -18,3 +22,11 @@ class CompanyCreate(CompanyBase):
 
 class CompanyUpdate(CompanyBase):
     pass
+
+
+class CompanyRegister(BaseModel):
+    company_name: str
+    first_name: str
+    last_name: str
+    email: str
+    password: str

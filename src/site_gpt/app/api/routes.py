@@ -1,14 +1,16 @@
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
 
 from site_gpt.app import models
 from site_gpt.app.core.auth import (
-    hash_password,
     hash_password,
     verify_password,
     create_access_token,
 )
 from site_gpt.app.core.config import JWT_SECRET_KEY, JWT_ALGORITHM
 from site_gpt.app.db.session import get_db
+from site_gpt.app.schemas.company import CompanyRegister
+from site_gpt.app.schemas.user import UserLogin
 from site_gpt.app.services.crawler import load_sitemap
 from site_gpt.app.services.ingest import ingest_documents, split_docs
 from site_gpt.app.services.rag import ask
@@ -36,22 +38,26 @@ def health():
 
 @router.post("/api/register")
 def register(
-    company_name: str,
-    first_name: str,
-    last_name: str,
-    email: str,
-    password: str,
-    db: models.Session = Depends(get_db),
+    registration: CompanyRegister,
+    db: Session = Depends(get_db),
 ):
     # check params
-    if not company_name or not first_name or not last_name or not email or not password:
+    if (
+        not registration.company_name
+        or not registration.first_name
+        or not registration.last_name
+        or not registration.email
+        or not registration.password
+    ):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="All fields are required",
         )
     # check if company exists
     company = (
-        db.query(models.Company).filter(models.Company.name == company_name).first()
+        db.query(models.Company)
+        .filter(models.Company.name == registration.company_name)
+        .first()
     )
     if company:
         raise HTTPException(
@@ -59,16 +65,16 @@ def register(
             detail="Company already exists",
         )
     # create company
-    company = models.Company(name=company_name)
+    company = models.Company(name=registration.company_name, description="")
     db.add(company)
     db.commit()
-    hashed_password = hash_password(password)
+    hashed_password = hash_password(registration.password)
     user = models.User(
-        email=email,
+        email=registration.email,
         password_hash=hashed_password,
         company_id=company.id,
-        first_name=first_name,
-        last_name=last_name,
+        first_name=registration.first_name,
+        last_name=registration.last_name,
     )
     db.add(user)
     db.commit()
@@ -76,10 +82,10 @@ def register(
 
 
 @router.post("/api/token")
-def get_token(username: str, password: str, db: models.Session = Depends(get_db)):
-    user = db.query(models.User).filter(models.User.email == username).first()
+def get_token(login: UserLogin, db: Session = Depends(get_db)):
+    user = db.query(models.User).filter(models.User.email == login.email).first()
 
-    if not user or not verify_password(password, user.password_hash):
+    if not user or not verify_password(login.password, user.password_hash):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",

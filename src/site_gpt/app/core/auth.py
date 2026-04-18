@@ -13,12 +13,25 @@ from site_gpt.app.db.session import get_db
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
+def _truncate_password(password: str, max_bytes: int = 72) -> str:
+    encoded = password.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return password
+
+    truncated = encoded[:max_bytes]
+    while truncated and (truncated[-1] & 0xC0) == 0x80:
+        truncated = truncated[:-1]
+    return truncated.decode("utf-8", errors="ignore")
+
+
 def hash_password(password: str) -> str:
-    return pwd_context.hash(password)
+    truncated_password = _truncate_password(password)
+    return pwd_context.hash(truncated_password)
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return pwd_context.verify(plain_password, hashed_password)
+    truncated_password = _truncate_password(plain_password)
+    return pwd_context.verify(truncated_password, hashed_password)
 
 
 def create_access_token(
