@@ -75,6 +75,8 @@ def register(
         company_id=company.id,
         first_name=registration.first_name,
         last_name=registration.last_name,
+        role="admin",
+        status="active",
     )
     db.add(user)
     db.commit()
@@ -83,7 +85,11 @@ def register(
 
 @router.post("/api/token")
 def get_token(login: UserLogin, db: Session = Depends(get_db)):
-    user = db.query(models.User).filter(models.User.email == login.email).first()
+    user = (
+        db.query(models.User)
+        .filter(models.User.email == login.email, models.User.status == "active")
+        .first()
+    )
 
     if not user or not verify_password(login.password, user.password_hash):
         raise HTTPException(

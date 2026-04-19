@@ -63,11 +63,37 @@ def get_current_user(
             detail="Invalid token",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    user = db.query(models.User).filter(models.User.id == user_id).first()
+    user = (
+        db.query(models.User)
+        .filter(models.User.id == user_id, models.User.status == "active")
+        .first()
+    )
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found",
             headers={"WWW-Authenticate": "Bearer"},
+        )
+    return user
+
+
+def get_manager_user(
+    user=Depends(get_current_user),
+):
+    if user.role != "admin" and user.role != "manager":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not enough permissions",
+        )
+    return user
+
+
+def get_admin_user(
+    user=Depends(get_current_user),
+):
+    if user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not enough permissions",
         )
     return user

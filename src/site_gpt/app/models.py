@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import ForeignKey, Index, String, Text
@@ -12,6 +13,8 @@ class Company(BaseModel):
 
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(nullable=True)
+    expired_at: Mapped[datetime] = mapped_column(nullable=True)
 
 
 class User(BaseModel):
@@ -25,6 +28,8 @@ class User(BaseModel):
     first_name: Mapped[str] = mapped_column(String(255), nullable=False)
     last_name: Mapped[str] = mapped_column(String(255), nullable=False)
     phone: Mapped[str] = mapped_column(String(20), nullable=True)
+    role: Mapped[str] = mapped_column(String(50), nullable=True, default="user")
+    status: Mapped[str] = mapped_column(String(50), nullable=True, default="active")
 
 
 class Setting(BaseModel):
