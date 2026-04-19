@@ -32,13 +32,27 @@ export const getAuthToken = (): string | null => {
 
 // API functions
 export const register = (data: any) => api.post('/register', data);
+
 export const login = (email: string, password: string) =>
   api.post<LoginResponse>('/token', { email: email, password });
+
 export const chat = (q: string) => api.get(`/chat?q=${encodeURIComponent(q)}`);
+
 export const ingest = (sitemapUrl: string) =>
   api.post('/ingest', { sitemap_url: sitemapUrl });
+
 export const getCompanies = (
   params: { name?: string; page?: number; limit?: number } = {},
 ) => api.get('/companies', { params });
+
+export const getCurrentCompany = () => api.get(`/companies/current`);
+
+export const getCompanyUsers = (params: {
+  name?: string;
+  role?: string;
+  email?: string;
+  page?: number;
+  limit?: number;
+}) => api.get(`/companies/users`, { params });
 
 export type { LoginResponse } from '../types/api';

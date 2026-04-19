@@ -11,9 +11,9 @@ import {
 } from 'antd';
 import { useState } from 'react';
 import { Chat } from '../components/Chat';
-import { CompanyTable } from '../components/CompanyTable';
 import { useAuth } from '../context/AuthContext';
 // ChatProvider wrapped in App.tsx, no local needed
+import { UserTable } from '@/components/UserTable';
 import { ChatProvider } from '@/context/ChatContext';
 import api from '../utils/api';
 
@@ -112,10 +112,10 @@ export function Dashboard() {
 
         <Col xs={24} lg={12}>
           <Card
-            title={<div style={{ fontWeight: 600 }}>Your Companies</div>}
+            title={<div style={{ fontWeight: 600 }}>Your Users</div>}
             style={{ height: '100%' }}
           >
-            <CompanyTable />
+            <UserTable />
           </Card>
         </Col>
 

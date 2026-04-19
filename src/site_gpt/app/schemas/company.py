@@ -1,19 +1,21 @@
+from uuid import UUID
+from datetime import datetime
+
 from pydantic import BaseModel
 
-from site_gpt.app.schemas.app import PaginatedResponse, ResponseBase
+from site_gpt.app.schemas.app import ResponseBase
 
 
 class CompanyBase(BaseModel):
+    id: UUID
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
     name: str
     description: str
 
 
-class Company(CompanyBase, ResponseBase):
+class CompanyRes(CompanyBase, ResponseBase):
     model_config = {"from_attributes": True}
-
-
-class CompanyPaginated(PaginatedResponse):
-    items: list[Company]
 
 
 class CompanyCreate(CompanyBase):

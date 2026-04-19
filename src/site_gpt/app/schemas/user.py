@@ -1,18 +1,26 @@
+from datetime import datetime
+from uuid import UUID
+
 from pydantic import BaseModel
 
 from site_gpt.app.schemas.app import ResponseBase
 
 
 class UserBase(BaseModel):
-    company_id: int
+    id: UUID
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    company_id: UUID
     email: str
     phone: str | None = None
     first_name: str
     last_name: str
+    role: str | None = None
+    status: str | None = None
 
 
-class User(UserBase, ResponseBase):
-    pass
+class UserRes(UserBase, ResponseBase):
+    model_config = {"from_attributes": True}
 
 
 class UserCreate(UserBase):

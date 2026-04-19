@@ -1,5 +1,5 @@
 export interface Company {
-  id: number;
+  id: string;
   name: string;
   description: string;
   created_at: string;
@@ -13,12 +13,15 @@ export interface CompanyPaginated {
 }
 
 export interface User {
-  id: number;
-  company_id: number;
+  id: string;
+  created_at: string;
+  company_id: string;
   email: string;
   phone?: string;
   first_name: string;
   last_name: string;
+  role?: string;
+  status?: string;
 }
 
 export interface ChatResponse {
