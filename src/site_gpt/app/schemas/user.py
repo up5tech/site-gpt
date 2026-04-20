@@ -7,7 +7,7 @@ from site_gpt.app.schemas.app import ResponseBase
 
 
 class UserBase(BaseModel):
-    id: UUID
+    id: UUID | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
     company_id: UUID
@@ -27,8 +27,13 @@ class UserCreate(UserBase):
     password: str
 
 
-class UserUpdate(UserBase):
-    pass
+class UserUpdate(BaseModel):
+    email: str | None = None
+    first_name: str | None = None
+    last_name: str | None = None
+    phone: str | None = None
+    role: str | None = None
+    status: str | None = None
 
 
 class UserChangePassword(BaseModel):

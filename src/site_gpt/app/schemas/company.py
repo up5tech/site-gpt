@@ -7,11 +7,13 @@ from site_gpt.app.schemas.app import ResponseBase
 
 
 class CompanyBase(BaseModel):
-    id: UUID
+    id: UUID | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
     name: str
     description: str
+    started_at: datetime | None = None
+    expired_at: datetime | None = None
 
 
 class CompanyRes(CompanyBase, ResponseBase):
@@ -22,8 +24,11 @@ class CompanyCreate(CompanyBase):
     pass
 
 
-class CompanyUpdate(CompanyBase):
-    pass
+class CompanyUpdate(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    started_at: datetime | None = None
+    expired_at: datetime | None = None
 
 
 class CompanyRegister(BaseModel):

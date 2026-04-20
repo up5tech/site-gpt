@@ -26,7 +26,9 @@ dependencies = [
     "alembic (>=1.18.4,<2.0.0)",
     "pgvector (==0.3.2)",
     "passlib[bcrypt] (>=1.7.4,<2.0.0)",
-    "argon2-cffi (>=25.1.0,<26.0.0)"
+    "argon2-cffi (>=25.1.0,<26.0.0)",
+    "fastapi-mail (>=1.6.2,<2.0.0)",
+    "python-multipart (>=0.0.26,<0.0.27)"
 ]
 
 [tool.poetry]

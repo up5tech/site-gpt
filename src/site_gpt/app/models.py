@@ -30,6 +30,10 @@ class User(BaseModel):
     phone: Mapped[str] = mapped_column(String(20), nullable=True)
     role: Mapped[str] = mapped_column(String(50), nullable=True, default="user")
     status: Mapped[str] = mapped_column(String(50), nullable=True, default="active")
+    hash_string: Mapped[str] = mapped_column(String(255), nullable=True)
+    hash_type: Mapped[str] = mapped_column(
+        String(50), nullable=True, default="forgot-password"
+    )
 
 
 class Setting(BaseModel):
@@ -86,13 +90,20 @@ class ExtraDocument(BaseModel):
 class Attachment(BaseModel):
     __tablename__ = "attachments"
 
-    extra_document_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("extra_documents.id"), nullable=False
+    __table_args__ = (
+        Index("idx_attachments_extra_document_id", "extra_document_id"),
+        Index("idx_attachments_user_id", "user_id"),
     )
 
-    filename: Mapped[str] = mapped_column(String(255))
-    file_url: Mapped[str] = mapped_column(String(500))
-    file_type: Mapped[str] = mapped_column(String(50))
+    extra_document_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("extra_documents.id"), nullable=True
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), nullable=True)
+
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[str] = mapped_column(String(50), nullable=True, default="tmp")
+    file_url: Mapped[str] = mapped_column(String(500), nullable=False)
+    file_type: Mapped[str] = mapped_column(String(50), nullable=True)
     file_size: Mapped[int] = mapped_column(nullable=True)
 
 
