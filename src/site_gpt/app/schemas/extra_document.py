@@ -46,4 +46,5 @@ class ExtraDocumentRes(ExtraDocumentBase):
 class ExtraDocumentUpdate(BaseModel):
     name: str | None = None
     content: str | None = None
+    file_ids: list[str] | None = None
     delete_file_ids: list[str] | None = None

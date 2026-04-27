@@ -50,7 +50,7 @@ def forgot_password(
     hash_string = hash_password(f"{email}{uuid_string}")
     # update user
     try:
-        exist_user.hash_password = hash_string
+        exist_user.password_hash = hash_string
         exist_user.hash_type = "forgot_password"
         db.commit()
         db.refresh(exist_user)

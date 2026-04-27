@@ -1,6 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException, Session
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
 from site_gpt.app import models
-from site_gpt.app.core.auth import get_current_user, get_manager_user
+from site_gpt.app.core.auth import get_current_user
 from site_gpt.app.db.session import get_db
 from site_gpt.app.schemas.app import PaginatedResponse
 from site_gpt.app.schemas.document import DocumentRes

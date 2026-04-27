@@ -3,9 +3,10 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends
 from fastapi import UploadFile, File
+from sqlalchemy.orm import Session
 from site_gpt.app import models
 from site_gpt.app.core.auth import get_current_user
-from site_gpt.app.db.session import Session, get_db
+from site_gpt.app.db.session import get_db
 
 router = APIRouter()
 
