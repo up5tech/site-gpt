@@ -1,4 +1,9 @@
 import {
+  DeleteOutlined,
+  FileTextOutlined,
+  UploadOutlined,
+} from '@ant-design/icons';
+import {
   Button,
   Card,
   Col,
@@ -10,6 +15,7 @@ import {
   Space,
   Table,
   Typography,
+  Upload,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useEffect, useState } from 'react';
@@ -47,6 +53,8 @@ export function ExtraDocuments() {
     null,
   );
   const [form] = Form.useForm();
+  const [fileList, setFileList] = useState<any[]>([]);
+  const [uploading, setUploading] = useState(false);
 
   const columns: ColumnsType<ExtraDocument> = [
     {
@@ -77,7 +85,7 @@ export function ExtraDocuments() {
         if (!attachments || attachments.length === 0) return '—';
         return (
           <Space size='small'>
-            {attachments.map((att) => (
+            {attachments.map((att: any) => (
               <span key={att.id} style={{ fontSize: '12px' }}>
                 📎 {att.filename}
               </span>
@@ -149,23 +157,44 @@ export function ExtraDocuments() {
   const handleEdit = (document: ExtraDocument) => {
     setEditingDocument(document);
     form.setFieldsValue(document);
+    setFileList(
+      (document.attachments || []).map((att) => ({
+        uid: att.id,
+        name: att.filename,
+        status: 'done',
+        size: att.file_size,
+      })),
+    );
     setIsModalOpen(true);
   };
 
   const handleCreate = () => {
     setEditingDocument(null);
     form.resetFields();
+    setFileList([]);
     setIsModalOpen(true);
   };
 
   const handleModalOk = async () => {
     try {
       const values = await form.validateFields();
+
+      // Get file IDs from uploaded files
+      const fileIds: string[] = fileList
+        .filter((f: any) => f.response && f.response.file_id)
+        .map((f: any) => f.response.file_id);
+
       if (editingDocument) {
-        await api.put(`/extra_documents/${editingDocument.id}`, values);
+        await api.put(`/extra_documents/${editingDocument.id}`, {
+          ...values,
+          file_ids: fileIds,
+        });
         message.success('Document updated successfully');
       } else {
-        await api.post('/extra_documents', values);
+        await api.post('/extra_documents', {
+          ...values,
+          file_ids: fileIds,
+        });
         message.success('Document created successfully');
       }
       setIsModalOpen(false);
@@ -179,6 +208,56 @@ export function ExtraDocuments() {
   const handleModalCancel = () => {
     setIsModalOpen(false);
     setEditingDocument(null);
+    setFileList([]);
+  };
+
+  const onRemove = (file: any) => {
+    const newFileList = fileList.filter((f) => f.uid !== file.uid);
+    setFileList(newFileList);
+    return false;
+  };
+
+  const handleBeforeUpload = async (file: any) => {
+    // Validate file type
+    const allowedTypes = [
+      'application/pdf',
+      'text/plain',
+      'application/msword',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    ];
+    if (!allowedTypes.includes(file.type)) {
+      message.error('Only PDF, TXT, DOC, and DOCX files are allowed');
+      return Upload.LIST_IGNORE;
+    }
+
+    // Upload file immediately
+    setUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const response = await api.post('/uploads', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      });
+
+      // Add file to list with response
+      const newFile = {
+        ...file,
+        uid: response.data.file_id,
+        response: response.data,
+      };
+      setFileList((prev) => [...prev, newFile]);
+    } catch (error) {
+      console.error('Upload file error', error);
+      message.error(`Failed to upload ${file.name}`);
+    } finally {
+      setUploading(false);
+    }
+
+    // Return false to prevent default upload
+    return false;
   };
 
   return (
@@ -252,6 +331,34 @@ export function ExtraDocuments() {
             ]}
           >
             <Input.TextArea placeholder='Document content' rows={6} />
+          </Form.Item>
+          <Form.Item label='Attachments'>
+            <Upload
+              beforeUpload={handleBeforeUpload}
+              onRemove={onRemove}
+              fileList={fileList}
+              itemRender={(_: any, file: any) => {
+                return (
+                  <Space>
+                    <FileTextOutlined />
+                    {file.filename || file.response?.filename}
+                    <Button
+                      type='link'
+                      danger
+                      onClick={() => onRemove(file)}
+                      icon={<DeleteOutlined />}
+                    />
+                  </Space>
+                );
+              }}
+            >
+              <Button icon={<UploadOutlined />} loading={uploading}>
+                Click to Upload
+              </Button>
+            </Upload>
+            <div style={{ marginTop: 8, fontSize: '12px', color: '#999' }}>
+              Supported formats: PDF, TXT, DOC, DOCX
+            </div>
           </Form.Item>
         </Form>
       </Modal>
