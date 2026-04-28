@@ -8,6 +8,7 @@ import {
   Modal,
   Row,
   Select,
+  Space,
   Table,
   Typography,
 } from 'antd';
@@ -45,6 +46,29 @@ export function Users() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [form] = Form.useForm();
+
+  const handleEdit = (user: User) => {
+    setEditingUser(user);
+    form.setFieldsValue(user);
+    setIsModalOpen(true);
+  };
+
+  const handleDelete = async (id: string) => {
+    try {
+      await api.delete(`/companies/users/${id}`);
+      message.success('User deleted successfully');
+      fetchUsers();
+    } catch (error) {
+      console.error('Delete user error', error);
+      message.error('Failed to delete user');
+    }
+  };
+
+  const handleCreate = () => {
+    setEditingUser(null);
+    form.resetFields();
+    setIsModalOpen(true);
+  };
 
   const columns: ColumnsType<User> = [
     {
@@ -93,6 +117,29 @@ export function Users() {
         </Text>
       ),
     },
+    {
+      title: 'Actions',
+      key: 'actions',
+      render: (_, record) => (
+        <Space size='middle'>
+          <Button
+            type='link'
+            onClick={() => handleEdit(record)}
+            style={{ padding: 0 }}
+          >
+            Edit
+          </Button>
+          <Button
+            type='link'
+            danger
+            onClick={() => handleDelete(record.id)}
+            style={{ padding: 0 }}
+          >
+            Delete
+          </Button>
+        </Space>
+      ),
+    },
   ];
 
   const fetchUsers = async () => {
@@ -122,26 +169,14 @@ export function Users() {
     fetchUsers();
   }, [page, nameFilter, emailFilter, roleFilter, isAuthenticated]);
 
-  const handleEdit = (user: User) => {
-    setEditingUser(user);
-    form.setFieldsValue(user);
-    setIsModalOpen(true);
-  };
-
-  const handleCreate = () => {
-    setEditingUser(null);
-    form.resetFields();
-    setIsModalOpen(true);
-  };
-
   const handleModalOk = async () => {
     try {
       const values = await form.validateFields();
       if (editingUser) {
-        await api.put(`/users/${editingUser.id}`, values);
+        await api.put(`/companies/users/${editingUser.id}`, values);
         message.success('User updated successfully');
       } else {
-        await api.post('/users', values);
+        await api.post('/companies/users', values);
         message.success('User created successfully');
       }
       setIsModalOpen(false);

@@ -116,6 +116,7 @@ def create_user(
             last_name=user_in.last_name,
             role=user_in.role or "user",
             status=user_in.status or "active",
+            phone=user_in.phone or None,
         )
         db.add(user)
         db.commit()
@@ -135,7 +136,8 @@ def get_user(
         query = (
             db.query(models.User)
             .filter(
-                models.User.id == user_id, models.User.company_id == user.company_id
+                models.User.id == user_id, 
+                models.User.company_id == user.company_id,
             )
             .first()
         )
@@ -156,7 +158,8 @@ def delete_user(
         query = (
             db.query(models.User)
             .filter(
-                models.User.id == user_id, models.User.company_id == user.company_id
+                models.User.id == user_id, 
+                models.User.company_id == user.company_id,
             )
             .first()
         )
@@ -180,7 +183,8 @@ def update_user(
         query = (
             db.query(models.User)
             .filter(
-                models.User.id == user_id, models.User.company_id == user.company_id
+                models.User.id == user_id, 
+                models.User.company_id == user.company_id,
             )
             .first()
         )
@@ -196,6 +200,8 @@ def update_user(
             query.role = user_in.role or query.role
         if user_in.status:
             query.status = user_in.status or query.status
+        if user_in.phone:
+            query.phone = user_in.phone
         db.commit()
         db.refresh(query)
         return UserRes.model_validate(query)
@@ -214,7 +220,8 @@ def change_password(
         query = (
             db.query(models.User)
             .filter(
-                models.User.id == user_id, models.User.company_id == user.company_id
+                models.User.id == user_id, 
+                models.User.company_id == user.company_id,
             )
             .first()
         )
