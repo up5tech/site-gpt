@@ -12,6 +12,13 @@ export function LayoutComponent({ children }: Props) {
   const { isAuthenticated, logout } = useAuth();
   const location = useLocation();
 
+  const menuItems = [
+    { key: '/', label: 'Dashboard' },
+    { key: '/websites', label: 'Websites' },
+    { key: '/users', label: 'Users' },
+    { key: '/documents', label: 'Documents' },
+  ];
+
   return (
     <Layout style={{ minHeight: '100vh' }}>
       <Header
@@ -20,6 +27,8 @@ export function LayoutComponent({ children }: Props) {
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'center',
+          flexWrap: 'wrap',
+          gap: '16px',
         }}
       >
         <div
@@ -32,20 +41,25 @@ export function LayoutComponent({ children }: Props) {
         >
           Site GPT
         </div>
-        <Space size='large'>
+        <Space size='large' wrap>
           {isAuthenticated ? (
             <>
-              <Link
-                to='/'
-                style={{
-                  fontWeight: location.pathname === '/' ? '600' : '400',
-                  borderBottom:
-                    location.pathname === '/' ? '2px solid #000' : 'none',
-                  paddingBottom: '4px',
-                }}
-              >
-                Dashboard
-              </Link>
+              {menuItems.map((item) => (
+                <Link
+                  key={item.key}
+                  to={item.key}
+                  style={{
+                    fontWeight: location.pathname === item.key ? '600' : '400',
+                    borderBottom:
+                      location.pathname === item.key
+                        ? '2px solid #000'
+                        : 'none',
+                    paddingBottom: '4px',
+                  }}
+                >
+                  {item.label}
+                </Link>
+              ))}
               <Button onClick={logout} type='text'>
                 Logout
               </Button>
