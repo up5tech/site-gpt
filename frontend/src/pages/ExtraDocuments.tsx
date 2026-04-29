@@ -338,10 +338,11 @@ export function ExtraDocuments() {
               onRemove={onRemove}
               fileList={fileList}
               itemRender={(_: any, file: any) => {
+                console.log(file);
                 return (
                   <Space>
                     <FileTextOutlined />
-                    {file.filename || file.response?.filename}
+                    {file.name || file.filename || file.response?.filename}
                     <Button
                       type='link'
                       danger

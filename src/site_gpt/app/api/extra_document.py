@@ -1,4 +1,5 @@
 import os
+from typing import List
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -9,6 +10,7 @@ from site_gpt.app.core.auth import get_current_user
 from site_gpt.app.db.session import get_db
 from site_gpt.app.schemas.app import PaginatedResponse
 from site_gpt.app.schemas.extra_document import (
+    AttachmentRes,
     ExtraDocumentCreate,
     ExtraDocumentRes,
     ExtraDocumentUpdate,
@@ -30,8 +32,21 @@ def get_extra_documents(
         )
         total = query.count()
         documents = query.offset((page - 1) * limit).limit(limit).all()
+        items: List[ExtraDocumentRes] = [];
+        for doc in documents:
+            item = ExtraDocumentRes.model_validate(doc)
+            # get attachments
+            attachments = (
+                db.query(models.Attachment)
+                .filter(models.Attachment.extra_document_id == doc.id)
+                .all()
+            )
+            item.attachments = [
+                AttachmentRes.model_validate(a) for a in attachments
+            ]
+            items.append(item)
         return PaginatedResponse(
-            items=[ExtraDocumentRes.model_validate(doc) for doc in documents],
+            items=items,
             total=total,
             page=page,
             limit=limit,
