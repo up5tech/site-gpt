@@ -24,6 +24,15 @@ export interface User {
   status?: string;
 }
 
+export interface Website {
+  id: string;
+  name: string;
+  url: string;
+  description?: string;
+  company_id: string;
+  created_at: string;
+}
+
 export interface ChatResponse {
   answer: string;
 }

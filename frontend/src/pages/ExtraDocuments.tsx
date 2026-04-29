@@ -1,3 +1,4 @@
+import { Website } from '@/types/api';
 import {
   DeleteOutlined,
   FileTextOutlined,
@@ -12,6 +13,7 @@ import {
   message,
   Modal,
   Row,
+  Select,
   Space,
   Table,
   Typography,
@@ -31,6 +33,7 @@ interface ExtraDocument {
   name: string;
   content: string;
   company_id: string;
+  website_id?: string;
   attachments?: Array<{
     id: string;
     filename: string;
@@ -56,6 +59,10 @@ export function ExtraDocuments() {
   const [fileList, setFileList] = useState<any[]>([]);
   const [uploading, setUploading] = useState(false);
 
+  // State for websites
+  const [websites, setWebsites] = useState<Website[]>([]);
+  const [loadingWebsites, setLoadingWebsites] = useState(false);
+
   const columns: ColumnsType<ExtraDocument> = [
     {
       title: 'Name',
@@ -66,6 +73,20 @@ export function ExtraDocuments() {
           {text}
         </Text>
       ),
+    },
+    {
+      title: 'Website',
+      dataIndex: 'website_id',
+      key: 'website_id',
+      render: (websiteId) => {
+        if (!websiteId) return '—';
+        const website = websites.find((w) => w.id === websiteId);
+        return (
+          <Text type='secondary' style={{ fontSize: '14px' }}>
+            {website?.name || '—'}
+          </Text>
+        );
+      },
     },
     {
       title: 'Content',
@@ -139,9 +160,34 @@ export function ExtraDocuments() {
     }
   };
 
+  const fetchWebsites = async () => {
+    if (!isAuthenticated) return;
+    setLoadingWebsites(true);
+    try {
+      const response = await api.get('/websites', {
+        params: {
+          page: 1,
+          limit: 100, // Get all websites
+        },
+      });
+      setWebsites(response.data.items || []);
+    } catch (error) {
+      console.error('Fetch websites error', error);
+      message.error('Failed to load websites');
+    } finally {
+      setLoadingWebsites(false);
+    }
+  };
+
   useEffect(() => {
     fetchDocuments();
   }, [page, nameFilter, isAuthenticated]);
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      fetchWebsites();
+    }
+  }, [isAuthenticated]);
 
   const handleDelete = async (id: string) => {
     try {
@@ -184,17 +230,17 @@ export function ExtraDocuments() {
         .filter((f: any) => f.response && f.response.file_id)
         .map((f: any) => f.response.file_id);
 
+      const payload = {
+        ...values,
+        file_ids: fileIds,
+        website_id: values.website_id || null, // Ensure null if not selected
+      };
+
       if (editingDocument) {
-        await api.put(`/extra_documents/${editingDocument.id}`, {
-          ...values,
-          file_ids: fileIds,
-        });
+        await api.put(`/extra_documents/${editingDocument.id}`, payload);
         message.success('Document updated successfully');
       } else {
-        await api.post('/extra_documents', {
-          ...values,
-          file_ids: fileIds,
-        });
+        await api.post('/extra_documents', payload);
         message.success('Document created successfully');
       }
       setIsModalOpen(false);
@@ -324,6 +370,28 @@ export function ExtraDocuments() {
             <Input placeholder='Document name' />
           </Form.Item>
           <Form.Item
+            name='website_id'
+            label='Website'
+            tooltip='Optional: Associate this document with a specific website'
+          >
+            <Select
+              placeholder='Select a website (optional)'
+              allowClear
+              loading={loadingWebsites}
+              showSearch
+              optionFilterProp='children'
+              filterOption={(input, option) =>
+                (option?.label ?? '')
+                  .toLowerCase()
+                  .includes(input.toLowerCase())
+              }
+              options={websites.map((website) => ({
+                label: website.name,
+                value: website.id,
+              }))}
+            />
+          </Form.Item>
+          <Form.Item
             name='content'
             label='Content'
             rules={[
@@ -338,7 +406,7 @@ export function ExtraDocuments() {
               onRemove={onRemove}
               fileList={fileList}
               itemRender={(_: any, file: any) => {
-                console.log(file);
+                // console.log(file);
                 return (
                   <Space>
                     <FileTextOutlined />

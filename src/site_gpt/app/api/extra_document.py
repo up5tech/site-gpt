@@ -112,6 +112,7 @@ def create_extra_document(
         extra_document = models.ExtraDocument(
             name=document_in.name,
             content=document_in.content,
+            website_id=document_in.website_id,
             company_id=user.company_id,
         )
         db.add(extra_document)

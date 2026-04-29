@@ -1,41 +1,15 @@
-import {
-  Layout as AntLayout,
-  Button,
-  Card,
-  Col,
-  Input,
-  message,
-  Row,
-  Space,
-  Typography,
-} from 'antd';
-import { useState } from 'react';
+import { Layout as AntLayout, Card, Col, Row, Typography } from 'antd';
 import { Chat } from '../components/Chat';
 import { useAuth } from '../context/AuthContext';
 // ChatProvider wrapped in App.tsx, no local needed
 import { UserTable } from '@/components/UserTable';
+import { WebsiteTable } from '@/components/WebsiteTable';
 import { ChatProvider } from '@/context/ChatContext';
-import api from '../utils/api';
 
 const { Title, Text } = Typography;
 
 export function Dashboard() {
-  const [ingestUrl, setIngestUrl] = useState('');
   const { isAuthenticated } = useAuth();
-
-  const handleIngest = async () => {
-    if (!ingestUrl.trim()) {
-      message.warning('Please enter sitemap URL');
-      return;
-    }
-    try {
-      await api.post('/ingest', { sitemap_url: ingestUrl });
-      message.success('Site ingested successfully!');
-      setIngestUrl('');
-    } catch (error) {
-      message.error('Failed to ingest site');
-    }
-  };
 
   if (!isAuthenticated) {
     return (
@@ -83,30 +57,10 @@ export function Dashboard() {
 
         <Col xs={24} lg={12}>
           <Card
-            title={<div style={{ fontWeight: 600 }}>Add New Site</div>}
+            title={<div style={{ fontWeight: 600 }}>Websites</div>}
             style={{ height: '100%' }}
           >
-            <div style={{ marginBottom: 16 }}>
-              <Text type='secondary'>
-                Enter your sitemap URL to start indexing your website
-              </Text>
-            </div>
-            <Space.Compact style={{ width: '100%' }}>
-              <Input
-                placeholder='https://example.com/sitemap.xml'
-                value={ingestUrl}
-                onChange={(e) => setIngestUrl(e.target.value)}
-                onPressEnter={handleIngest}
-                style={{ borderRadius: '8px 0 0 8px' }}
-              />
-              <Button
-                type='primary'
-                onClick={handleIngest}
-                style={{ borderRadius: '0 8px 8px 0' }}
-              >
-                Ingest
-              </Button>
-            </Space.Compact>
+            <WebsiteTable />
           </Card>
         </Col>
 

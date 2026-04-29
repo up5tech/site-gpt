@@ -32,6 +32,7 @@ class ExtraDocumentBase(BaseModel):
     name: str | None = None
     content: str | None = None
     company_id: UUID | None = None
+    website_id: UUID | None = None
     attachments: list[AttachmentRes] | None = None
 
 
@@ -46,5 +47,6 @@ class ExtraDocumentRes(ExtraDocumentBase):
 class ExtraDocumentUpdate(BaseModel):
     name: str | None = None
     content: str | None = None
+    website_id: UUID | None = None
     file_ids: list[str] | None = None
     delete_file_ids: list[str] | None = None

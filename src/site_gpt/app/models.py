@@ -85,6 +85,7 @@ class ExtraDocument(BaseModel):
     company_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("companies.id"), nullable=False
     )
+    website_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("websites.id"), nullable=True)
 
 
 class Attachment(BaseModel):
