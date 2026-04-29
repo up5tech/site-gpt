@@ -1,3 +1,4 @@
+from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -27,8 +28,8 @@ def ingest(sitemap_url: str):
 
 
 @router.get("/chat")
-def chat(q: str):
-    return {"answer": ask(q)}
+def chat(q: str, website_id: Optional[str] = None):
+    return {"answer": ask(q, website_id)}
 
 
 @router.get("/health")

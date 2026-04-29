@@ -1,24 +1,54 @@
 import { useChat } from '@/context/ChatContext';
+import type { Website } from '@/types/api';
+import api from '@/utils/api';
 import { SendOutlined } from '@ant-design/icons';
-import { Button, Form, Input, List, Space, Typography } from 'antd';
-import { useState } from 'react';
+import { Button, Empty, Input, List, Select, Typography, message } from 'antd';
+import { useEffect, useState } from 'react';
 
 const { TextArea } = Input;
-const { useForm } = Form;
 const { Text } = Typography;
 
-interface Props {
-  style?: React.CSSProperties;
-}
-
 export function Chat() {
-  const { messages, sendMessage, loading } = useChat();
+  const {
+    messages,
+    sendMessage,
+    loading,
+    selectedWebsiteId,
+    setSelectedWebsiteId,
+  } = useChat();
   const [inputValue, setInputValue] = useState('');
-  const [form] = useForm();
+  const [websites, setWebsites] = useState<Website[]>([]);
+  const [loadingWebsites, setLoadingWebsites] = useState(false);
+
+  useEffect(() => {
+    fetchWebsites();
+  }, []);
+
+  const fetchWebsites = async () => {
+    setLoadingWebsites(true);
+    try {
+      const response = await api.get<{
+        items: Website[];
+        total: number;
+        page: number;
+        limit: number;
+      }>('/websites');
+      // console.log('Fetch websites response', response.data);
+      setWebsites(response.data.items || []);
+    } catch (error) {
+      message.error('Failed to load websites');
+    } finally {
+      setLoadingWebsites(false);
+    }
+  };
 
   const handleSubmit = () => {
     if (!inputValue.trim()) return;
-    sendMessage(inputValue);
+    if (!selectedWebsiteId) {
+      message.warning('Please select a website first');
+      return;
+    }
+    sendMessage(inputValue, selectedWebsiteId);
     setInputValue('');
   };
 
@@ -33,12 +63,43 @@ export function Chat() {
         overflow: 'hidden',
       }}
     >
+      <div
+        style={{
+          padding: '16px',
+          background: '#ffffff',
+          borderBottom: '1px solid #e5e7eb',
+        }}
+      >
+        <Select
+          placeholder='Select a website to chat with'
+          style={{ width: '100%' }}
+          value={selectedWebsiteId}
+          onChange={setSelectedWebsiteId}
+          loading={loadingWebsites}
+          options={websites.map((site) => ({
+            label: site.name,
+            value: site.id,
+          }))}
+        />
+      </div>
       <List
         style={{
           flex: 1,
           overflow: 'auto',
           padding: '24px 16px',
           background: '#fafafa',
+        }}
+        locale={{
+          emptyText: (
+            <Empty
+              description={
+                selectedWebsiteId
+                  ? 'No messages yet. Start chatting!'
+                  : 'Please select a website to start chatting'
+              }
+              image={Empty.PRESENTED_IMAGE_SIMPLE}
+            />
+          ),
         }}
         dataSource={messages}
         renderItem={(item: { role: 'user' | 'assistant'; content: string }) => (
@@ -73,7 +134,7 @@ export function Chat() {
           boxShadow: '0 -2px 8px rgba(0, 0, 0, 0.03)',
         }}
       >
-        <Space.Compact style={{ width: '100%' }}>
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-start' }}>
           <TextArea
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
@@ -84,9 +145,10 @@ export function Chat() {
             }}
             placeholder='Ask about your site...'
             autoSize={{ minRows: 1, maxRows: 4 }}
-            disabled={loading}
+            disabled={loading || !selectedWebsiteId}
             style={{
-              borderRadius: '8px 0 0 8px',
+              flex: 1,
+              borderRadius: '8px',
               padding: '12px 16px',
             }}
           />
@@ -95,13 +157,15 @@ export function Chat() {
             icon={<SendOutlined />}
             onClick={handleSubmit}
             loading={loading}
-            disabled={!inputValue.trim() || loading}
+            disabled={!inputValue.trim() || loading || !selectedWebsiteId}
             style={{
-              borderRadius: '0 8px 8px 0',
+              borderRadius: '8px',
+              height: '46px',
               padding: '0 20px',
+              flexShrink: 0,
             }}
           />
-        </Space.Compact>
+        </div>
         <div
           style={{
             marginTop: '8px',

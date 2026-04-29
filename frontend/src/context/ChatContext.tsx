@@ -5,9 +5,11 @@ import api from '../utils/api';
 
 interface ChatContextType {
   messages: Array<{ role: 'user' | 'assistant'; content: string }>;
-  sendMessage: (query: string) => Promise<void>;
+  sendMessage: (query: string, websiteId?: string) => Promise<void>;
   ingestSite: (url: string) => Promise<void>;
   loading: boolean;
+  selectedWebsiteId: string | null;
+  setSelectedWebsiteId: (id: string | null) => void;
 }
 
 const ChatContext = createContext<ChatContextType | undefined>(undefined);
@@ -29,15 +31,19 @@ export const ChatProvider = ({ children }: Props) => {
     Array<{ role: 'user' | 'assistant'; content: string }>
   >([]);
   const [loading, setLoading] = useState(false);
+  const [selectedWebsiteId, setSelectedWebsiteId] = useState<string | null>(
+    null,
+  );
 
-  const sendMessage = async (query: string) => {
+  const sendMessage = async (query: string, websiteId?: string) => {
     setLoading(true);
     setMessages((prev) => [...prev, { role: 'user' as const, content: query }]);
 
     try {
-      const response = await api.get<ChatResponse>(
-        `/chat?q=${encodeURIComponent(query)}`
-      );
+      const url = websiteId
+        ? `/chat?q=${encodeURIComponent(query)}&website_id=${websiteId}`
+        : `/chat?q=${encodeURIComponent(query)}`;
+      const response = await api.get<ChatResponse>(url);
       setMessages((prev) => [
         ...prev,
         { role: 'assistant' as const, content: response.data.answer },
@@ -67,7 +73,14 @@ export const ChatProvider = ({ children }: Props) => {
 
   return (
     <ChatContext.Provider
-      value={{ messages, sendMessage, ingestSite, loading }}
+      value={{
+        messages,
+        sendMessage,
+        ingestSite,
+        loading,
+        selectedWebsiteId,
+        setSelectedWebsiteId,
+      }}
     >
       {children}
     </ChatContext.Provider>
