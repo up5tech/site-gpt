@@ -12,14 +12,14 @@ from site_gpt.app.schemas.user import UserUpdate, UserRes
 router = APIRouter()
 
 
-@router.get("/users/me")
+@router.get("/me")
 def read_users_me(
     user=Depends(get_current_user),
 ):
     return UserRes.model_validate(user)
 
 
-@router.put("/users/me")
+@router.put("/me")
 def update_users_me(
     user_update: UserUpdate,
     db: Session = Depends(get_db),
@@ -36,7 +36,7 @@ def update_users_me(
     return UserRes.model_validate(user)
 
 
-@router.post("/users/forgot-password")
+@router.post("/forgot-password")
 def forgot_password(
     email: str,
     db: Session = Depends(get_db),
@@ -59,7 +59,7 @@ def forgot_password(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/users/reset-password")
+@router.post("/reset-password")
 def reset_password(
     email: str,
     password: str,
