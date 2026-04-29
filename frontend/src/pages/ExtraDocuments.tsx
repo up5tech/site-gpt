@@ -58,6 +58,7 @@ export function ExtraDocuments() {
   const [form] = Form.useForm();
   const [fileList, setFileList] = useState<any[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [deletedFileIds, setDeletedFileIds] = useState<string[]>([]);
 
   // State for websites
   const [websites, setWebsites] = useState<Website[]>([]);
@@ -209,8 +210,10 @@ export function ExtraDocuments() {
         name: att.filename,
         status: 'done',
         size: att.file_size,
+        file_id: att.id, // Store file_id for tracking deletions
       })),
     );
+    setDeletedFileIds([]); // Reset deleted file IDs
     setIsModalOpen(true);
   };
 
@@ -218,6 +221,7 @@ export function ExtraDocuments() {
     setEditingDocument(null);
     form.resetFields();
     setFileList([]);
+    setDeletedFileIds([]); // Reset deleted file IDs
     setIsModalOpen(true);
   };
 
@@ -230,11 +234,16 @@ export function ExtraDocuments() {
         .filter((f: any) => f.response && f.response.file_id)
         .map((f: any) => f.response.file_id);
 
-      const payload = {
+      const payload: any = {
         ...values,
         file_ids: fileIds,
         website_id: values.website_id || null, // Ensure null if not selected
       };
+
+      // Add delete_file_ids only when editing and there are deleted files
+      if (editingDocument && deletedFileIds.length > 0) {
+        payload.delete_file_ids = deletedFileIds;
+      }
 
       if (editingDocument) {
         await api.put(`/extra_documents/${editingDocument.id}`, payload);
@@ -255,9 +264,15 @@ export function ExtraDocuments() {
     setIsModalOpen(false);
     setEditingDocument(null);
     setFileList([]);
+    setDeletedFileIds([]); // Reset deleted file IDs
   };
 
   const onRemove = (file: any) => {
+    // If file has file_id (existing file from database), add to deletedFileIds
+    if (file.file_id) {
+      setDeletedFileIds((prev) => [...prev, file.file_id]);
+    }
+
     const newFileList = fileList.filter((f) => f.uid !== file.uid);
     setFileList(newFileList);
     return false;

@@ -188,7 +188,9 @@ def update_extra_document(
                 )
                 if attachment:
                     # delete file
-                    os.remove(attachment.file_url)
+                    file_path = f"uploads/{attachment.file_url}"
+                    if os.path.exists(file_path):
+                        os.remove(file_path)
                     # delete from db
                     db.delete(attachment)
             db.commit()
