@@ -18,6 +18,7 @@ SiteGPT is a system auto generate to Chat Bot for company. It allows users to cr
 5. Run `poetry install`
 6. Run `poetry run alembic upgrade head` to apply database migrations
 7. Run `poetry run uvicorn src.site_gpt.app.main:app`
+8. Run `poetry run python -m src.site_gpt.app.worker` to start the worker
 
 ## Development
 
