@@ -23,3 +23,8 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 OLLAMA_USERNAME = os.getenv("OLLAMA_USERNAME")
 OLLAMA_PASSWORD = os.getenv("OLLAMA_PASSWORD")
+
+REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
+REDIS_PORT = os.getenv("REDIS_PORT", "6379")
+REDIS_PASSWORD = os.getenv("REDIS_PASSWORD")
+REDIS_DB = os.getenv("REDIS_DB", "0")

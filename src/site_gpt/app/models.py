@@ -60,6 +60,10 @@ class Website(BaseModel):
         ForeignKey("companies.id"), nullable=False
     )
     site_map_url: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[str] = mapped_column(String(50), nullable=True, default="active")
+    ingest_status: Mapped[str] = mapped_column(
+        String(50), nullable=True, default="none"
+    )
 
 
 class Document(BaseModel):
@@ -85,7 +89,9 @@ class ExtraDocument(BaseModel):
     company_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("companies.id"), nullable=False
     )
-    website_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("websites.id"), nullable=True)
+    website_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("websites.id"), nullable=True
+    )
 
 
 class Attachment(BaseModel):

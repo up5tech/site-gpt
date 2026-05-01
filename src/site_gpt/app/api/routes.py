@@ -12,18 +12,15 @@ from site_gpt.app.core.config import JWT_SECRET_KEY, JWT_ALGORITHM
 from site_gpt.app.db.session import get_db
 from site_gpt.app.schemas.company import CompanyRegister
 from site_gpt.app.schemas.user import UserLogin
-from site_gpt.app.services.crawler import load_sitemap
-from site_gpt.app.services.ingest import ingest_documents, split_docs
 from site_gpt.app.services.rag import ask
+from site_gpt.app.services.redis import enqueue_job
 
 router = APIRouter()
 
 
 @router.post("/ingest")
-def ingest(sitemap_url: str):
-    docs = load_sitemap(sitemap_url)
-    chunks = split_docs(docs)
-    ingest_documents(chunks)
+async def ingest(website_id: str):
+    await enqueue_job({"type": "ingest", "website_id": website_id})
     return {"status": "ok"}
 
 

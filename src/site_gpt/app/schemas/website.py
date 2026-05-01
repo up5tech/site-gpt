@@ -13,6 +13,8 @@ class WebsiteBase(BaseModel):
     description: str | None = None
     site_map_url: str | None = None
     company_id: UUID | None = None
+    status: str | None = None
+    ingest_status: str | None = None
 
 
 class WebsiteRes(WebsiteBase):
@@ -28,3 +30,4 @@ class WebsiteUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
     site_map_url: str | None = None
+    status: str | None = None

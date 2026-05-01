@@ -31,16 +31,16 @@ def get_llm():
                 model=LLM_MODEL,
                 temperature=0.5,
                 base_url=OLLAMA_HOST,
-                headers={"Authorization": f"Basic {b64_auth}"},
+                headers={"Authorization": f"Basic {b64_auth}"},  # type: ignore
             )
         else:
             return ChatOllama(model=LLM_MODEL, temperature=0.5)
     elif LLM_AI == "openrouter":
         return ChatOpenRouter(
-            model=LLM_MODEL, temperature=temperature, api_key=OPEN_ROUTER_API_KEY
+            model=LLM_MODEL, temperature=temperature, api_key=OPEN_ROUTER_API_KEY  # type: ignore
         )
     elif LLM_AI == "groq":
-        return ChatGroq(model=LLM_MODEL, temperature=temperature, api_key=GROQ_API_KEY)
+        return ChatGroq(model=LLM_MODEL, temperature=temperature, api_key=GROQ_API_KEY)  # type: ignore
     elif LLM_AI == "gemini":
         return ChatGoogleGenerativeAI(
             model=LLM_MODEL, temperature=temperature, api_key=GEMINI_API_KEY
@@ -49,12 +49,12 @@ def get_llm():
         return ChatOpenAI(
             model=LLM_MODEL,
             temperature=temperature,
-            api_key=OPENAI_API_KEY,
+            api_key=OPENAI_API_KEY,  # type: ignore
             base_url=OPENAI_API_BASE_URL,
         )
     else:
         return ChatOpenAI(
-            model=LLM_MODEL, temperature=temperature, api_key=OPENAI_API_KEY
+            model=LLM_MODEL, temperature=temperature, api_key=OPENAI_API_KEY  # type: ignore
         )
 
 
@@ -66,25 +66,25 @@ def get_embedding_model():
             return OllamaEmbeddings(
                 model=LLM_EMBEDDING_MODEL,
                 base_url=OLLAMA_HOST,
-                headers={"Authorization": f"Basic {b64_auth}"},
+                headers={"Authorization": f"Basic {b64_auth}"},  # type: ignore
             )
         else:
             return OllamaEmbeddings(model=LLM_EMBEDDING_MODEL)
     elif LLM_AI == "openrouter":
         return OpenAIEmbeddings(
             model=LLM_EMBEDDING_MODEL,
-            api_key=OPEN_ROUTER_API_KEY,
+            api_key=OPEN_ROUTER_API_KEY,  # type: ignore
             base_url="https://openrouter.ai/api/v1",
         )
     elif LLM_AI == "groq":
-        return OpenAIEmbeddings(model=LLM_EMBEDDING_MODEL, api_key=GROQ_API_KEY)
+        return OpenAIEmbeddings(model=LLM_EMBEDDING_MODEL, api_key=GROQ_API_KEY)  # type: ignore
     elif LLM_AI == "gemini":
-        return OpenAIEmbeddings(model=LLM_EMBEDDING_MODEL, api_key=GEMINI_API_KEY)
+        return OpenAIEmbeddings(model=LLM_EMBEDDING_MODEL, api_key=GEMINI_API_KEY)  # type: ignore
     elif LLM_AI == "custom_openai":
         return OpenAIEmbeddings(
             model=LLM_EMBEDDING_MODEL,
-            api_key=OPENAI_API_KEY,
+            api_key=OPENAI_API_KEY,  # type: ignore
             base_url=OPENAI_API_BASE_URL,
         )
     else:
-        return OpenAIEmbeddings(model=LLM_EMBEDDING_MODEL, api_key=OPENAI_API_KEY)
+        return OpenAIEmbeddings(model=LLM_EMBEDDING_MODEL, api_key=OPENAI_API_KEY)  # type: ignore
