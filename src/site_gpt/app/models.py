@@ -66,6 +66,20 @@ class Website(BaseModel):
     )
 
 
+class WebsitePage(BaseModel):
+    __tablename__ = "website_pages"
+
+    __table_args__ = (Index("idx_website_pages_website_id", "website_id"),)
+
+    url: Mapped[str] = mapped_column(String(255), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=True)
+    description: Mapped[str] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(50), nullable=True, default="active")
+    website_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("websites.id"), nullable=False
+    )
+
+
 class Document(BaseModel):
     __tablename__ = "documents"
 

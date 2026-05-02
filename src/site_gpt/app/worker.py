@@ -1,7 +1,7 @@
 import asyncio
 import json
 
-from site_gpt.app.services.crawler import load_sitemap
+from site_gpt.app.services.crawler import crawl_website
 from site_gpt.app.services.ingest import ingest_document, ingest_extra_document
 from site_gpt.app.services.redis import redis_client
 from site_gpt.app.db.session import SessionLocal
@@ -30,15 +30,12 @@ async def handle_ingest(data):
     if not website:
         print("Website not found")
         return
-    if not website.site_map_url:
-        print("Sitemap URL not found")
-        return
 
     website.ingest_status = "processing"
     db.commit()
 
     # ingest sitemap
-    docs = load_sitemap(website.site_map_url)
+    docs = crawl_website(db, website.id)
     for doc in docs:
         document = models.Document(
             title=doc.metadata["title"],
