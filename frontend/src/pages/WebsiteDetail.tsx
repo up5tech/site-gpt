@@ -14,7 +14,6 @@ import {
   Descriptions,
   Form,
   Input,
-  message,
   Modal,
   Popconfirm,
   Row,
@@ -22,6 +21,7 @@ import {
   Table,
   Typography,
 } from 'antd';
+import useApp from 'antd/es/app/useApp';
 import type { ColumnsType } from 'antd/es/table';
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
@@ -33,6 +33,8 @@ const { Title, Text } = Typography;
 export function WebsiteDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { message } = useApp();
+
   const [website, setWebsite] = useState<Website | null>(null);
   const [pages, setPages] = useState<WebsitePage[]>([]);
   const [loading, setLoading] = useState(true);
