@@ -23,7 +23,6 @@ class WebsitePageCreate(BaseModel):
     name: str
     description: str | None = None
     status: str | None = None
-    website_id: UUID
 
 
 class WebsitePageUpdate(BaseModel):

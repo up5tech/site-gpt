@@ -9,6 +9,7 @@ import { ExtraDocuments } from './pages/ExtraDocuments';
 import { Login } from './pages/Login';
 import { Register } from './pages/Register';
 import { Users } from './pages/Users';
+import { WebsiteDetail } from './pages/WebsiteDetail';
 import { Websites } from './pages/Websites';
 
 function App() {
@@ -20,6 +21,7 @@ function App() {
             <Routes>
               <Route path='/' element={<Dashboard />} />
               <Route path='/websites' element={<Websites />} />
+              <Route path='/websites/:id' element={<WebsiteDetail />} />
               <Route path='/users' element={<Users />} />
               <Route path='/documents' element={<ExtraDocuments />} />
               <Route path='/register' element={<Register />} />

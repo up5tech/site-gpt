@@ -29,8 +29,27 @@ export interface Website {
   name: string;
   url: string;
   description?: string;
+  site_map_url: string;
   company_id: string;
   created_at: string;
+  updated_at: string;
+}
+
+export interface WebsitePage {
+  id: string;
+  url: string;
+  name: string;
+  description?: string;
+  website_id: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WebsitePagePaginated {
+  total: number;
+  page: number;
+  limit: number;
+  items: WebsitePage[];
 }
 
 export interface ChatResponse {

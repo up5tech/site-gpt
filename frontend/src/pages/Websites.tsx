@@ -1,3 +1,4 @@
+import { EyeOutlined } from '@ant-design/icons';
 import {
   Button,
   Card,
@@ -13,23 +14,15 @@ import {
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { Website } from '../types/api';
 import api from '../utils/api';
 
 const { Title, Text } = Typography;
 
-interface Website {
-  id: string;
-  created_at: string;
-  updated_at: string;
-  url: string;
-  name: string;
-  description: string;
-  site_map_url: string;
-  company_id: string;
-}
-
 export function Websites() {
+  const navigate = useNavigate();
   const [data, setData] = useState<Website[]>([]);
   const [loading, setLoading] = useState(false);
   const [total, setTotal] = useState(0);
@@ -78,7 +71,12 @@ export function Websites() {
       title: 'Actions',
       key: 'actions',
       render: (_, record) => (
-        <Space size='middle'>
+        <Space size='small'>
+          <Button
+            type='text'
+            icon={<EyeOutlined />}
+            onClick={() => navigate(`/websites/${record.id}`)}
+          />
           <Button
             type='link'
             onClick={() => handleEdit(record)}
