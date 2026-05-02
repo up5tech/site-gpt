@@ -33,6 +33,8 @@ export interface Website {
   company_id: string;
   created_at: string;
   updated_at: string;
+  status: string;
+  ingest_status: string;
 }
 
 export interface WebsitePage {

@@ -8,8 +8,10 @@ import {
   message,
   Modal,
   Row,
+  Select,
   Space,
   Table,
+  Tag,
   Typography,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
@@ -66,6 +68,28 @@ export function Websites() {
       title: 'Site Map',
       dataIndex: 'site_map_url',
       key: 'site_map_url',
+    },
+    {
+      title: 'Status',
+      dataIndex: 'status',
+      key: 'status',
+      render: (status: string) => (
+        <Tag color={status === 'active' ? 'green' : 'red'}>
+          {status?.toUpperCase()}
+        </Tag>
+      ),
+    },
+    {
+      title: 'Ingest Status',
+      dataIndex: 'ingest_status',
+      key: 'ingest_status',
+      render: (status: string) => {
+        let color = 'default';
+        if (status === 'completed') color = 'success';
+        if (status === 'processing') color = 'processing';
+        if (status === 'failed') color = 'error';
+        return <Tag color={color}>{status?.toUpperCase()}</Tag>;
+      },
     },
     {
       title: 'Actions',
@@ -256,6 +280,16 @@ export function Websites() {
             rules={[{ required: true, message: 'Please enter sitemap URL' }]}
           >
             <Input placeholder='https://example.com/sitemap.xml' />
+          </Form.Item>
+          <Form.Item
+            name='status'
+            label='Status'
+            initialValue='active'
+          >
+            <Select>
+              <Select.Option value='active'>Active</Select.Option>
+              <Select.Option value='inactive'>Inactive</Select.Option>
+            </Select>
           </Form.Item>
         </Form>
       </Modal>

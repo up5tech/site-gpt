@@ -19,8 +19,10 @@ import {
   Row,
   Space,
   Table,
+  Tag,
   Typography,
 } from 'antd';
+import { DatabaseOutlined } from '@ant-design/icons';
 import useApp from 'antd/es/app/useApp';
 import type { ColumnsType } from 'antd/es/table';
 import { useEffect, useState } from 'react';
@@ -89,6 +91,17 @@ export function WebsiteDetail() {
     } catch (error) {
       console.error('Load sitemap error', error);
       message.error('Failed to load sitemap');
+    }
+  };
+
+  const handleRunIngest = async () => {
+    try {
+      await api.post(`/ingest`, null, { params: { website_id: id } });
+      message.success('Ingest started successfully');
+      fetchWebsiteDetail();
+    } catch (error) {
+      console.error('Run ingest error', error);
+      message.error('Failed to start ingest');
     }
   };
 
@@ -216,13 +229,23 @@ export function WebsiteDetail() {
             <GlobalOutlined /> {website?.url}
           </Text>
         </Space>
-        <Button
-          type='primary'
-          icon={<ReloadOutlined />}
-          onClick={handleLoadSitemap}
-        >
-          Sync Sitemap
-        </Button>
+        <Space>
+          <Button
+            type='primary'
+            icon={<ReloadOutlined />}
+            onClick={handleLoadSitemap}
+          >
+            Sync Sitemap
+          </Button>
+          <Button
+            type='primary'
+            icon={<DatabaseOutlined />}
+            onClick={handleRunIngest}
+            style={{ backgroundColor: '#10b981', borderColor: '#10b981' }}
+          >
+            Run Ingest
+          </Button>
+        </Space>
       </div>
 
       <Row gutter={[24, 24]}>
@@ -249,6 +272,21 @@ export function WebsiteDetail() {
               </Descriptions.Item>
               <Descriptions.Item label='Sitemap URL'>
                 <Text copyable>{website?.site_map_url}</Text>
+              </Descriptions.Item>
+              <Descriptions.Item label='Status'>
+                <Tag color={website?.status === 'active' ? 'green' : 'red'}>
+                  {website?.status?.toUpperCase()}
+                </Tag>
+              </Descriptions.Item>
+              <Descriptions.Item label='Ingest Status'>
+                {(() => {
+                  let color = 'default';
+                  const s = website?.ingest_status;
+                  if (s === 'completed') color = 'success';
+                  if (s === 'processing') color = 'processing';
+                  if (s === 'failed') color = 'error';
+                  return <Tag color={color}>{s?.toUpperCase()}</Tag>;
+                })()}
               </Descriptions.Item>
               <Descriptions.Item label='Description' span={3}>
                 {website?.description || 'No description provided'}

@@ -19,7 +19,16 @@ router = APIRouter()
 
 
 @router.post("/ingest")
-async def ingest(website_id: str):
+async def ingest(website_id: str, db: Session = Depends(get_db)):
+    website = (
+        db.query(models.Website).filter(models.Website.id == website_id).first()
+    )
+    if not website:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Website not found"
+        )
+    website.ingest_status = "processing"
+    db.commit()
     await enqueue_job({"type": "ingest", "website_id": website_id})
     return {"status": "ok"}
 

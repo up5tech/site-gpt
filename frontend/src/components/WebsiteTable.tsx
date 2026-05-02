@@ -1,18 +1,11 @@
-import { Table, Typography } from 'antd';
+import { Table, Tag, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { Website } from '../types/api';
 import api from '../utils/api';
 
 const { Text } = Typography;
-
-interface Website {
-  id: string;
-  name: string;
-  url: string;
-  description: string;
-  site_map_url: string;
-}
 
 export function WebsiteTable() {
   const [data, setData] = useState<Website[]>([]);
@@ -37,14 +30,26 @@ export function WebsiteTable() {
       render: (text) => <Text style={{ fontSize: '14px' }}>{text}</Text>,
     },
     {
-      title: 'Description',
-      dataIndex: 'description',
-      key: 'description',
-      render: (text) => (
-        <Text type='secondary' style={{ fontSize: '14px' }}>
-          {text || '—'}
-        </Text>
+      title: 'Status',
+      dataIndex: 'status',
+      key: 'status',
+      render: (status: string) => (
+        <Tag color={status === 'active' ? 'green' : 'red'}>
+          {status?.toUpperCase()}
+        </Tag>
       ),
+    },
+    {
+      title: 'Ingest Status',
+      dataIndex: 'ingest_status',
+      key: 'ingest_status',
+      render: (status: string) => {
+        let color = 'default';
+        if (status === 'completed') color = 'success';
+        if (status === 'processing') color = 'processing';
+        if (status === 'failed') color = 'error';
+        return <Tag color={color}>{status?.toUpperCase()}</Tag>;
+      },
     },
   ];
 
