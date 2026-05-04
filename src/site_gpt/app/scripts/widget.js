@@ -2,13 +2,13 @@
   // ================= CONFIG =================
   const DEFAULT_CONFIG = {
     apiUrl: '',
-    token: '',
+    website_id: '',
     botName: 'Assistant',
     position: 'bottom-right',
     width: '360px',
     height: '480px',
     theme: {
-      primaryColor: '#4CAF50',
+      primaryColor: '#4c74afff',
       backgroundColor: '#ffffff',
     },
     placeholder: 'Type a message...',
@@ -21,7 +21,7 @@
     DEFAULT_CONFIG,
     window.ChatWidgetConfig || {},
   );
-  const hasToken = !!config.token;
+  const hasWebsiteId = !!config.website_id;
 
   // ================= SESSION =================
   function newSession() {
@@ -288,17 +288,12 @@
     const thinkingMsg = addMessage('', 'bot', true);
 
     try {
-      const res = await fetch(config.apiUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${config.token}`,
-        },
-        body: JSON.stringify({
-          message: text,
-          session_id: sessionId,
-        }),
-      });
+      const url = new URL(config.apiUrl, window.location.origin);
+      url.searchParams.append('question', text);
+      url.searchParams.append('website_id', config.website_id);
+      url.searchParams.append('session_id', sessionId);
+
+      const res = await fetch(url);
 
       const data = await res.json();
       const reply = data.answer || 'No response';
@@ -353,8 +348,8 @@
 
   // ================= INIT =================
   function init() {
-    if (!hasToken) {
-      addMessage('Missing API token', 'bot');
+    if (!hasWebsiteId) {
+      addMessage('Missing Website ID', 'bot');
       return;
     }
 

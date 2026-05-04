@@ -193,3 +193,16 @@ class Embedding(BaseModel):
     )
     content: Mapped[str] = mapped_column(Text)
     embedding = mapped_column(Vector(1536))
+
+
+class ChatMessage(BaseModel):
+    __tablename__ = "chat_messages"
+
+    __table_args__ = (Index("idx_chat_messages_session_id", "session_id"),)
+
+    session_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    role: Mapped[str] = mapped_column(String(50), nullable=False)
+    website_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("websites.id", ondelete="CASCADE"), nullable=False
+    )

@@ -1,5 +1,6 @@
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from site_gpt.app import models
@@ -35,9 +36,10 @@ async def ingest(website_id: str, db: Session = Depends(get_db)):
 def chat(
     question: str,
     website_id: UUID,
+    session_id: str,
     db: Session = Depends(get_db),
 ):
-    return {"answer": ask(db, question, website_id)}
+    return {"answer": ask(db, website_id, session_id, question)}
 
 
 @router.get("/health")
@@ -114,3 +116,10 @@ def get_token(login: UserLogin, db: Session = Depends(get_db)):
     )
 
     return {"access_token": access_token, "token_type": "bearer"}
+
+
+@router.get("/widget.js")
+def get_widget_js():
+    return FileResponse(
+        "./src/site_gpt/app/scripts/widget.js", media_type="application/javascript"
+    )
