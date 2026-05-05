@@ -8,6 +8,7 @@ import { Dashboard } from './pages/Dashboard';
 import { ExtraDocuments } from './pages/ExtraDocuments';
 import { Login } from './pages/Login';
 import { Register } from './pages/Register';
+import { Settings } from './pages/Settings';
 import { Users } from './pages/Users';
 import { WebsiteDetail } from './pages/WebsiteDetail';
 import { Websites } from './pages/Websites';
@@ -24,6 +25,7 @@ function App() {
               <Route path='/websites/:id' element={<WebsiteDetail />} />
               <Route path='/users' element={<Users />} />
               <Route path='/documents' element={<ExtraDocuments />} />
+              <Route path='/settings' element={<Settings />} />
               <Route path='/register' element={<Register />} />
               <Route path='/login' element={<Login />} />
             </Routes>
