@@ -37,6 +37,16 @@ dependencies = [
 [tool.poetry]
 packages = [{include = "site_gpt", from = "src"}]
 
+# [build-system]
+# requires = ["poetry-core>=2.0.0,<3.0.0"]
+# build-backend = "poetry.core.masonry.api"
+
 [build-system]
-requires = ["poetry-core>=2.0.0,<3.0.0"]
-build-backend = "poetry.core.masonry.api"
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

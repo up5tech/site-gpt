@@ -1,0 +1,61 @@
+Metadata-Version: 2.4
+Name: site-gpt
+Version: 0.1.0
+Author-email: Jacky <tdhungit@gmail.com>
+Requires-Python: <3.15,>=3.13
+Description-Content-Type: text/markdown
+Requires-Dist: fastapi<0.136.0,>=0.135.3
+Requires-Dist: uvicorn<0.45.0,>=0.44.0
+Requires-Dist: langchain<2.0.0,>=1.2.15
+Requires-Dist: langchain-community<0.5.0,>=0.4.1
+Requires-Dist: langchain-openai<2.0.0,>=1.1.13
+Requires-Dist: langchain-google-genai<5.0.0,>=4.2.1
+Requires-Dist: langchain-openrouter<0.3.0,>=0.2.1
+Requires-Dist: langchain-groq<2.0.0,>=1.1.2
+Requires-Dist: langchain-ollama<2.0.0,>=1.1.0
+Requires-Dist: psycopg2-binary<3.0.0,>=2.9.11
+Requires-Dist: sqlalchemy<3.0.0,>=2.0.49
+Requires-Dist: python-dotenv<2.0.0,>=1.2.2
+Requires-Dist: httpx<0.29.0,>=0.28.1
+Requires-Dist: langchain-postgres<0.0.18,>=0.0.17
+Requires-Dist: python-jose<4.0.0,>=3.5.0
+Requires-Dist: alembic<2.0.0,>=1.18.4
+Requires-Dist: pgvector==0.3.2
+Requires-Dist: passlib[bcrypt]<2.0.0,>=1.7.4
+Requires-Dist: argon2-cffi<26.0.0,>=25.1.0
+Requires-Dist: fastapi-mail<2.0.0,>=1.6.2
+Requires-Dist: python-multipart<0.0.27,>=0.0.26
+Requires-Dist: redis[async]<8.0.0,>=7.4.0
+Requires-Dist: trafilatura<3.0.0,>=2.0.0
+Requires-Dist: beautifulsoup4<5.0.0,>=4.14.3
+
+# SiteGPT
+
+SiteGPT is a system auto generate to Chat Bot for company. It allows users to create and manage their own websites, extra documents, and use them to create a Chat Bot.
+
+![Example](./site-gpt.png)
+
+## Features
+
+- User authentication and management
+- Website management
+- Extra document management for additional information
+- Use Website information and Extra Document to create a Chat Bot
+
+## Installation
+
+- Clone the repository
+- Create database
+- Install and config redis
+- Config .env: copy from .env.example
+- Install uv
+- Run `uv install`
+- Run `uv run alembic upgrade head` to apply database migrations
+- Run `uv run uvicorn src.site_gpt.app.main:app`
+- Run `uv run python -m src.site_gpt.app.worker` to start the worker
+
+## Development
+
+- Create migration `uv run alembic revision --autogenerate -m "[name]"`
+- Run `uv run alembic upgrade head` to apply database migrations
+- Run `uv run uvicorn src.site_gpt.app.main:app --reload` to start the development server
