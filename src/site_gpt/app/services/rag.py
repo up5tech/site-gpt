@@ -9,19 +9,23 @@ from site_gpt.app.services.llm import get_llm
 
 
 def search(db: Session, query_vector: list[float], website_id: UUID):
-    sql = text(
-        """
+    vector_str = "[" + ",".join(map(str, query_vector)) + "]"
+
+    sql = text("""
         SELECT e.content
         FROM embeddings e
         JOIN documents d ON e.document_id = d.id
         WHERE d.website_id = :website_id
-        ORDER BY e.embedding <-> :vector
+        ORDER BY e.embedding <-> CAST(:vector AS vector)
         LIMIT 5
-    """
-    )
+    """)
 
     return db.execute(
-        sql, {"website_id": website_id, "vector": query_vector}
+        sql,
+        {
+            "website_id": website_id,
+            "vector": vector_str,
+        },
     ).fetchall()
 
 
