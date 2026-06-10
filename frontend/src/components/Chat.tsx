@@ -2,8 +2,8 @@ import { useChat } from '@/context/ChatContext';
 import type { Website } from '@/types/api';
 import api from '@/utils/api';
 import { SendOutlined } from '@ant-design/icons';
-import { Button, Empty, Input, List, Select, Typography, message } from 'antd';
-import { useEffect, useState } from 'react';
+import { Button, Empty, Input, List, Select, Spin, Typography, message } from 'antd';
+import { useEffect, useRef, useState } from 'react';
 
 const { TextArea } = Input;
 const { Text } = Typography;
@@ -20,6 +20,7 @@ export function Chat() {
   const [inputValue, setInputValue] = useState('');
   const [websites, setWebsites] = useState<Website[]>([]);
   const [loadingWebsites, setLoadingWebsites] = useState(false);
+  const chatListRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let sessionStr = localStorage.getItem('sessionId');
@@ -32,6 +33,13 @@ export function Chat() {
     }
     fetchWebsites();
   }, []);
+
+  useEffect(() => {
+    chatListRef.current?.scrollTo({
+      top: chatListRef.current.scrollHeight,
+      behavior: 'smooth',
+    });
+  }, [messages, loading]);
 
   const fetchWebsites = async () => {
     setLoadingWebsites(true);
@@ -91,50 +99,79 @@ export function Chat() {
           }))}
         />
       </div>
-      <List
+      <div
+        ref={chatListRef}
         style={{
           flex: 1,
           overflow: 'auto',
           padding: '24px 16px',
           background: '#fafafa',
         }}
-        locale={{
-          emptyText: (
-            <Empty
-              description={
-                selectedWebsiteId
-                  ? 'No messages yet. Start chatting!'
-                  : 'Please select a website to start chatting'
-              }
-              image={Empty.PRESENTED_IMAGE_SIMPLE}
-            />
-          ),
-        }}
-        dataSource={messages}
-        renderItem={(item: { role: 'user' | 'assistant'; content: string }) => (
+      >
+        <List
+          locale={{
+            emptyText: (
+              <Empty
+                description={
+                  selectedWebsiteId
+                    ? 'No messages yet. Start chatting!'
+                    : 'Please select a website to start chatting'
+                }
+                image={Empty.PRESENTED_IMAGE_SIMPLE}
+              />
+            ),
+          }}
+          dataSource={messages}
+          renderItem={(item: { role: 'user' | 'assistant'; content: string }) => (
+            <List.Item
+              style={{
+                justifyContent: item.role === 'user' ? 'flex-end' : 'flex-start',
+                border: 'none',
+                padding: '8px 0',
+                marginBottom: '8px',
+              }}
+            >
+              <div
+                className={`chat-bubble ${item.role}`}
+                style={{
+                  boxShadow:
+                    item.role === 'user'
+                      ? '0 2px 8px rgba(0, 0, 0, 0.15)'
+                      : '0 2px 8px rgba(0, 0, 0, 0.05)',
+                  lineHeight: '1.6',
+                }}
+              >
+                {item.content}
+              </div>
+            </List.Item>
+          )}
+        />
+        {loading && messages.length > 0 && messages[messages.length - 1].role === 'user' && (
           <List.Item
             style={{
-              justifyContent: item.role === 'user' ? 'flex-end' : 'flex-start',
+              justifyContent: 'flex-start',
               border: 'none',
               padding: '8px 0',
-              marginBottom: '8px',
             }}
           >
             <div
-              className={`chat-bubble ${item.role}`}
+              className='chat-bubble assistant'
               style={{
-                boxShadow:
-                  item.role === 'user'
-                    ? '0 2px 8px rgba(0, 0, 0, 0.15)'
-                    : '0 2px 8px rgba(0, 0, 0, 0.05)',
+                boxShadow: '0 2px 8px rgba(0, 0, 0, 0.05)',
                 lineHeight: '1.6',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
               }}
             >
-              {item.content}
+              <Spin size='small' />
+              <Text type='secondary' style={{ fontSize: 13 }}>
+                Thinking...
+              </Text>
             </div>
           </List.Item>
         )}
-      />
+      </div>
       <div
         style={{
           padding: '16px',
