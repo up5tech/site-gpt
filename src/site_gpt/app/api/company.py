@@ -1,7 +1,7 @@
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from site_gpt.app import models
@@ -14,7 +14,6 @@ from site_gpt.app.db.session import get_db
 from site_gpt.app.schemas.app import PaginatedResponse
 from site_gpt.app.schemas.company import CompanyRes, CompanyUpdate
 from site_gpt.app.schemas.user import UserCreate, UserRes, UserUpdate
-
 
 router = APIRouter()
 
@@ -136,7 +135,7 @@ def get_user(
         query = (
             db.query(models.User)
             .filter(
-                models.User.id == user_id, 
+                models.User.id == user_id,
                 models.User.company_id == user.company_id,
             )
             .first()
@@ -158,7 +157,7 @@ def delete_user(
         query = (
             db.query(models.User)
             .filter(
-                models.User.id == user_id, 
+                models.User.id == user_id,
                 models.User.company_id == user.company_id,
             )
             .first()
@@ -183,7 +182,7 @@ def update_user(
         query = (
             db.query(models.User)
             .filter(
-                models.User.id == user_id, 
+                models.User.id == user_id,
                 models.User.company_id == user.company_id,
             )
             .first()
@@ -220,7 +219,7 @@ def change_password(
         query = (
             db.query(models.User)
             .filter(
-                models.User.id == user_id, 
+                models.User.id == user_id,
                 models.User.company_id == user.company_id,
             )
             .first()

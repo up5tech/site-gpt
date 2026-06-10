@@ -16,11 +16,20 @@ export function Chat() {
     selectedWebsiteId,
     setSelectedWebsiteId,
   } = useChat();
+  const [sessionId, setSessionId] = useState('');
   const [inputValue, setInputValue] = useState('');
   const [websites, setWebsites] = useState<Website[]>([]);
   const [loadingWebsites, setLoadingWebsites] = useState(false);
 
   useEffect(() => {
+    let sessionStr = localStorage.getItem('sessionId');
+    if (sessionStr) {
+      setSessionId(sessionStr);
+    } else {
+      sessionStr = crypto.randomUUID();
+      localStorage.setItem('sessionId', sessionStr);
+      setSessionId(sessionStr);
+    }
     fetchWebsites();
   }, []);
 
@@ -48,7 +57,7 @@ export function Chat() {
       message.warning('Please select a website first');
       return;
     }
-    sendMessage(inputValue, selectedWebsiteId);
+    sendMessage(inputValue, selectedWebsiteId, sessionId);
     setInputValue('');
   };
 

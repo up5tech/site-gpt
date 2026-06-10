@@ -5,7 +5,11 @@ import api from '../utils/api';
 
 interface ChatContextType {
   messages: Array<{ role: 'user' | 'assistant'; content: string }>;
-  sendMessage: (query: string, websiteId?: string) => Promise<void>;
+  sendMessage: (
+    query: string,
+    websiteId?: string,
+    sessionId?: string,
+  ) => Promise<void>;
   ingestSite: (url: string) => Promise<void>;
   loading: boolean;
   selectedWebsiteId: string | null;
@@ -35,15 +39,21 @@ export const ChatProvider = ({ children }: Props) => {
     null,
   );
 
-  const sendMessage = async (query: string, websiteId?: string) => {
+  const sendMessage = async (
+    query: string,
+    websiteId?: string,
+    sessionId?: string,
+  ) => {
     setLoading(true);
     setMessages((prev) => [...prev, { role: 'user' as const, content: query }]);
 
     try {
-      const url = websiteId
-        ? `/chat?q=${encodeURIComponent(query)}&website_id=${websiteId}`
-        : `/chat?q=${encodeURIComponent(query)}`;
-      const response = await api.get<ChatResponse>(url);
+      const url = '/chat';
+      const response = await api.post<ChatResponse>(url, {
+        question: query,
+        website_id: websiteId,
+        session_id: sessionId,
+      });
       setMessages((prev) => [
         ...prev,
         { role: 'assistant' as const, content: response.data.answer },

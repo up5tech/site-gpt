@@ -1,16 +1,16 @@
-from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from site_gpt.app import models
 from site_gpt.app.core.auth import (
+    create_access_token,
     hash_password,
     verify_password,
-    create_access_token,
 )
-from site_gpt.app.core.config import JWT_SECRET_KEY, JWT_ALGORITHM
+from site_gpt.app.core.config import JWT_ALGORITHM, JWT_SECRET_KEY
 from site_gpt.app.db.session import get_db
+from site_gpt.app.schemas.chat import ChatRequest
 from site_gpt.app.schemas.company import CompanyRegister
 from site_gpt.app.schemas.user import UserLogin
 from site_gpt.app.services.rag import ask
@@ -19,7 +19,7 @@ from site_gpt.app.services.redis import enqueue_job
 router = APIRouter()
 
 
-@router.post("/ingest")
+@router.post("/api/ingest")
 async def ingest(website_id: str, db: Session = Depends(get_db)):
     website = db.query(models.Website).filter(models.Website.id == website_id).first()
     if not website:
@@ -32,14 +32,12 @@ async def ingest(website_id: str, db: Session = Depends(get_db)):
     return {"status": "ok"}
 
 
-@router.get("/chat")
+@router.post("/api/chat")
 def chat(
-    question: str,
-    website_id: UUID,
-    session_id: str,
+    body: ChatRequest,
     db: Session = Depends(get_db),
 ):
-    return {"answer": ask(db, website_id, session_id, question)}
+    return {"answer": ask(db, body.website_id, body.session_id, body.question)}
 
 
 @router.get("/health")

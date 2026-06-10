@@ -1,14 +1,14 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from site_gpt.app.api.routes import router
-from site_gpt.app.api.document import router as document_router
 from site_gpt.app.api.company import router as company_router
+from site_gpt.app.api.document import router as document_router
+from site_gpt.app.api.extra_document import router as extra_document_router
+from site_gpt.app.api.routes import router
 from site_gpt.app.api.setting import router as setting_router
 from site_gpt.app.api.upload import router as upload_router
 from site_gpt.app.api.user import router as user_router
 from site_gpt.app.api.website import router as website_router
-from site_gpt.app.api.extra_document import router as extra_document_router
 
 app = FastAPI(title="AI Agent Expose API")
 
