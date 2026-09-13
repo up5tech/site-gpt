@@ -9,15 +9,15 @@ import {
   SyncOutlined,
   TeamOutlined,
 } from '@ant-design/icons';
-import { Layout as AntLayout, Button, Card, Col, Row, Statistic, Typography } from 'antd';
+import { Layout as AntLayout, Button, Card, Col, Empty, List, Row, Statistic, Tag, Typography } from 'antd';
 import { Link } from 'react-router-dom';
 import { Chat } from '../components/Chat';
 import { useAuth } from '../context/AuthContext';
 import { UserTable } from '@/components/UserTable';
 import { WebsiteTable } from '@/components/WebsiteTable';
 import { ChatProvider } from '@/context/ChatContext';
-import { getDashboardStats } from '@/utils/api';
-import type { DashboardStats } from '@/types/api';
+import { getDashboardStats, getRecentConversations } from '@/utils/api';
+import type { DashboardStats, RecentConversation } from '@/types/api';
 import { useEffect, useState } from 'react';
 
 const { Title, Text } = Typography;
@@ -114,6 +114,7 @@ export function Dashboard() {
 
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [loadingStats, setLoadingStats] = useState(true);
+  const [recent, setRecent] = useState<RecentConversation[]>([]);
 
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -122,6 +123,13 @@ export function Dashboard() {
       .then((res) => setStats(res.data))
       .catch((err) => console.error('Dashboard stats error', err))
       .finally(() => setLoadingStats(false));
+  }, [isAuthenticated]);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    getRecentConversations(5)
+      .then((res) => setRecent(res.data.items || []))
+      .catch((err) => console.error('Recent conversations error', err));
   }, [isAuthenticated]);
 
   const today = new Date().toLocaleDateString('en-US', {
@@ -228,7 +236,7 @@ export function Dashboard() {
             chipBg='#eff6ff'
             chipFg='#3b82f6'
             loading={loadingStats}
-            to='/playground'
+            to='/playground?focus=latest'
           />
         </div>
         <div style={{ flex: '1 1 200px', minWidth: 200 }}>
@@ -243,6 +251,75 @@ export function Dashboard() {
           />
         </div>
       </div>
+
+      {/* Recent conversations */}
+      <Row gutter={[24, 24]} style={{ marginBottom: 8 }}>
+        <Col span={24}>
+          <Card
+            title={
+              <span style={{ fontWeight: 600 }}>
+                <MessageOutlined style={{ marginRight: 8, color: '#6b7280' }} />
+                Recent conversations
+              </span>
+            }
+            extra={
+              <Link to='/playground?focus=latest'>
+                <Text type='secondary' style={{ fontSize: 14 }}>
+                  View all
+                </Text>
+              </Link>
+            }
+            className='premium-card'
+          >
+            {recent.length === 0 ? (
+              <Empty
+                image={Empty.PRESENTED_IMAGE_SIMPLE}
+                description='No conversations yet'
+              />
+            ) : (
+              <List
+                dataSource={recent}
+                renderItem={(c: RecentConversation) => (
+                  <List.Item
+                    style={{ cursor: 'pointer', padding: '10px 4px' }}
+                    onClick={() =>
+                      (window.location.href = `/playground?website=${c.website_id}&focus=${encodeURIComponent(c.session_id)}`)
+                    }
+                  >
+                    <div style={{ width: '100%' }}>
+                      <div
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          gap: 8,
+                        }}
+                      >
+                        <Text strong ellipsis style={{ maxWidth: '70%' }}>
+                          {c.title || 'Chat'}
+                        </Text>
+                        <Tag color='blue' style={{ margin: 0 }}>
+                          {c.website_name}
+                        </Tag>
+                      </div>
+                      <div
+                        style={{
+                          fontSize: 12,
+                          color: '#9ca3af',
+                          marginTop: 2,
+                        }}
+                      >
+                        {c.message_count} msgs ·{' '}
+                        {new Date(c.last_message_at).toLocaleString()}
+                      </div>
+                    </div>
+                  </List.Item>
+                )}
+              />
+            )}
+          </Card>
+        </Col>
+      </Row>
 
       {/* Websites + Chat */}
       <Row gutter={[24, 24]} style={{ marginBottom: 8 }}>

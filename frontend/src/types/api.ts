@@ -81,6 +81,48 @@ export interface FeedbackRequest {
   comment?: string;
 }
 
+export interface ConversationMessage {
+  id: string;
+  session_id: string;
+  website_id: string;
+  role: 'user' | 'assistant';
+  message: string;
+  created_at: string;
+}
+
+export interface ConversationSummary {
+  session_id: string;
+  website_id: string;
+  title: string | null;
+  message_count: number;
+  created_at: string;
+  last_message_at: string;
+}
+
+export interface ConversationList {
+  items: ConversationSummary[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface ConversationMessages {
+  items: ConversationMessage[];
+}
+
+export interface RecentConversation {
+  session_id: string;
+  website_id: string;
+  website_name: string;
+  title: string | null;
+  message_count: number;
+  last_message_at: string;
+}
+
+export interface RecentConversations {
+  items: RecentConversation[];
+}
+
 /** Public widget config fetched by the embeddable widget (key/value map). */
 export type WidgetConfig = Record<string, string>;
 

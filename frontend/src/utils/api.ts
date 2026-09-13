@@ -1,5 +1,5 @@
 import axios, { AxiosInstance } from 'axios';
-import type { ChatResponse, DashboardStats, FeedbackRequest, LoginResponse, WidgetConfig } from '../types/api';
+import type { ChatResponse, ConversationList, ConversationMessages, DashboardStats, FeedbackRequest, LoginResponse, RecentConversations, WidgetConfig } from '../types/api';
 
 // Base API instance with proxy /api -> backend
 const api: AxiosInstance = axios.create({
@@ -56,6 +56,28 @@ export const getWidgetConfig = (websiteId: string) =>
 
 export const ingest = (websiteId: string) =>
   api.post('/ingest', null, { params: { website_id: websiteId } });
+
+// Conversation history (admin panel)
+export const getConversations = (websiteId: string, params: { limit?: number; offset?: number } = {}) =>
+  api.get<ConversationList>('/conversations', {
+    params: { website_id: websiteId, ...params },
+  });
+
+export const getConversationMessages = (websiteId: string, sessionId: string) =>
+  api.get<ConversationMessages>('/conversations/' + encodeURIComponent(sessionId), {
+    params: { website_id: websiteId },
+  });
+
+export const deleteConversation = (websiteId: string, sessionId: string) =>
+  api.delete('/conversations/' + encodeURIComponent(sessionId), {
+    params: { website_id: websiteId },
+  });
+
+// Dashboard: latest conversations across the whole company
+export const getRecentConversations = (limit = 5) =>
+  api.get<RecentConversations>('/conversations/recent', {
+    params: { limit },
+  });
 
 export const getCompanies = (
   params: { name?: string; page?: number; limit?: number } = {},

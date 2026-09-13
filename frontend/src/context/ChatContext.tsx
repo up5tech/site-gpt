@@ -1,7 +1,7 @@
 import { message } from 'antd';
 import { createContext, ReactNode, useContext, useState } from 'react';
 import api from '../utils/api';
-import type { ChatSource } from '../types/api';
+import type { ChatSource, ConversationMessage } from '../types/api';
 
 interface ChatContextType {
   messages: Array<{
@@ -14,6 +14,7 @@ interface ChatContextType {
     websiteId?: string,
     sessionId?: string,
   ) => Promise<void>;
+  loadMessages: (items: ConversationMessage[]) => void;
   ingestSite: (url: string) => Promise<void>;
   loading: boolean;
   selectedWebsiteId: string | null;
@@ -96,6 +97,14 @@ export const ChatProvider = ({ children }: Props) => {
       }
       return copy;
     });
+  };
+
+  const loadMessages = (items: ConversationMessage[]) => {
+    setMessages(
+      items
+        .filter((m) => m.role === 'user' || m.role === 'assistant')
+        .map((m) => ({ role: m.role, content: m.message })),
+    );
   };
 
   const sendMessage = async (
@@ -186,16 +195,17 @@ export const ChatProvider = ({ children }: Props) => {
   };
 
   return (
-    <ChatContext.Provider
-      value={{
-        messages,
-        sendMessage,
-        ingestSite,
-        loading,
-        selectedWebsiteId,
-        setSelectedWebsiteId,
-      }}
-    >
+      <ChatContext.Provider
+        value={{
+          messages,
+          sendMessage,
+          loadMessages,
+          ingestSite,
+          loading,
+          selectedWebsiteId,
+          setSelectedWebsiteId,
+        }}
+      >
       {children}
     </ChatContext.Provider>
   );

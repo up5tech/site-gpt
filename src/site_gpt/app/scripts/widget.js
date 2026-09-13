@@ -562,6 +562,27 @@
   }
 
   // ================= INIT =================
+  // Restore a returning visitor's history from the server (source of truth).
+  // Falls back to the local copy if the server has nothing / is unreachable.
+  async function loadServerHistory() {
+    if (!config.enableHistory || !hasWebsiteId || !config.apiUrl) return false;
+    try {
+      const base = config.apiUrl.replace(/\/$/, '');
+      const res = await fetch(
+        `${base}/api/conversations/${encodeURIComponent(sessionId)}` +
+          `?website_id=${encodeURIComponent(config.website_id)}`,
+      );
+      if (!res.ok) return false;
+      const data = await res.json();
+      const items = data.items || [];
+      if (!items.length) return false;
+      items.forEach((m) => addMessage(m.message, m.role, false, true));
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
   async function init() {
     if (!hasWebsiteId) {
       addMessage('Missing Website ID', 'bot');
@@ -570,7 +591,8 @@
 
     await loadServerConfig();
 
-    loadHistory();
+    const loadedFromServer = await loadServerHistory();
+    if (!loadedFromServer) loadHistory();
 
     if (
       !localStorage.getItem('chat_widget_initialized') &&

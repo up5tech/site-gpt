@@ -15,9 +15,23 @@ from site_gpt.app.core.auth import (
 )
 from site_gpt.app.core.config import JWT_ALGORITHM, JWT_SECRET_KEY
 from site_gpt.app.db.session import get_db
-from site_gpt.app.schemas.chat import ChatRequest, FeedbackRequest
+from site_gpt.app.schemas.chat import (
+    ChatRequest,
+    ConversationListResponse,
+    ConversationMessagesResponse,
+    ConversationSummary,
+    FeedbackRequest,
+    RecentConversation,
+    RecentConversationsResponse,
+)
 from site_gpt.app.schemas.company import CompanyRegister
 from site_gpt.app.schemas.user import UserLogin
+from site_gpt.app.services.conversations import (
+    delete_conversation,
+    get_conversation_messages,
+    list_conversations,
+    list_recent_conversations,
+)
 from site_gpt.app.services.rag import ask, ask_stream
 from site_gpt.app.services.ratelimit import rate_limit
 from site_gpt.app.services.redis import enqueue_job, redis_client
@@ -136,6 +150,134 @@ async def chat_stream(
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@router.get("/api/conversations", response_model=ConversationListResponse)
+def list_conversations_endpoint(
+    website_id: str,
+    limit: int = 50,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_manager_user),
+):
+    """List a website's conversations (sessions) for the admin panel.
+
+    Manager-scoped: a user can only see conversations of websites that belong
+    to their own company."""
+    try:
+        site_uuid = _UUID(str(website_id))
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid website_id"
+        )
+    website = (
+        db.query(models.Website)
+        .filter(
+            models.Website.id == site_uuid,
+            models.Website.company_id == user.company_id,
+        )
+        .first()
+    )
+    if not website:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Website not found"
+        )
+    summaries, total = list_conversations(db, website.id, limit, offset)
+    return ConversationListResponse(
+        items=[ConversationSummary(**s) for s in summaries],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get(
+    "/api/conversations/recent", response_model=RecentConversationsResponse
+)
+def recent_conversations_endpoint(
+    limit: int = 10,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_manager_user),
+):
+    """Latest conversations across all of the user's company websites.
+
+    Manager-scoped: only the caller's company. Powers the Dashboard preview."""
+    items = list_recent_conversations(db, user.company_id, limit)
+    return RecentConversationsResponse(
+        items=[RecentConversation(**i) for i in items]
+    )
+
+
+@router.get(
+    "/api/conversations/{session_id}",
+    response_model=ConversationMessagesResponse,
+)
+def get_conversation_endpoint(
+    session_id: str,
+    website_id: str,
+    db: Session = Depends(get_db),
+):
+    """Public: fetch the messages of one conversation.
+
+    Used by the embeddable widget to restore a returning visitor's history.
+    Same `website_id` scoping as the chat endpoints — no auth, by design."""
+    try:
+        site_uuid = _UUID(str(website_id))
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid website_id"
+        )
+    website = (
+        db.query(models.Website).filter(models.Website.id == site_uuid).first()
+    )
+    if not website:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Website not found"
+        )
+    rows = get_conversation_messages(db, website.id, session_id)
+    return ConversationMessagesResponse(
+        items=[
+            {
+                "id": m.id,
+                "session_id": m.session_id,
+                "website_id": m.website_id,
+                "role": m.role,
+                "message": m.message,
+                "created_at": m.created_at,
+            }
+            for m in rows
+        ]
+    )
+
+
+@router.delete("/api/conversations/{session_id}")
+def delete_conversation_endpoint(
+    session_id: str,
+    website_id: str,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_manager_user),
+):
+    """Delete a conversation (all its messages). Manager-scoped by company."""
+    try:
+        site_uuid = _UUID(str(website_id))
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid website_id"
+        )
+    website = (
+        db.query(models.Website)
+        .filter(
+            models.Website.id == site_uuid,
+            models.Website.company_id == user.company_id,
+        )
+        .first()
+    )
+    if not website:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Website not found"
+        )
+    deleted = delete_conversation(db, website.id, session_id)
+    return {"status": "ok", "deleted": deleted}
 
 
 @router.get("/health")
