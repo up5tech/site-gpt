@@ -1,8 +1,7 @@
 import os
-from uuid import UUID
+from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends
-from fastapi import UploadFile, File
+from fastapi import APIRouter, Depends, File, UploadFile
 from sqlalchemy.orm import Session
 from site_gpt.app import models
 from site_gpt.app.core.auth import get_current_user
@@ -17,29 +16,32 @@ async def upload_file(
     db: Session = Depends(get_db),
     user: models.User = Depends(get_current_user),
 ):
-    # upload file
+    # Store under a unique, sanitized name to avoid collisions / path traversal.
+    original_name = os.path.basename(file.filename or "file")
+    ext = os.path.splitext(original_name)[1]
+    safe_name = f"{uuid4().hex}{ext}"
+
     os.makedirs("uploads", exist_ok=True)
-    file_url = f"{file.filename}"
-    file_path = f"uploads/{file_url}"
+    file_path = os.path.join("uploads", safe_name)
     with open(file_path, "wb") as f:
-        f.write(file.file.read())
-    # save to db
+        content = await file.read()
+        f.write(content)
+
     fileUpload = models.Attachment(
-        filename=file.filename,
-        file_url=file_url,
+        filename=original_name,
+        file_url=safe_name,
         status="tmp",
-        file_size=file.size,
+        file_size=len(content),
         file_type=file.content_type,
         user_id=user.id,
     )
     db.add(fileUpload)
     db.commit()
     db.refresh(fileUpload)
-    file_id = fileUpload.id
     return {
-        "file_id": file_id,
-        "filename": file.filename,
-        "file_url": file_path,
-        "file_size": file.size,
+        "file_id": fileUpload.id,
+        "filename": original_name,
+        "file_url": safe_name,
+        "file_size": len(content),
         "file_type": file.content_type,
     }

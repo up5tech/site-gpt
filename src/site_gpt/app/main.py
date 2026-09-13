@@ -9,13 +9,19 @@ from site_gpt.app.api.setting import router as setting_router
 from site_gpt.app.api.upload import router as upload_router
 from site_gpt.app.api.user import router as user_router
 from site_gpt.app.api.website import router as website_router
+from site_gpt.app.core.config import CORS_ORIGINS
 
 app = FastAPI(title="AI Agent Expose API")
 
+# Browsers reject `allow_credentials=True` together with a wildcard origin,
+# so credentials are only enabled for explicit (non-wildcard) origin lists.
+origins = [o.strip() for o in CORS_ORIGINS.split(",") if o.strip()]
+allow_credentials = origins != ["*"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # ⚠️ dev only
-    allow_credentials=True,
+    allow_origins=origins,
+    allow_credentials=allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )

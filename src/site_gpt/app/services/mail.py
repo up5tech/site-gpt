@@ -5,19 +5,22 @@ from fastapi_mail import ConnectionConfig
 MAIL_USERNAME = os.getenv("MAIL_USERNAME")
 MAIL_PASSWORD = os.getenv("MAIL_PASSWORD")
 MAIL_FROM = os.getenv("MAIL_FROM", "noreply@example.com")
+MAIL_FROM_NAME = os.getenv("MAIL_FROM_NAME", "SiteGPT")
 MAIL_PORT = int(os.getenv("MAIL_PORT", "587"))
 MAIL_SERVER = os.getenv("MAIL_SERVER", "smtp.gmail.com")
-MAIL_TLS = os.getenv("MAIL_TLS", "true").lower() == "true"
-MAIL_SSL = os.getenv("MAIL_SSL", "false").lower() == "true"
+# fastapi-mail >=1.x renamed MAIL_TLS/MAIL_SSL to MAIL_STARTTLS/MAIL_SSL_TLS.
+MAIL_STARTTLS = os.getenv("MAIL_TLS", "true").lower() == "true"
+MAIL_SSL_TLS = os.getenv("MAIL_SSL", "false").lower() == "true"
 
 EmailSettings = ConnectionConfig(
     MAIL_USERNAME=MAIL_USERNAME,
     MAIL_PASSWORD=MAIL_PASSWORD,
     MAIL_FROM=MAIL_FROM,
+    MAIL_FROM_NAME=MAIL_FROM_NAME,
     MAIL_PORT=MAIL_PORT,
     MAIL_SERVER=MAIL_SERVER,
-    MAIL_TLS=MAIL_TLS,
-    MAIL_SSL=MAIL_SSL,
+    MAIL_STARTTLS=MAIL_STARTTLS,
+    MAIL_SSL_TLS=MAIL_SSL_TLS,
     USE_CREDENTIALS=True,
     VALIDATE_CERTS=True,
 )

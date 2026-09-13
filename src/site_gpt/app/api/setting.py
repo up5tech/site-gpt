@@ -14,7 +14,11 @@ def get_settings(
     db: Session = Depends(get_db),
     user=Depends(get_admin_user),
 ):
-    query = db.query(models.Setting).all()
+    query = (
+        db.query(models.Setting)
+        .filter(models.Setting.company_id == user.company_id)
+        .all()
+    )
     return [SettingRes.model_validate(q) for q in query]
 
 
@@ -25,9 +29,10 @@ def update_settings(
     user=Depends(get_admin_user),
 ):
     for setting in settings:
-        db.query(models.Setting).filter(models.Setting.key == setting.key).update(
-            {"value": setting.value}
-        )
+        db.query(models.Setting).filter(
+            models.Setting.key == setting.key,
+            models.Setting.company_id == user.company_id,
+        ).update({"value": setting.value})
     db.commit()
     return {"message": "Settings updated successfully"}
 

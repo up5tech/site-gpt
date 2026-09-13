@@ -52,6 +52,8 @@ class User(BaseModel):
     hash_type: Mapped[str] = mapped_column(
         String(50), nullable=True, default="forgot-password"
     )
+    reset_token: Mapped[str] = mapped_column(String(255), nullable=True)
+    reset_token_expires_at: Mapped[datetime] = mapped_column(nullable=True)
 
 
 class Setting(BaseModel):

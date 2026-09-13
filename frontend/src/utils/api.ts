@@ -36,10 +36,18 @@ export const register = (data: any) => api.post('/register', data);
 export const login = (email: string, password: string) =>
   api.post<LoginResponse>('/token', { email: email, password });
 
-export const chat = (q: string) => api.get(`/chat?q=${encodeURIComponent(q)}`);
+export const chat = (
+  websiteId: string,
+  sessionId: string,
+  question: string,
+) => api.post<{ answer: string }>('/chat', {
+  website_id: websiteId,
+  session_id: sessionId,
+  question,
+});
 
-export const ingest = (sitemapUrl: string) =>
-  api.post('/ingest', { sitemap_url: sitemapUrl });
+export const ingest = (websiteId: string) =>
+  api.post('/ingest', null, { params: { website_id: websiteId } });
 
 export const getCompanies = (
   params: { name?: string; page?: number; limit?: number } = {},

@@ -1,65 +1,144 @@
 import asyncio
 import json
+import os
+import traceback
 
 from site_gpt.app.services.crawler import crawl_website
 from site_gpt.app.services.ingest import ingest_document, ingest_extra_document
+from site_gpt.app.services.parse import extract_text_from_file
 from site_gpt.app.services.redis import redis_client
 from site_gpt.app.db.session import SessionLocal
 from site_gpt.app import models
 
 
 async def worker():
+    print("Worker started, waiting for jobs...")
     while True:
-        _, job = await redis_client.brpop("queue:jobs")  # type: ignore
-        data = json.loads(job)
+        try:
+            _, job = await redis_client.brpop("queue:jobs")  # type: ignore
+        except Exception as e:
+            print(f"[worker] redis error: {e}")
+            await asyncio.sleep(2)
+            continue
 
+        data = json.loads(job)
         print("Processing:", data)
 
-        if data["type"] == "ingest":
-            await handle_ingest(data)
+        if data.get("type") == "ingest":
+            try:
+                await handle_ingest(data)
+            except Exception as e:
+                print(f"[worker] ingest failed: {e}")
+                traceback.print_exc()
 
 
 async def handle_ingest(data):
     if not data.get("website_id"):
         print("Missing website_id")
         return
+
     db = SessionLocal()
-    website = (
-        db.query(models.Website).filter(models.Website.id == data["website_id"]).first()
-    )
-    if not website:
-        print("Website not found")
-        return
-
-    website.ingest_status = "processing"
-    db.commit()
-
-    # ingest sitemap
-    docs = crawl_website(db, website.id)
-    for doc in docs:
-        document = models.Document(
-            title=doc.metadata["title"],
-            content=doc.page_content,
-            url=doc.metadata["source"],
-            website_id=website.id,
+    try:
+        website = (
+            db.query(models.Website)
+            .filter(models.Website.id == data["website_id"])
+            .first()
         )
-        db.add(document)
+        if not website:
+            print("Website not found")
+            return
+
+        website.ingest_status = "processing"
         db.commit()
-        db.refresh(document)
-        # save embedding
-        ingest_document(db, document.id, document.content)
 
-    # ingest extra documents
-    extra_documents = (
-        db.query(models.ExtraDocument)
-        .filter(models.ExtraDocument.website_id == website.id)
-        .all()
-    )
-    for extra_document in extra_documents:
-        ingest_extra_document(db, extra_document.id, extra_document.content)
+        # ---- 1. Crawl site pages and upsert documents (avoid duplicates) ----
+        docs = crawl_website(db, website.id)
+        for doc in docs:
+            url = doc.metadata["source"]
+            title = doc.metadata.get("title", url)
+            text = doc.page_content
 
-    website.ingest_status = "completed"
-    db.commit()
+            existing = (
+                db.query(models.Document)
+                .filter(
+                    models.Document.website_id == website.id,
+                    models.Document.url == url,
+                )
+                .first()
+            )
+            if existing:
+                existing.title = title
+                existing.content = text
+                document = existing
+            else:
+                document = models.Document(
+                    title=title,
+                    content=text,
+                    url=url,
+                    website_id=website.id,
+                )
+                db.add(document)
+            db.commit()
+            db.refresh(document)
+            ingest_document(db, document.id, document.content)
+
+        # ---- 2. Ingest extra documents (text + uploaded file contents) ----
+        # Include both website-linked docs and company-wide docs (website_id IS NULL),
+        # matching the scope used by rag.search().
+        extra_documents = (
+            db.query(models.ExtraDocument)
+            .filter(
+                (models.ExtraDocument.website_id == website.id)
+                | (
+                    (models.ExtraDocument.website_id == None)
+                    & (models.ExtraDocument.company_id == website.company_id)
+                )
+            )
+            .all()
+        )
+        for extra_document in extra_documents:
+            text_parts: list[str] = []
+            if extra_document.content and extra_document.content.strip():
+                text_parts.append(extra_document.content)
+
+            attachments = (
+                db.query(models.Attachment)
+                .filter(models.Attachment.extra_document_id == extra_document.id)
+                .all()
+            )
+            for att in attachments:
+                file_path = os.path.join("uploads", att.file_url)
+                try:
+                    file_text = extract_text_from_file(file_path, att.filename)
+                    if file_text and file_text.strip():
+                        text_parts.append(file_text)
+                except Exception as e:
+                    print(f"[worker] failed to parse attachment {att.filename}: {e}")
+
+            combined = "\n\n".join(p for p in text_parts if p and p.strip())
+            if combined:
+                ingest_extra_document(db, extra_document.id, combined)
+
+        website.ingest_status = "completed"
+        db.commit()
+        print(f"Ingest completed for website {website.id}")
+    except Exception as e:
+        db.rollback()
+        try:
+            website = (
+                db.query(models.Website)
+                .filter(models.Website.id == data["website_id"])
+                .first()
+            )
+            if website:
+                website.ingest_status = "failed"
+                db.commit()
+        except Exception:
+            pass
+        raise
+    finally:
+        db.close()
 
 
-asyncio.run(worker())
+if __name__ == "__main__":
+    asyncio.run(worker())

@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from site_gpt.app import models
 from site_gpt.app.core.auth import (
     create_access_token,
+    get_manager_user,
     hash_password,
     verify_password,
 )
@@ -20,8 +21,19 @@ router = APIRouter()
 
 
 @router.post("/api/ingest")
-async def ingest(website_id: str, db: Session = Depends(get_db)):
-    website = db.query(models.Website).filter(models.Website.id == website_id).first()
+async def ingest(
+    website_id: str,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_manager_user),
+):
+    website = (
+        db.query(models.Website)
+        .filter(
+            models.Website.id == website_id,
+            models.Website.company_id == user.company_id,
+        )
+        .first()
+    )
     if not website:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Website not found"
