@@ -1,5 +1,5 @@
 import axios, { AxiosInstance } from 'axios';
-import type { LoginResponse } from '../types/api';
+import type { ChatResponse, FeedbackRequest, LoginResponse, WidgetConfig } from '../types/api';
 
 // Base API instance with proxy /api -> backend
 const api: AxiosInstance = axios.create({
@@ -40,11 +40,19 @@ export const chat = (
   websiteId: string,
   sessionId: string,
   question: string,
-) => api.post<{ answer: string }>('/chat', {
+) => api.post<ChatResponse>('/chat', {
   website_id: websiteId,
   session_id: sessionId,
   question,
 });
+
+export const sendFeedback = (payload: FeedbackRequest) =>
+  api.post('/chat/feedback', payload);
+
+export const getWidgetConfig = (websiteId: string) =>
+  api.get<WidgetConfig>('/widget-config', {
+    params: { website_id: websiteId },
+  });
 
 export const ingest = (websiteId: string) =>
   api.post('/ingest', null, { params: { website_id: websiteId } });

@@ -12,6 +12,7 @@ import { Settings } from './pages/Settings';
 import { Users } from './pages/Users';
 import { WebsiteDetail } from './pages/WebsiteDetail';
 import { Websites } from './pages/Websites';
+import { Playground } from './pages/Playground';
 
 function App() {
   return (
@@ -23,6 +24,7 @@ function App() {
               <Route path='/' element={<Dashboard />} />
               <Route path='/websites' element={<Websites />} />
               <Route path='/websites/:id' element={<WebsiteDetail />} />
+              <Route path='/playground' element={<Playground />} />
               <Route path='/users' element={<Users />} />
               <Route path='/documents' element={<ExtraDocuments />} />
               <Route path='/settings' element={<Settings />} />

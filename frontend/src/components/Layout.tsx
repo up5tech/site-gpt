@@ -22,6 +22,7 @@ export function LayoutComponent({ children }: Props) {
   const menuItems = [
     { key: '/', label: 'Dashboard' },
     { key: '/websites', label: 'Websites' },
+    { key: '/playground', label: 'Playground' },
     { key: '/users', label: 'Users' },
     { key: '/documents', label: 'Documents' },
   ];

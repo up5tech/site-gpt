@@ -1,9 +1,14 @@
 import { message } from 'antd';
 import { createContext, ReactNode, useContext, useState } from 'react';
 import api from '../utils/api';
+import type { ChatSource } from '../types/api';
 
 interface ChatContextType {
-  messages: Array<{ role: 'user' | 'assistant'; content: string }>;
+  messages: Array<{
+    role: 'user' | 'assistant';
+    content: string;
+    sources?: ChatSource[];
+  }>;
   sendMessage: (
     query: string,
     websiteId?: string,
@@ -31,7 +36,7 @@ interface Props {
 
 export const ChatProvider = ({ children }: Props) => {
   const [messages, setMessages] = useState<
-    Array<{ role: 'user' | 'assistant'; content: string }>
+    Array<{ role: 'user' | 'assistant'; content: string; sources?: ChatSource[] }>
   >([]);
   const [loading, setLoading] = useState(false);
   const [selectedWebsiteId, setSelectedWebsiteId] = useState<string | null>(
@@ -76,6 +81,18 @@ export const ChatProvider = ({ children }: Props) => {
         };
       } else {
         copy.push({ role: 'assistant', content: note });
+      }
+      return copy;
+    });
+  };
+
+  const setAssistantSources = (sources: ChatSource[]) => {
+    if (!sources || sources.length === 0) return;
+    setMessages((prev) => {
+      const copy = [...prev];
+      const last = copy[copy.length - 1];
+      if (last && last.role === 'assistant') {
+        copy[copy.length - 1] = { ...last, sources };
       }
       return copy;
     });
@@ -137,8 +154,11 @@ export const ChatProvider = ({ children }: Props) => {
               appendAssistantChunk(data.chunk);
             } else if (typeof data.error === 'string') {
               appendAssistantError(data.error);
+            } else if (data.done === true && Array.isArray(data.sources)) {
+              // Stream finished; attach cited sources to the last answer.
+              setAssistantSources(data.sources);
             }
-            // `done: true` is the normal stream terminator; no action needed.
+            // `done: true` (without sources) is the normal stream terminator.
           } catch {
             // ignore malformed SSE line
           }

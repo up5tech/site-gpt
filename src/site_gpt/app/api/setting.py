@@ -13,8 +13,18 @@ def _default_setting_rows(company_id):
     """Build the default Setting rows for a newly created company."""
     return [
         models.Setting(key="assistant_name", value="Site GPT", company_id=company_id),
-        models.Setting(key="widget_header_color", value="green", company_id=company_id),
-        models.Setting(key="widget_footer_color", value="green", company_id=company_id),
+        models.Setting(key="widget_header_color", value="#4c74af", company_id=company_id),
+        models.Setting(key="widget_footer_color", value="#4c74af", company_id=company_id),
+        models.Setting(key="widget_position", value="bottom-right", company_id=company_id),
+        models.Setting(
+            key="greeting_message",
+            value="Hi 👋 How can I help you?",
+            company_id=company_id,
+        ),
+        models.Setting(
+            key="placeholder_text", value="Type a message...", company_id=company_id
+        ),
+        models.Setting(key="suggested_questions", value="", company_id=company_id),
     ]
 
 
@@ -38,10 +48,26 @@ def update_settings(
     user=Depends(get_admin_user),
 ):
     for setting in settings:
-        db.query(models.Setting).filter(
-            models.Setting.key == setting.key,
-            models.Setting.company_id == user.company_id,
-        ).update({"value": setting.value})
+        existing = (
+            db.query(models.Setting)
+            .filter(
+                models.Setting.key == setting.key,
+                models.Setting.company_id == user.company_id,
+            )
+            .first()
+        )
+        if existing:
+            existing.value = setting.value
+        else:
+            # Upsert so companies created before new keys were added can still
+            # persist them (e.g. widget_position, greeting_message, ...).
+            db.add(
+                models.Setting(
+                    key=setting.key,
+                    value=setting.value,
+                    company_id=user.company_id,
+                )
+            )
     db.commit()
     return {"message": "Settings updated successfully"}
 
@@ -56,10 +82,24 @@ def create_settings(
             key="assistant_name", value="Site GPT", company_id=user.company_id
         ),
         models.Setting(
-            key="widget_header_color", value="green", company_id=user.company_id
+            key="widget_header_color", value="#4c74af", company_id=user.company_id
         ),
         models.Setting(
-            key="widget_footer_color", value="green", company_id=user.company_id
+            key="widget_footer_color", value="#4c74af", company_id=user.company_id
+        ),
+        models.Setting(
+            key="widget_position", value="bottom-right", company_id=user.company_id
+        ),
+        models.Setting(
+            key="greeting_message",
+            value="Hi 👋 How can I help you?",
+            company_id=user.company_id,
+        ),
+        models.Setting(
+            key="placeholder_text", value="Type a message...", company_id=user.company_id
+        ),
+        models.Setting(
+            key="suggested_questions", value="", company_id=user.company_id
         ),
     ]
     db.add_all(default_settings)

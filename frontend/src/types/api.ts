@@ -56,7 +56,24 @@ export interface WebsitePagePaginated {
 
 export interface ChatResponse {
   answer: string;
+  sources?: ChatSource[];
 }
+
+export interface ChatSource {
+  title?: string | null;
+  url?: string | null;
+  source_type?: string | null; // "page" | "document"
+}
+
+export interface FeedbackRequest {
+  website_id: string;
+  session_id: string;
+  rating: 'up' | 'down';
+  comment?: string;
+}
+
+/** Public widget config fetched by the embeddable widget (key/value map). */
+export type WidgetConfig = Record<string, string>;
 
 export interface RegisterRequest {
   company_name: string;

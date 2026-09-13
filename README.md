@@ -84,8 +84,10 @@ npm install && npm run dev   # :5173
 - `POST /api/register` — create company + admin user
 - `POST /api/token` — login → JWT
 - `POST /api/ingest?website_id=` — enqueue crawl+embed job
-- `POST /api/chat` — `{website_id, session_id, question}` → `{answer}`
+- `POST /api/chat` — `{website_id, session_id, question}` → `{answer, sources}`
 - `GET /widget.js` — embeddable widget
+- `POST /api/chat/feedback` — public 👍/👎 rating `{website_id, session_id, rating, comment?}`
+- `GET /api/widget-config?website_id=` — public widget appearance/config (assistant name, colors, greeting, placeholder, position, suggested questions)
 - `GET /health`
 - `/api/companies`, `/api/users` (+`/me`, `/forgot-password`, `/reset-password`), `/api/websites` (+`/{id}/pages`, `/{id}/load-site-map`), `/api/documents`, `/api/extra_documents`, `/api/settings`, `/api/uploads`
 
@@ -187,6 +189,26 @@ dimension (e.g. `nomic-embed-text` → 768), ingestion will fail on insert. Eith
 - **SQL echo is off by default.** `db/session.py` uses `echo=SQL_ECHO` (env, default
   `false`) instead of a hard-coded `echo=True`, so production logs are no longer flooded with
   every SQL statement. Set `SQL_ECHO=true` to debug queries.
+
+## Chat UX enhancements (citations, feedback, playground, widget config)
+
+- **Citations in answers.** `services/rag.py::search` now returns each chunk's
+  `title`/`url`/`source_type` (crawled page vs. uploaded document). Both
+  `POST /api/chat` (`{answer, sources}`) and the SSE `done` event
+  (`{done: true, sources: [...]}` from `/api/chat/stream`) surface them, so the
+  in-app chat, the Playground, and the public `widget.js` can all render "Sources".
+- **Answer feedback.** New `chat_feedback` table + `POST /api/chat/feedback`
+  (public, rate-limited) records 👍/👎. The in-app chat and the widget both show
+  feedback buttons under each bot reply.
+- **Playground page.** New admin route `/playground` reuses the in-app chat to
+  test the bot (with citations + feedback) before embedding it.
+- **Widget appearance via Settings.** `GET /api/widget-config?website_id=` is a
+  public endpoint the widget fetches to apply `assistant_name`, `widget_header_color`,
+  `widget_footer_color`, `widget_position`, `greeting_message`, `placeholder_text`, and
+  `suggested_questions`. These are seeded as default `Settings` rows on register (the
+  `PUT /api/settings` upsert also creates any missing key for older companies), and
+  editable from the new **Appearance** tab in Settings. The embed script no longer
+  hardcodes colors/name — it only needs `website_id` + `apiUrl`.
 
 ## Chat streaming fix (SSE error)
 

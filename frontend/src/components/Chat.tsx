@@ -1,8 +1,19 @@
 import { useChat } from '@/context/ChatContext';
-import type { Website } from '@/types/api';
+import type { ChatSource, Website } from '@/types/api';
 import api from '@/utils/api';
-import { SendOutlined } from '@ant-design/icons';
-import { Button, Empty, Input, List, Select, Spin, Typography, message } from 'antd';
+import { DislikeOutlined, LikeOutlined, SendOutlined } from '@ant-design/icons';
+import {
+  Button,
+  Empty,
+  Input,
+  List,
+  Select,
+  Space,
+  Spin,
+  Tooltip,
+  Typography,
+  message,
+} from 'antd';
 import { useEffect, useRef, useState } from 'react';
 
 const { TextArea } = Input;
@@ -20,7 +31,27 @@ export function Chat() {
   const [inputValue, setInputValue] = useState('');
   const [websites, setWebsites] = useState<Website[]>([]);
   const [loadingWebsites, setLoadingWebsites] = useState(false);
+  const [ratings, setRatings] = useState<Record<number, 'up' | 'down'>>({});
   const chatListRef = useRef<HTMLDivElement>(null);
+
+  const handleFeedback = async (
+    index: number,
+    rating: 'up' | 'down',
+    websiteId: string,
+    sid: string,
+  ) => {
+    if (ratings[index]) return;
+    setRatings((prev) => ({ ...prev, [index]: rating }));
+    try {
+      await api.post('/chat/feedback', {
+        website_id: websiteId,
+        session_id: sid,
+        rating,
+      });
+    } catch {
+      // keep optimistic state even if the server call fails
+    }
+  };
 
   useEffect(() => {
     let sessionStr = localStorage.getItem('sessionId');
@@ -122,13 +153,17 @@ export function Chat() {
             ),
           }}
           dataSource={messages}
-          renderItem={(item: { role: 'user' | 'assistant'; content: string }) => (
+          renderItem={(
+            item: { role: 'user' | 'assistant'; content: string; sources?: ChatSource[] },
+            index: number,
+          ) => (
             <List.Item
               style={{
                 justifyContent: item.role === 'user' ? 'flex-end' : 'flex-start',
                 border: 'none',
                 padding: '8px 0',
                 marginBottom: '8px',
+                display: 'block',
               }}
             >
               <div
@@ -139,10 +174,96 @@ export function Chat() {
                       ? '0 2px 8px rgba(0, 0, 0, 0.15)'
                       : '0 2px 8px rgba(0, 0, 0, 0.05)',
                   lineHeight: '1.6',
+                  display: 'inline-block',
+                  maxWidth: '85%',
+                  whiteSpace: 'pre-wrap',
                 }}
               >
                 {item.content}
               </div>
+
+              {item.role === 'assistant' && item.content && (
+                <>
+                  {item.sources && item.sources.length > 0 && (
+                    <div
+                      style={{
+                        marginTop: 6,
+                        maxWidth: '85%',
+                        fontSize: 12,
+                        color: '#6b7280',
+                      }}
+                    >
+                      <Text type='secondary' style={{ fontSize: 12 }}>
+                        Sources:
+                      </Text>{' '}
+                      {item.sources.map((s, i) => (
+                        <span key={i}>
+                          {i > 0 && ', '}
+                          {s.url ? (
+                            <a
+                              href={s.url}
+                              target='_blank'
+                              rel='noopener noreferrer'
+                            >
+                              {s.title || s.url}
+                            </a>
+                          ) : (
+                            <span>{s.title || 'document'}</span>
+                          )}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
+                  {selectedWebsiteId && (
+                    <div style={{ marginTop: 4, maxWidth: '85%' }}>
+                      <Space size={4}>
+                        <Tooltip title='Helpful'>
+                          <Button
+                            type='text'
+                            size='small'
+                            icon={<LikeOutlined />}
+                            aria-label='thumbs up'
+                            disabled={!!ratings[index]}
+                            danger={ratings[index] === 'down'}
+                            onClick={() =>
+                              handleFeedback(
+                                index,
+                                'up',
+                                selectedWebsiteId,
+                                sessionId,
+                              )
+                            }
+                          />
+                        </Tooltip>
+                        <Tooltip title='Not helpful'>
+                          <Button
+                            type='text'
+                            size='small'
+                            icon={<DislikeOutlined />}
+                            aria-label='thumbs down'
+                            disabled={!!ratings[index]}
+                            danger={ratings[index] === 'up'}
+                            onClick={() =>
+                              handleFeedback(
+                                index,
+                                'down',
+                                selectedWebsiteId,
+                                sessionId,
+                              )
+                            }
+                          />
+                        </Tooltip>
+                        {ratings[index] && (
+                          <Text type='secondary' style={{ fontSize: 12 }}>
+                            Thanks for the feedback!
+                          </Text>
+                        )}
+                      </Space>
+                    </div>
+                  )}
+                </>
+              )}
             </List.Item>
           )}
         />

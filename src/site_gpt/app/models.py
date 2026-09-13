@@ -208,3 +208,16 @@ class ChatMessage(BaseModel):
     website_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("websites.id", ondelete="CASCADE"), nullable=False
     )
+
+
+class ChatFeedback(BaseModel):
+    __tablename__ = "chat_feedback"
+
+    __table_args__ = (Index("idx_chat_feedback_website_id", "website_id"),)
+
+    website_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("websites.id", ondelete="CASCADE"), nullable=False
+    )
+    session_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    rating: Mapped[str] = mapped_column(String(20), nullable=False)  # "up" | "down"
+    comment: Mapped[str] = mapped_column(Text, nullable=True)

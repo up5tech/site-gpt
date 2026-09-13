@@ -22,6 +22,10 @@ def search(db: Session, query_vector: list[float], website_id: UUID, limit: int 
     A chunk is eligible when it comes from a `documents` row of this website,
     OR from an `extra_documents` row that is either linked to this website or
     belongs to the same company (company-wide knowledge base).
+
+    Returns a list of RowMapping with keys: `content`, `title`, `url`,
+    `source_type` ("page" for crawled website pages, "document" for uploaded
+    docs). `title`/`url` are used to render citations in the answer.
     """
     vector_str = "[" + ",".join(map(str, query_vector)) + "]"
 
@@ -33,7 +37,11 @@ def search(db: Session, query_vector: list[float], website_id: UUID, limit: int 
     company_id = website.company_id if website else None
 
     sql = text("""
-        SELECT e.content
+        SELECT e.content AS content,
+               COALESCE(d.title, ed.name) AS title,
+               d.url AS url,
+               CASE WHEN e.document_id IS NOT NULL THEN 'page'
+                    ELSE 'document' END AS source_type
         FROM embeddings e
         LEFT JOIN documents d ON e.document_id = d.id
         LEFT JOIN extra_documents ed ON e.extra_document_id = ed.id
@@ -51,15 +59,40 @@ def search(db: Session, query_vector: list[float], website_id: UUID, limit: int 
         LIMIT :limit
     """)
 
-    return db.execute(
-        sql,
-        {
-            "website_id": website_id,
-            "company_id": company_id,
-            "vector": vector_str,
-            "limit": limit,
-        },
-    ).fetchall()
+    return (
+        db.execute(
+            sql,
+            {
+                "website_id": website_id,
+                "company_id": company_id,
+                "vector": vector_str,
+                "limit": limit,
+            },
+        )
+        .mappings()
+        .all()
+    )
+
+
+def collect_sources(results) -> list[dict]:
+    """Deduplicate retrieved chunks into a clean citation list.
+
+    Two chunks from the same page share a URL, so we key on URL (falling back
+    to title) to avoid repeating the same source multiple times in the UI.
+    """
+    sources: list[dict] = []
+    seen: set[str] = set()
+    for r in results:
+        title = r["title"]
+        url = r["url"]
+        key = url or title
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        sources.append(
+            {"title": title, "url": url, "source_type": r["source_type"]}
+        )
+    return sources
 
 
 def get_chat_history(db: Session, website_id: UUID, session_id: str, limit: int = 10):
@@ -107,7 +140,7 @@ def ask(db: Session, website_id: UUID, session_id: str, question: str):
     # search in vector store (pages + uploaded documents)
     results = search(db, query_vector, website_id)
     # build context
-    context = "\n\n".join([row[0] for row in results])
+    context = "\n\n".join([row["content"] for row in results])
     # load memory
     messages = get_chat_history(db, website_id, session_id)
     history = format_history(messages)
@@ -130,7 +163,7 @@ def ask(db: Session, website_id: UUID, session_id: str, question: str):
     # save response
     content = answer.content if hasattr(answer, "content") else str(answer)
     save_message(db, website_id, session_id, "assistant", str(content))
-    return content
+    return {"answer": content, "sources": collect_sources(results)}
 
 
 def _safe_error_message(exc: Exception) -> str:
@@ -158,12 +191,14 @@ async def ask_stream(db: Session, website_id: UUID, session_id: str, question: s
     early and the browser reports ERR_INCOMPLETE_CHUNKED_ENCODING.
     """
     full: list[str] = []
+    sources: list[dict] = []
     try:
         # embed_texts returns list[list[float]]; take the single vector for
         # this one question (matches the synchronous `ask`).
         query_vector = (await asyncio.to_thread(embed_texts, [question]))[0]
         results = await asyncio.to_thread(search, db, query_vector, website_id)
-        context = "\n\n".join([row[0] for row in results])
+        context = "\n\n".join([row["content"] for row in results])
+        sources = collect_sources(results)
         messages = await asyncio.to_thread(get_chat_history, db, website_id, session_id)
         history = format_history(messages)
 
@@ -194,7 +229,7 @@ async def ask_stream(db: Session, website_id: UUID, session_id: str, question: s
         await asyncio.to_thread(
             save_message, db, website_id, session_id, "assistant", answer_text
         )
-        yield f"data: {json.dumps({'done': True})}\n\n"
+        yield f"data: {json.dumps({'done': True, 'sources': sources})}\n\n"
 
     except Exception as exc:
         # Log the full traceback server-side for diagnostics.

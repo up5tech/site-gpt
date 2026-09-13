@@ -15,7 +15,7 @@ from site_gpt.app.core.auth import (
 )
 from site_gpt.app.core.config import JWT_ALGORITHM, JWT_SECRET_KEY
 from site_gpt.app.db.session import get_db
-from site_gpt.app.schemas.chat import ChatRequest
+from site_gpt.app.schemas.chat import ChatRequest, FeedbackRequest
 from site_gpt.app.schemas.company import CompanyRegister
 from site_gpt.app.schemas.user import UserLogin
 from site_gpt.app.services.rag import ask, ask_stream
@@ -58,7 +58,70 @@ def chat(
     db: Session = Depends(get_db),
     _: None = Depends(rate_limit("chat", max_requests=20, window_seconds=60)),
 ):
-    return {"answer": ask(db, body.website_id, body.session_id, body.question)}
+    return ask(db, body.website_id, body.session_id, body.question)
+
+
+@router.post("/api/chat/feedback")
+def chat_feedback(
+    body: FeedbackRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    _: None = Depends(rate_limit("chat", max_requests=40, window_seconds=60)),
+):
+    """Record a 👍/👎 rating for a chat answer. Public (no auth) so the
+    embeddable widget can call it directly from any site."""
+    website = (
+        db.query(models.Website)
+        .filter(models.Website.id == body.website_id)
+        .first()
+    )
+    if not website:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Website not found"
+        )
+    rating = body.rating
+    if rating not in ("up", "down"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="rating must be 'up' or 'down'",
+        )
+    feedback = models.ChatFeedback(
+        website_id=body.website_id,
+        session_id=body.session_id,
+        rating=rating,
+        comment=body.comment,
+    )
+    db.add(feedback)
+    db.commit()
+    return {"status": "ok"}
+
+
+@router.get("/api/widget-config")
+def widget_config(website_id: str, db: Session = Depends(get_db)):
+    """Public, unauthenticated config the embeddable widget fetches by
+    website id: assistant name, colors, greeting, placeholder, position and
+    suggested questions. Replaces the need to hardcode these in ChatWidgetConfig."""
+    from uuid import UUID as _UUID
+
+    try:
+        site_uuid = _UUID(str(website_id))
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid website_id"
+        )
+    website = (
+        db.query(models.Website).filter(models.Website.id == site_uuid).first()
+    )
+    if not website:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Website not found"
+        )
+    settings = (
+        db.query(models.Setting)
+        .filter(models.Setting.company_id == website.company_id)
+        .all()
+    )
+    return {s.key: s.value for s in settings}
 
 
 @router.post("/api/chat/stream")

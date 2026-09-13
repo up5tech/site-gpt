@@ -8,12 +8,14 @@
     width: '360px',
     height: '480px',
     theme: {
-      primaryColor: '#4c74afff',
+      primaryColor: '#4c74af',
       backgroundColor: '#ffffff',
     },
+    footerColor: '#4c74af',
     placeholder: 'Type a message...',
     welcomeMessage: 'Hi 👋 How can I help you?',
     enableHistory: true,
+    suggestedQuestions: [],
   };
 
   const config = Object.assign(
@@ -99,6 +101,7 @@
       .chat-input {
         display: flex;
         border-top: 1px solid #ddd;
+        background: ${config.footerColor};
       }
 
       .chat-input input {
@@ -106,6 +109,7 @@
         border: none;
         padding: 10px;
         outline: none;
+        background: transparent;
       }
 
       .chat-input button {
@@ -137,6 +141,7 @@
         max-width: 75%;
         font-size: 14px;
         word-break: break-word;
+        background: #f1f1f1;
       }
 
       .user .bubble {
@@ -150,6 +155,62 @@
       .thinking {
         font-style: italic;
         opacity: 0.7;
+      }
+
+      .sources {
+        margin-top: 6px;
+        max-width: 80%;
+        font-size: 12px;
+        color: #555;
+        line-height: 1.5;
+      }
+
+      .sources a {
+        color: ${config.theme.primaryColor};
+        word-break: break-word;
+      }
+
+      .feedback {
+        margin-top: 4px;
+        display: flex;
+        gap: 6px;
+        align-items: center;
+      }
+
+      .feedback button {
+        border: 1px solid #ccc;
+        background: #fff;
+        border-radius: 6px;
+        cursor: pointer;
+        padding: 2px 8px;
+        font-size: 13px;
+      }
+
+      .feedback button:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
+
+      .feedback .thanks {
+        font-size: 12px;
+        color: #888;
+      }
+
+      .suggestions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin: 4px 0 10px 40px;
+      }
+
+      .suggestions button {
+        border: 1px solid ${config.theme.primaryColor};
+        color: ${config.theme.primaryColor};
+        background: #fff;
+        border-radius: 14px;
+        padding: 4px 10px;
+        font-size: 12px;
+        cursor: pointer;
       }
 
       pre {
@@ -173,7 +234,7 @@
 
     <div class="chat-box" id="chatBox">
       <div class="chat-header">
-        <span>${config.botName}</span>
+        <span id="chatHeaderName">${config.botName}</span>
         <button class="clear-btn" id="clearBtn">Clear</button>
       </div>
       <div class="chat-messages" id="messages"></div>
@@ -192,6 +253,7 @@
   const inputEl = shadow.getElementById('input');
   const sendBtn = shadow.getElementById('sendBtn');
   const clearBtn = shadow.getElementById('clearBtn');
+  const headerNameEl = shadow.getElementById('chatHeaderName');
 
   // ================= SCROLL =================
   function scrollToBottom(force = false) {
@@ -248,7 +310,66 @@
       messagesEl.scrollTop = messagesEl.scrollHeight;
     }
 
-    return bubble;
+    return row;
+  }
+
+  // Append cited sources + feedback buttons under a bot message row.
+  function attachExtras(row, sources) {
+    // Sources
+    if (sources && sources.length > 0) {
+      const src = document.createElement('div');
+      src.className = 'sources';
+      let html = '<strong>Sources:</strong> ';
+      html += sources
+        .map((s) => {
+          const label = s.title || s.url || 'document';
+          if (s.url) {
+            return `<a href="${s.url}" target="_blank" rel="noopener noreferrer">${label}</a>`;
+          }
+          return `<span>${label}</span>`;
+        })
+        .join(', ');
+      src.innerHTML = html;
+      row.appendChild(src);
+    }
+
+    // Feedback (only once)
+    if (row.querySelector('.feedback')) return;
+    const fb = document.createElement('div');
+    fb.className = 'feedback';
+    const up = document.createElement('button');
+    up.textContent = '👍';
+    up.title = 'Helpful';
+    const down = document.createElement('button');
+    down.textContent = '👎';
+    down.title = 'Not helpful';
+    const thanks = document.createElement('span');
+    thanks.className = 'thanks';
+    thanks.style.display = 'none';
+    thanks.textContent = 'Thanks for the feedback!';
+
+    const send = (rating) => {
+      up.disabled = true;
+      down.disabled = true;
+      thanks.style.display = 'inline';
+      const base = (config.apiUrl || '').replace(/\/$/, '');
+      fetch(`${base}/api/chat/feedback`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          website_id: config.website_id,
+          session_id: sessionId,
+          rating,
+        }),
+      }).catch(() => {});
+    };
+
+    up.onclick = () => send('up');
+    down.onclick = () => send('down');
+    fb.appendChild(up);
+    fb.appendChild(down);
+    fb.appendChild(thanks);
+    row.appendChild(fb);
   }
 
   // ================= HISTORY =================
@@ -273,19 +394,36 @@
     });
   }
 
+  function renderSuggestions() {
+    if (!config.suggestedQuestions || config.suggestedQuestions.length === 0)
+      return;
+    if (messagesEl.children.length > 0) return;
+    const wrap = document.createElement('div');
+    wrap.className = 'suggestions';
+    config.suggestedQuestions.forEach((q) => {
+      const btn = document.createElement('button');
+      btn.textContent = q;
+      btn.onclick = () => sendMessage(q);
+      wrap.appendChild(btn);
+    });
+    messagesEl.appendChild(wrap);
+  }
+
   // ================= SEND =================
-  async function sendMessage() {
-    const text = inputEl.value.trim();
+  async function sendMessage(prefillText) {
+    const text = (prefillText || inputEl.value || '').trim();
     if (!text) return;
+
+    inputEl.value = '';
 
     addMessage(text, 'user');
     saveHistory('user', text);
-    inputEl.value = '';
 
     inputEl.disabled = true;
     sendBtn.disabled = true;
 
-    const thinkingMsg = addMessage('', 'bot', true);
+    const thinkingRow = addMessage('', 'bot', true);
+    const thinkingMsg = thinkingRow.querySelector('.bubble');
 
     try {
       const base = (config.apiUrl || '').replace(/\/$/, '');
@@ -307,6 +445,7 @@
       const decoder = new TextDecoder();
       let buffer = '';
       let reply = '';
+      let pendingSources = [];
 
       while (true) {
         const { done, value } = await reader.read();
@@ -326,6 +465,8 @@
             if (typeof data.chunk === 'string') reply += data.chunk;
             else if (typeof data.error === 'string')
               reply += (reply ? '\n\n' : '') + '⚠️ ' + data.error;
+            else if (data.done === true && Array.isArray(data.sources))
+              pendingSources = data.sources;
           } catch (e) {
             // ignore malformed SSE line
           }
@@ -334,6 +475,7 @@
 
       thinkingMsg.innerHTML = renderMarkdown(reply || 'No response');
       thinkingMsg.classList.remove('thinking');
+      attachExtras(thinkingRow, pendingSources);
 
       scrollToBottom();
       saveHistory('bot', reply);
@@ -350,11 +492,12 @@
   clearBtn.onclick = () => {
     sessionId = newSession();
     messagesEl.innerHTML = '';
-    addMessage('I am here to help you.', 'bot');
+    addMessage(config.welcomeMessage, 'bot');
+    renderSuggestions();
   };
 
   // ================= EVENTS =================
-  sendBtn.onclick = sendMessage;
+  sendBtn.onclick = () => sendMessage();
   inputEl.addEventListener('keypress', (e) => {
     if (e.key === 'Enter') sendMessage();
   });
@@ -380,19 +523,64 @@
     });
   }
 
+  // ================= SERVER CONFIG =================
+  async function loadServerConfig() {
+    if (!hasWebsiteId || !config.apiUrl) return;
+    try {
+      const base = config.apiUrl.replace(/\/$/, '');
+      const res = await fetch(
+        `${base}/api/widget-config?website_id=${encodeURIComponent(config.website_id)}`,
+      );
+      if (!res.ok) return;
+      const cfg = await res.json();
+      if (cfg.assistant_name) config.botName = cfg.assistant_name;
+      if (cfg.widget_header_color) config.theme.primaryColor = cfg.widget_header_color;
+      if (cfg.widget_footer_color) config.footerColor = cfg.widget_footer_color;
+      if (cfg.widget_position) config.position = cfg.widget_position;
+      if (cfg.greeting_message) config.welcomeMessage = cfg.greeting_message;
+      if (cfg.placeholder_text) config.placeholder = cfg.placeholder_text;
+      if (cfg.suggested_questions)
+        config.suggestedQuestions = String(cfg.suggested_questions)
+          .split('\n')
+          .map((s) => s.trim())
+          .filter(Boolean);
+
+      // Apply dynamic styles / labels now that config is loaded.
+      headerNameEl.textContent = config.botName;
+      toggleBtn.style.background = config.theme.primaryColor;
+      shadow.querySelector('.chat-header').style.background =
+        config.theme.primaryColor;
+      shadow.querySelector('.chat-input button').style.background =
+        config.theme.primaryColor;
+      shadow.querySelector('.chat-input').style.background = config.footerColor;
+      inputEl.placeholder = config.placeholder;
+      container.style[config.position === 'bottom-left' ? 'left' : 'right'] =
+        '20px';
+    } catch (e) {
+      // fall back to ChatWidgetConfig / defaults
+    }
+  }
+
   // ================= INIT =================
-  function init() {
+  async function init() {
     if (!hasWebsiteId) {
       addMessage('Missing Website ID', 'bot');
       return;
     }
 
+    await loadServerConfig();
+
     loadHistory();
 
-    if (!localStorage.getItem('chat_widget_initialized')) {
+    if (
+      !localStorage.getItem('chat_widget_initialized') &&
+      messagesEl.children.length === 0
+    ) {
       addMessage(config.welcomeMessage, 'bot');
       localStorage.setItem('chat_widget_initialized', 'true');
     }
+
+    renderSuggestions();
 
     scrollToBottomForce();
   }
