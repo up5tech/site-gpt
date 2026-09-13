@@ -18,4 +18,15 @@ class ResponseBase(BaseModel):
     updated_at: datetime | None = None
 
 
+class DashboardStats(BaseModel):
+    """Aggregated counts for the current user's company, shown on the dashboard."""
+
+    total_websites: int
+    indexed_websites: int
+    ingesting_websites: int
+    total_documents: int
+    total_chat_messages: int
+    team_members: int
+
+
 

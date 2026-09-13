@@ -7,7 +7,7 @@ from site_gpt.app import models
 from site_gpt.app.core.auth import get_current_user, get_manager_user
 from site_gpt.app.db.session import get_db
 from site_gpt.app.models import Website
-from site_gpt.app.schemas.app import PaginatedResponse
+from site_gpt.app.schemas.app import DashboardStats, PaginatedResponse
 from site_gpt.app.schemas.website import WebsiteCreate, WebsiteRes, WebsiteUpdate
 from site_gpt.app.schemas.website_page import (
     WebsitePageCreate,
@@ -44,6 +44,64 @@ def get_websites(
             page=page,
             limit=limit,
             items=[WebsiteRes.model_validate(w) for w in websites],
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/stats", response_model=DashboardStats)
+def get_dashboard_stats(
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """Aggregated dashboard counts for the current user's company."""
+    try:
+        total_websites = (
+            db.query(Website).filter(Website.company_id == user.company_id).count()
+        )
+        indexed_websites = (
+            db.query(Website)
+            .filter(
+                Website.company_id == user.company_id,
+                Website.ingest_status == "completed",
+            )
+            .count()
+        )
+        ingesting_websites = (
+            db.query(Website)
+            .filter(
+                Website.company_id == user.company_id,
+                Website.ingest_status == "processing",
+            )
+            .count()
+        )
+        total_documents = (
+            db.query(models.Document)
+            .join(Website, models.Document.website_id == Website.id)
+            .filter(Website.company_id == user.company_id)
+            .count()
+        )
+        total_chat_messages = (
+            db.query(models.ChatMessage)
+            .join(Website, models.ChatMessage.website_id == Website.id)
+            .filter(Website.company_id == user.company_id)
+            .count()
+        )
+        team_members = (
+            db.query(models.User)
+            .filter(
+                models.User.company_id == user.company_id,
+                models.User.status == "active",
+            )
+            .count()
+        )
+        return DashboardStats(
+            total_websites=total_websites,
+            indexed_websites=indexed_websites,
+            ingesting_websites=ingesting_websites,
+            total_documents=total_documents,
+            total_chat_messages=total_chat_messages,
+            team_members=team_members,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

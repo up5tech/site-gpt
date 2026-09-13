@@ -1,5 +1,5 @@
 import axios, { AxiosInstance } from 'axios';
-import type { ChatResponse, FeedbackRequest, LoginResponse, WidgetConfig } from '../types/api';
+import type { ChatResponse, DashboardStats, FeedbackRequest, LoginResponse, WidgetConfig } from '../types/api';
 
 // Base API instance with proxy /api -> backend
 const api: AxiosInstance = axios.create({
@@ -70,5 +70,8 @@ export const getCompanyUsers = (params: {
   page?: number;
   limit?: number;
 }) => api.get(`/companies/users`, { params });
+
+export const getDashboardStats = () =>
+  api.get<DashboardStats>('/websites/stats');
 
 export type { LoginResponse } from '../types/api';

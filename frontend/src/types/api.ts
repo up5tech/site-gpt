@@ -59,6 +59,15 @@ export interface ChatResponse {
   sources?: ChatSource[];
 }
 
+export interface DashboardStats {
+  total_websites: number;
+  indexed_websites: number;
+  ingesting_websites: number;
+  total_documents: number;
+  total_chat_messages: number;
+  team_members: number;
+}
+
 export interface ChatSource {
   title?: string | null;
   url?: string | null;

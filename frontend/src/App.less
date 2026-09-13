@@ -265,6 +265,18 @@ a {
     }
   }
 
+// Stat card clickable affordance
+.stat-card-link {
+  .stat-chevron {
+    opacity: 0.45;
+  }
+
+  &:hover .stat-chevron {
+    opacity: 1;
+    transform: translateX(3px);
+  }
+}
+
   .ant-tabs-tab {
     background: transparent;
     border: none;

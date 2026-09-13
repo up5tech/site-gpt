@@ -1,6 +1,7 @@
 import { Table, Tag, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Website } from '../types/api';
 import api from '../utils/api';
@@ -11,6 +12,7 @@ export function WebsiteTable() {
   const [data, setData] = useState<Website[]>([]);
   const [loading, setLoading] = useState(false);
   const { isAuthenticated } = useAuth();
+  const navigate = useNavigate();
 
   const columns: ColumnsType<Website> = [
     {
@@ -83,6 +85,10 @@ export function WebsiteTable() {
       pagination={false}
       rowKey='id'
       size='middle'
+      onRow={(record) => ({
+        onClick: () => navigate(`/websites/${record.id}`),
+        style: { cursor: 'pointer' },
+      })}
     />
   );
 }

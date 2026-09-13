@@ -4,7 +4,12 @@ import { getCompanyUsers } from '@/utils/api';
 import Table, { ColumnsType } from 'antd/es/table';
 import { useEffect, useState } from 'react';
 
-export function UserTable() {
+interface UserTableProps {
+  /** Compact preview mode for the dashboard: paginated, fewer columns. */
+  compact?: boolean;
+}
+
+export function UserTable({ compact = false }: UserTableProps) {
   const { isAuthenticated } = useAuth();
 
   const [loading, setLoading] = useState<boolean>(false);
@@ -32,31 +37,35 @@ export function UserTable() {
       title: 'Email',
       dataIndex: 'email',
       key: 'email',
+      render: (text) => <span style={{ fontWeight: 500 }}>{text}</span>,
     },
+    ...(compact
+      ? []
+      : [
+          {
+            title: 'Phone',
+            dataIndex: 'phone',
+            key: 'phone',
+          } as { title: string; dataIndex: string; key: string },
+        ]),
     {
-      title: 'Phone',
-      dataIndex: 'phone',
-      key: 'phone',
-    },
-    {
-      title: 'Status',
-      dataIndex: 'status',
-      key: 'status',
-    },
-    {
-      title: 'First Name',
+      title: 'Name',
       dataIndex: 'first_name',
       key: 'first_name',
-    },
-    {
-      title: 'Last Name',
-      dataIndex: 'last_name',
-      key: 'last_name',
+      render: (_: string, record: User) =>
+        [record.first_name, record.last_name].filter(Boolean).join(' ') || '-',
     },
     {
       title: 'Role',
       dataIndex: 'role',
       key: 'role',
+      render: (role: string) => role || '-',
+    },
+    {
+      title: 'Status',
+      dataIndex: 'status',
+      key: 'status',
+      render: (status: string) => status || '-',
     },
   ];
 
@@ -67,6 +76,12 @@ export function UserTable() {
         dataSource={users}
         loading={loading}
         rowKey='id'
+        size={compact ? 'small' : 'middle'}
+        pagination={
+          compact
+            ? { pageSize: 5, hideOnSinglePage: true, showSizeChanger: false }
+            : false
+        }
       />
     </>
   );
