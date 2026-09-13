@@ -288,17 +288,51 @@
     const thinkingMsg = addMessage('', 'bot', true);
 
     try {
-      const url = new URL(config.apiUrl, window.location.origin);
-      url.searchParams.append('question', text);
-      url.searchParams.append('website_id', config.website_id);
-      url.searchParams.append('session_id', sessionId);
+      const base = (config.apiUrl || '').replace(/\/$/, '');
+      const res = await fetch(`${base}/api/chat/stream`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          question: text,
+          website_id: config.website_id,
+          session_id: sessionId,
+        }),
+      });
 
-      const res = await fetch(url);
+      if (!res.ok || !res.body) {
+        throw new Error('chat request failed');
+      }
 
-      const data = await res.json();
-      const reply = data.answer || 'No response';
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let reply = '';
 
-      thinkingMsg.innerHTML = renderMarkdown(reply);
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        const parts = buffer.split('\n\n');
+        buffer = parts.pop() || '';
+
+        for (const part of parts) {
+          const line = part.trim();
+          if (!line.startsWith('data:')) continue;
+          const payload = line.slice(5).trim();
+          if (!payload) continue;
+          try {
+            const data = JSON.parse(payload);
+            if (typeof data.chunk === 'string') reply += data.chunk;
+            else if (typeof data.error === 'string')
+              reply += (reply ? '\n\n' : '') + '⚠️ ' + data.error;
+          } catch (e) {
+            // ignore malformed SSE line
+          }
+        }
+      }
+
+      thinkingMsg.innerHTML = renderMarkdown(reply || 'No response');
       thinkingMsg.classList.remove('thinking');
 
       scrollToBottom();

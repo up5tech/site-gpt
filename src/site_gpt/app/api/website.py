@@ -268,6 +268,22 @@ def delete_website_page(
         )
         if not website_page:
             raise HTTPException(status_code=404, detail="Page not found")
+
+        # Remove the page's crawled knowledge immediately so a deleted page
+        # stops being answered by the bot without waiting for a re-ingest.
+        doc = (
+            db.query(models.Document)
+            .filter(
+                models.Document.url == website_page.url,
+                models.Document.website_id == website_id,
+            )
+            .first()
+        )
+        if doc:
+            # Embeddings cascade-delete via the FK ON DELETE CASCADE on
+            # embeddings.document_id, so deleting the Document is sufficient.
+            db.delete(doc)
+
         db.delete(website_page)
         db.commit()
         return {"status": "ok"}

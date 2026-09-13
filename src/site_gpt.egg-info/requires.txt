@@ -22,3 +22,5 @@ python-multipart<0.0.27,>=0.0.26
 redis[async]<8.0.0,>=7.4.0
 trafilatura<3.0.0,>=2.0.0
 beautifulsoup4<5.0.0,>=4.14.3
+pypdf<5.0.0,>=4.0.0
+python-docx<2.0.0,>=1.1.0

@@ -21,8 +21,8 @@ src/site_gpt/app/core/auth.py
 src/site_gpt/app/core/config.py
 src/site_gpt/app/db/base.py
 src/site_gpt/app/db/session.py
-src/site_gpt/app/db/vector_store.py
 src/site_gpt/app/schemas/app.py
+src/site_gpt/app/schemas/chat.py
 src/site_gpt/app/schemas/company.py
 src/site_gpt/app/schemas/document.py
 src/site_gpt/app/schemas/extra_document.py
@@ -34,6 +34,8 @@ src/site_gpt/app/services/crawler.py
 src/site_gpt/app/services/ingest.py
 src/site_gpt/app/services/llm.py
 src/site_gpt/app/services/mail.py
+src/site_gpt/app/services/parse.py
 src/site_gpt/app/services/rag.py
+src/site_gpt/app/services/ratelimit.py
 src/site_gpt/app/services/redis.py
 src/site_gpt/app/utils/file.py

@@ -1,3 +1,7 @@
+import asyncio
+import json
+import logging
+import traceback
 from uuid import UUID
 
 from sqlalchemy import text
@@ -8,6 +12,8 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from site_gpt.app import models
 from site_gpt.app.services.ingest import embed_texts
 from site_gpt.app.services.llm import get_llm
+
+logger = logging.getLogger(__name__)
 
 
 def search(db: Session, query_vector: list[float], website_id: UUID, limit: int = 5):
@@ -125,3 +131,81 @@ def ask(db: Session, website_id: UUID, session_id: str, question: str):
     content = answer.content if hasattr(answer, "content") else str(answer)
     save_message(db, website_id, session_id, "assistant", str(content))
     return content
+
+
+def _safe_error_message(exc: Exception) -> str:
+    """Concise, user-safe error string for the SSE `error` event.
+
+    The full traceback is logged server-side; the client only gets a short,
+    secret-free message so we don't leak API keys or internals.
+    """
+    msg = str(exc)
+    if not msg:
+        msg = exc.__class__.__name__
+    return f"{exc.__class__.__name__}: {msg[:300]}"
+
+
+async def ask_stream(db: Session, website_id: UUID, session_id: str, question: str):
+    """Stream the answer token-by-token as SSE `data: {chunk}` events.
+
+    Yields already-formatted SSE lines. Network-bound work (embedding, search,
+    DB writes) is offloaded to a thread so the event loop stays responsive.
+
+    The whole flow is guarded so that any failure (embedding API error, DB
+    error, LLM error, ...) is reported as a single `data: {"error": ...}` event
+    followed by `data: {"done": true}`. This guarantees the SSE stream always
+    terminates cleanly — without it a mid-stream exception closes the connection
+    early and the browser reports ERR_INCOMPLETE_CHUNKED_ENCODING.
+    """
+    full: list[str] = []
+    try:
+        # embed_texts returns list[list[float]]; take the single vector for
+        # this one question (matches the synchronous `ask`).
+        query_vector = (await asyncio.to_thread(embed_texts, [question]))[0]
+        results = await asyncio.to_thread(search, db, query_vector, website_id)
+        context = "\n\n".join([row[0] for row in results])
+        messages = await asyncio.to_thread(get_chat_history, db, website_id, session_id)
+        history = format_history(messages)
+
+        llm = get_llm()
+        await asyncio.to_thread(
+            save_message, db, website_id, session_id, "user", question
+        )
+
+        async for chunk in llm.astream(
+            [
+                SystemMessage(content=SYSTEM_PROMPT),
+                HumanMessage(
+                    content=(
+                        f"Context:\n{context}\n\n"
+                        f"Conversation history:\n{history}\n\n"
+                        f"Question: {question}"
+                    )
+                ),
+            ]
+        ):
+            text = chunk.content if hasattr(chunk, "content") else str(chunk)
+            if not text:
+                continue
+            full.append(text)
+            yield f"data: {json.dumps({'chunk': text})}\n\n"
+
+        answer_text = "".join(full)
+        await asyncio.to_thread(
+            save_message, db, website_id, session_id, "assistant", answer_text
+        )
+        yield f"data: {json.dumps({'done': True})}\n\n"
+
+    except Exception as exc:
+        # Log the full traceback server-side for diagnostics.
+        logger.error("ask_stream failed: %s\n%s", exc, traceback.format_exc())
+        # Persist whatever we managed to stream so far (best effort).
+        if full:
+            try:
+                await asyncio.to_thread(
+                    save_message, db, website_id, session_id, "assistant", "".join(full)
+                )
+            except Exception:
+                pass
+        yield f"data: {json.dumps({'error': _safe_error_message(exc)})}\n\n"
+        yield f"data: {json.dumps({'done': True})}\n\n"

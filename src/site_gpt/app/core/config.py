@@ -31,3 +31,10 @@ REDIS_DB = os.getenv("REDIS_DB", "0")
 
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*")
+
+# Verbose SQL logging. Off by default in production; set SQL_ECHO=true to debug.
+SQL_ECHO = os.getenv("SQL_ECHO", "false").lower() in ("1", "true", "yes", "on")
+
+# How often (in hours) the worker should auto re-crawl a website to keep its
+# knowledge base fresh. Set to 0 to disable the periodic scheduler.
+CRAWL_REFRESH_HOURS = int(os.getenv("CRAWL_REFRESH_HOURS", "24"))

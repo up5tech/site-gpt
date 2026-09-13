@@ -288,13 +288,16 @@ export function WebsiteDetail() {
                   return <Tag color={color}>{s?.toUpperCase()}</Tag>;
                 })()}
               </Descriptions.Item>
-              <Descriptions.Item label='Description' span={3}>
-                {website?.description || 'No description provided'}
-              </Descriptions.Item>
               <Descriptions.Item label='Created At'>
                 {website?.created_at
                   ? new Date(website.created_at).toLocaleString()
                   : '-'}
+              </Descriptions.Item>
+              <Descriptions.Item
+                label='Description'
+                span={{ xxl: 3, xl: 3, lg: 2, md: 2, sm: 1, xs: 1 }}
+              >
+                {website?.description || 'No description provided'}
               </Descriptions.Item>
             </Descriptions>
           </Card>

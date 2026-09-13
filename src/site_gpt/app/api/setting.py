@@ -9,6 +9,15 @@ from site_gpt.app.schemas.setting import SettingRes
 router = APIRouter()
 
 
+def _default_setting_rows(company_id):
+    """Build the default Setting rows for a newly created company."""
+    return [
+        models.Setting(key="assistant_name", value="Site GPT", company_id=company_id),
+        models.Setting(key="widget_header_color", value="green", company_id=company_id),
+        models.Setting(key="widget_footer_color", value="green", company_id=company_id),
+    ]
+
+
 @router.get("/")
 def get_settings(
     db: Session = Depends(get_db),

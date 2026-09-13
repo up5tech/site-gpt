@@ -145,3 +145,71 @@ dimension (e.g. `nomic-embed-text` → 768), ingestion will fail on insert. Eith
   store.
 - **Chat prompt** — `ask()` now uses a system instruction to answer only from context and
   say it lacks the info otherwise.
+
+## Enhancements added
+
+- **Streaming chat (SSE).** New `POST /api/chat/stream` streams the answer token-by-token
+  (`data: {"chunk": "..."}` then `data: {"done": true}`). `rag.py::ask_stream` offloads
+  embedding/search/DB writes to a thread so the event loop stays responsive. The in-app
+  `ChatContext` and the public `widget.js` both consume the SSE stream (the widget was also
+  fixed — it previously did a `GET` that never matched the `POST` backend). The legacy
+  `POST /api/chat` is kept for non-streaming callers.
+- **Stale-chunk cleanup.** On ingest, documents whose URL is no longer in the successfully
+  crawled active-page set are deleted (cascading their embeddings). Extra documents with no
+  usable content have their embeddings dropped, so removed/empty sources stop surfacing.
+  Guarded so a full crawl failure can't wipe a site's knowledge base.
+- **Rate limiting.** `services/ratelimit.py` (in-memory fixed window, per client IP) caps
+  `/api/chat` + `/api/chat/stream` at 20 req/min and `/api/ingest` at 10 req/min (429 on
+  exceed). Swap for a Redis counter if you run multiple workers.
+- **Periodic re-crawl.** The worker now runs a `scheduler_loop` that, every
+  `CRAWL_REFRESH_HOURS` (default 24, set `0` to disable), re-enqueues ingest for websites
+  whose `ingest_status == 'completed'` and last update is older than the interval — keeping
+  the knowledge base fresh with no extra infra.
+
+## Further hardening (latest round)
+
+- **Default settings are auto-seeded on register.** `POST /api/register` now creates the
+  company's default `Settings` (`assistant_name`, `widget_header_color`,
+  `widget_footer_color`) so the admin/settings panel is usable immediately — no separate
+  "create settings" step required.
+- **`POST /api/settings` is now idempotent.** It only inserts the default rows whose key is
+  missing for the company, so calling it repeatedly never produces duplicate settings
+  (previously it blindly `add_all`'d and could stack rows). Returns `created` / `skipped`
+  counts.
+- **Deleting a page removes its knowledge immediately.** `DELETE
+  /api/websites/{id}/pages/{page_id}` now also deletes the matching `Document` (and its
+  embeddings via the FK `ON DELETE CASCADE`) by URL+website, so a removed page stops being
+  answered by the bot without waiting for a re-ingest.
+- **`GET /health` is a real probe.** It opens a DB connection (`SELECT 1`) and pings Redis;
+  the response now reports `{"status": "ok"|"degraded", "db": bool, "redis": bool}` so an
+  orchestrator/load-balancer can detect a backend that can't reach its dependencies (instead
+  of a blind `{"status":"ok"}`).
+- **SQL echo is off by default.** `db/session.py` uses `echo=SQL_ECHO` (env, default
+  `false`) instead of a hard-coded `echo=True`, so production logs are no longer flooded with
+  every SQL statement. Set `SQL_ECHO=true` to debug queries.
+
+## Chat streaming fix (SSE error)
+
+The streaming chat (`POST /api/chat/stream`) was failing in the browser with
+`ERR_INCOMPLETE_CHUNKED_ENCODING` / "network error". Three issues were fixed:
+
+- **Stream never breaks.** `services/rag.py::ask_stream` is now wrapped so any failure
+  (embedding API error, DB error, LLM error) emits `data: {"error": ...}` followed by
+  `data: {"done": true}` instead of raising inside the generator (which closed the chunked
+  response early). The full traceback is logged server-side; the client only gets a short,
+  secret-free message. Both clients (`frontend/src/context/ChatContext.tsx` and
+  `src/site_gpt/app/scripts/widget.js`) now render that `error` event.
+- **Embeddings work with OpenAI-compatible gateways.** LangChain's `OpenAIEmbeddings` wrapper
+  POSTs a request shape some gateways (e.g. a local router at a custom `OPENAI_API_BASE_URL`)
+  reject with `400 input is required`. `services/llm.py` now uses a thin
+  `_OpenAICompatibleEmbeddings` class that calls the OpenAI SDK directly. It also requests
+  `dimensions=1536` for `auto` / `text-embedding-3-*` models, so vectors match the
+  `Vector(1536)` column (the `auto` router otherwise returns 3072-dim vectors).
+- **Vector double-wrapping bug.** `ask_stream` passed `embed_texts([question])`
+  (a list-of-lists) into `search()` without the `[0]` unpack the sync `ask()` does, so the
+  pgvector query became `[[...]]` and failed with `invalid input syntax for type vector`.
+  Fixed by unpacking the single vector.
+
+After these fixes, chat streams real tokens end-to-end. **Note:** because embeddings were
+failing before, no vectors exist yet — ingest/crawl a website (settings → pages →
+`POST /api/ingest`) so the bot actually has knowledge to answer from.

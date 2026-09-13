@@ -1,6 +1,5 @@
 import { message } from 'antd';
 import { createContext, ReactNode, useContext, useState } from 'react';
-import type { ChatResponse } from '../types/api';
 import api from '../utils/api';
 
 interface ChatContextType {
@@ -39,31 +38,116 @@ export const ChatProvider = ({ children }: Props) => {
     null,
   );
 
+  const appendAssistantChunk = (chunk: string) => {
+    setMessages((prev) => {
+      const copy = [...prev];
+      const last = copy[copy.length - 1];
+      if (last && last.role === 'assistant') {
+        copy[copy.length - 1] = { ...last, content: last.content + chunk };
+      } else {
+        copy.push({ role: 'assistant', content: chunk });
+      }
+      return copy;
+    });
+  };
+
+  const setAssistantError = (text: string) => {
+    setMessages((prev) => {
+      const copy = [...prev];
+      const last = copy[copy.length - 1];
+      if (last && last.role === 'assistant') {
+        copy[copy.length - 1] = { ...last, content: text };
+      } else {
+        copy.push({ role: 'assistant', content: text });
+      }
+      return copy;
+    });
+  };
+
+  const appendAssistantError = (text: string) => {
+    setMessages((prev) => {
+      const copy = [...prev];
+      const last = copy[copy.length - 1];
+      const note = `⚠️ ${text}`;
+      if (last && last.role === 'assistant') {
+        copy[copy.length - 1] = {
+          ...last,
+          content: last.content ? `${last.content}\n\n${note}` : note,
+        };
+      } else {
+        copy.push({ role: 'assistant', content: note });
+      }
+      return copy;
+    });
+  };
+
   const sendMessage = async (
     query: string,
     websiteId?: string,
     sessionId?: string,
   ) => {
     setLoading(true);
-    setMessages((prev) => [...prev, { role: 'user' as const, content: query }]);
+    setMessages((prev) => [
+      ...prev,
+      { role: 'user' as const, content: query },
+      { role: 'assistant' as const, content: '' },
+    ]);
 
     try {
-      const url = '/chat';
-      const response = await api.post<ChatResponse>(url, {
-        question: query,
-        website_id: websiteId,
-        session_id: sessionId,
+      const baseUrl = (api.defaults.baseURL || '').replace(/\/$/, '');
+      const response = await fetch(`${baseUrl}/chat/stream`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(localStorage.getItem('access_token')
+            ? { Authorization: `Bearer ${localStorage.getItem('access_token')}` }
+            : {}),
+        },
+        body: JSON.stringify({
+          question: query,
+          website_id: websiteId,
+          session_id: sessionId,
+        }),
       });
-      setMessages((prev) => [
-        ...prev,
-        { role: 'assistant' as const, content: response.data.answer },
-      ]);
+
+      if (!response.ok || !response.body) {
+        throw new Error(`chat failed: ${response.status}`);
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        const parts = buffer.split('\n\n');
+        buffer = parts.pop() || '';
+
+        for (const part of parts) {
+          const line = part.trim();
+          if (!line.startsWith('data:')) continue;
+          const payload = line.slice(5).trim();
+          if (!payload) continue;
+          try {
+            const data = JSON.parse(payload);
+            if (typeof data.chunk === 'string') {
+              appendAssistantChunk(data.chunk);
+            } else if (typeof data.error === 'string') {
+              appendAssistantError(data.error);
+            }
+            // `done: true` is the normal stream terminator; no action needed.
+          } catch {
+            // ignore malformed SSE line
+          }
+        }
+      }
     } catch (error) {
+      console.error('Chat stream error', error);
       message.error('Chat error');
-      setMessages((prev) => [
-        ...prev,
-        { role: 'assistant' as const, content: 'Sorry, something went wrong.' },
-      ]);
+      setAssistantError('Sorry, something went wrong.');
     } finally {
       setLoading(false);
     }
