@@ -1,6 +1,7 @@
 import { Button, Card, Form, Input, Typography, message } from 'antd';
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import type { Location } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { login, setAuthToken } from '../utils/api';
 
@@ -9,10 +10,13 @@ const { Title, Text } = Typography;
 export function Login() {
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
+  const location = useLocation();
   const { login: setToken, isAuthenticated } = useAuth();
 
+  const from = (location.state as { from?: Location })?.from?.pathname ?? '/';
+
   if (isAuthenticated) {
-    navigate('/');
+    navigate(from, { replace: true });
     return null;
   }
 
@@ -23,7 +27,7 @@ export function Login() {
       setAuthToken(response.data.access_token);
       setToken(response.data.access_token);
       message.success('Login successful!');
-      navigate('/');
+      navigate(from, { replace: true });
     } catch (error: any) {
       message.error(error.response?.data?.detail || 'Login failed');
     } finally {

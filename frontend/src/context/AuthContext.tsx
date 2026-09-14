@@ -14,6 +14,7 @@ interface AuthContextType {
   logout: () => void;
   fetchUser: () => Promise<void>;
   isAuthenticated: boolean;
+  loading: boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -75,6 +76,7 @@ export default function AuthProvider({ children }: Props) {
     logout,
     fetchUser,
     isAuthenticated: !!token,
+    loading,
   };
 
   return (
