@@ -113,6 +113,8 @@ npm install && npm run dev   # :5173
 | `MAIL_*` | — | forgot/reset password via fastapi-mail |
 | `JWT_SECRET_KEY` | dev default | **change in prod** |
 | `VITE_BACKEND_URL` (frontend) | — | backend base URL |
+| `GOOGLE_DRIVE_ENABLED` / `GOOGLE_DRIVE_CLIENT_ID` | `false` / — | optional; backend flag + OAuth client id for the Google Drive import flow |
+| `VITE_GOOGLE_DRIVE_CLIENT_ID` (frontend) | — | optional; when set, shows the "Pick from Google Drive" picker button |
 
 ## Key API endpoints
 
@@ -270,3 +272,32 @@ The streaming chat (`POST /api/chat/stream`) was failing in the browser with
 After these fixes, chat streams real tokens end-to-end. **Note:** because embeddings were
 failing before, no vectors exist yet — ingest/crawl a website (settings → pages →
 `POST /api/ingest`) so the bot actually has knowledge to answer from.
+
+## Multi-source extra documents (Google Drive, URL, …)
+
+Extra documents no longer have to come from a local file picker. The `Attachment`
+table gained a `source` (`local` | `url` | `google_drive` | …) + `source_ref`
+column, and every source is normalized into a local file under `uploads/` so the
+rest of the RAG pipeline (`services/parse.py`, `worker.py`) is unchanged — only
+*how the bytes are fetched* differs.
+
+- **Providers** — `services/sources.py` is a small provider registry
+  (`UrlProvider`, `GoogleDriveProvider`). Add Dropbox/OneDrive/S3 by writing one
+  class and registering it in `PROVIDERS`; nothing else needs to change.
+- **Endpoints** — `POST /api/uploads/url` (`{url, token?}`) and
+  `POST /api/uploads/google-drive` (`{file_id, access_token}`), alongside the
+  existing `POST /api/uploads/` (local). All three return the same
+  `{file_id, filename, file_url, file_size, file_type, source, source_ref}` shape.
+- **Google Drive without OAuth setup** — paste a share link for a file shared
+  with *Anyone with the link*; the backend downloads it via the public endpoint
+  (no token required). For private files, send an `access_token` (e.g. from the
+  Google Picker) or set `VITE_GOOGLE_DRIVE_CLIENT_ID` to surface the native
+  picker (`frontend/src/utils/googleDrive.ts` loads Google Identity Services +
+  the Picker API on demand).
+- **Frontend** — `frontend/src/pages/ExtraDocuments.tsx` adds "From URL" and
+  "From Google Drive" buttons next to the upload control; imported files appear
+  in the same file list with a `URL` / `Drive` badge and flow into the existing
+  `file_ids` → `POST /api/extra_documents` flow.
+- **Migration** — `a1b2c3d4e5f6` adds the two columns and also merges the two
+  pre-existing migration heads (`09cf9d60fd13` + `fb0c17ed1234`) into one, so
+  `alembic upgrade head` runs cleanly.

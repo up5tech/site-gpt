@@ -15,6 +15,8 @@ class AttachmentBase(BaseModel):
     file_url: str | None = None
     file_size: int | None = None
     file_type: str | None = None
+    source: str | None = None
+    source_ref: str | None = None
 
 
 class AttachmentRes(AttachmentBase):

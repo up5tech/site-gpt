@@ -173,6 +173,13 @@ class Attachment(BaseModel):
     file_type: Mapped[str] = mapped_column(String(50), nullable=True)
     file_size: Mapped[int] = mapped_column(nullable=True)
 
+    # Where the file bytes came from. "local" = uploaded directly; other values
+    # ("url", "google_drive", ...) are resolved by services/sources.py. `source_ref`
+    # stores the origin identifier (remote URL, cloud file id, ...) while the
+    # actual bytes are always normalized into a local file under uploads/.
+    source: Mapped[str] = mapped_column(String(50), nullable=True, default="local")
+    source_ref: Mapped[str] = mapped_column(String(500), nullable=True)
+
 
 class Embedding(BaseModel):
     __tablename__ = "embeddings"

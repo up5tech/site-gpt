@@ -334,7 +334,7 @@ export function Chat() {
                     {conv.title || 'Chat'}
                   </Text>
                   <DeleteOutlined
-                    onClick={(e) => {
+                    onClick={(e: any) => {
                       e.stopPropagation();
                       removeConversation(conv);
                     }}

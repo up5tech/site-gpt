@@ -1,13 +1,16 @@
 import { Website } from '@/types/api';
 import {
+  CloudOutlined,
   DeleteOutlined,
   FileTextOutlined,
+  GlobalOutlined,
   UploadOutlined,
 } from '@ant-design/icons';
 import {
   Button,
   Card,
   Col,
+  Divider,
   Form,
   Input,
   message,
@@ -16,6 +19,7 @@ import {
   Select,
   Space,
   Table,
+  Tag,
   Typography,
   Upload,
 } from 'antd';
@@ -23,8 +27,16 @@ import type { ColumnsType } from 'antd/es/table';
 import { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import api from '../utils/api';
+import {
+  extractDriveFileId,
+  pickGoogleDriveFiles,
+} from '../utils/googleDrive';
 
 const { Title, Text } = Typography;
+
+// Optional OAuth client id for the native Google Drive Picker. When empty, the
+// user can still paste a publicly-shared Drive link (no token needed).
+const DRIVE_CLIENT_ID = import.meta.env.VITE_GOOGLE_DRIVE_CLIENT_ID || '';
 
 interface ExtraDocument {
   id: string;
@@ -39,6 +51,7 @@ interface ExtraDocument {
     filename: string;
     file_size: number;
     file_type: string;
+    source?: string;
   }>;
 }
 
@@ -59,6 +72,15 @@ export function ExtraDocuments() {
   const [fileList, setFileList] = useState<any[]>([]);
   const [uploading, setUploading] = useState(false);
   const [deletedFileIds, setDeletedFileIds] = useState<string[]>([]);
+
+  // Source-import modals
+  const [urlModalOpen, setUrlModalOpen] = useState(false);
+  const [urlValue, setUrlValue] = useState('');
+  const [urlLoading, setUrlLoading] = useState(false);
+  const [driveModalOpen, setDriveModalOpen] = useState(false);
+  const [driveLink, setDriveLink] = useState('');
+  const [driveToken, setDriveToken] = useState('');
+  const [driveLoading, setDriveLoading] = useState(false);
 
   // State for websites
   const [websites, setWebsites] = useState<Website[]>([]);
@@ -110,6 +132,7 @@ export function ExtraDocuments() {
             {attachments.map((att: any) => (
               <span key={att.id} style={{ fontSize: '12px' }}>
                 📎 {att.filename}
+                {renderSourceTag(att.source)}
               </span>
             ))}
           </Space>
@@ -140,6 +163,27 @@ export function ExtraDocuments() {
       ),
     },
   ];
+
+  const renderSourceTag = (source?: string) => {
+    if (!source || source === 'local') return null;
+    if (source === 'url') {
+      return (
+        <Tag color='blue' style={{ marginLeft: 6 }}>
+          URL
+        </Tag>
+      );
+    }
+    if (source === 'google_drive') {
+      return (
+        <Tag color='purple' style={{ marginLeft: 6 }}>
+          Drive
+        </Tag>
+      );
+    }
+    return (
+      <Tag style={{ marginLeft: 6 }}>{source}</Tag>
+    );
+  };
 
   const fetchDocuments = async () => {
     if (!isAuthenticated) return;
@@ -211,6 +255,8 @@ export function ExtraDocuments() {
         status: 'done',
         size: att.file_size,
         file_id: att.id, // Store file_id for tracking deletions
+        source: att.source,
+        response: { filename: att.filename, file_id: att.id, source: att.source },
       })),
     );
     setDeletedFileIds([]); // Reset deleted file IDs
@@ -278,6 +324,22 @@ export function ExtraDocuments() {
     return false;
   };
 
+  // --- Source-agnostic import helpers -------------------------------------
+
+  const addFetchedFile = (resp: any, source: string) => {
+    setFileList((prev) => [
+      ...prev,
+      {
+        uid: resp.file_id,
+        name: resp.filename,
+        status: 'done',
+        size: resp.file_size,
+        response: { ...resp, source },
+        source,
+      },
+    ]);
+  };
+
   const handleBeforeUpload = async (file: any) => {
     // Validate file type
     const allowedTypes = [
@@ -308,6 +370,7 @@ export function ExtraDocuments() {
         ...file,
         uid: response.data.file_id,
         response: response.data,
+        source: 'local',
       };
       setFileList((prev) => [...prev, newFile]);
     } catch (error) {
@@ -319,6 +382,75 @@ export function ExtraDocuments() {
 
     // Return false to prevent default upload
     return false;
+  };
+
+  const handleUrlSubmit = async () => {
+    if (!urlValue.trim()) {
+      message.error('Please enter a URL');
+      return;
+    }
+    setUrlLoading(true);
+    try {
+      const { data } = await api.post('/uploads/url', { url: urlValue.trim() });
+      addFetchedFile(data, 'url');
+      message.success(`Added ${data.filename} from URL`);
+      setUrlValue('');
+      setUrlModalOpen(false);
+    } catch (error) {
+      console.error('URL import error', error);
+      message.error('Failed to fetch file from URL');
+    } finally {
+      setUrlLoading(false);
+    }
+  };
+
+  const handleDriveSubmit = async () => {
+    const fileId = extractDriveFileId(driveLink);
+    if (!fileId) {
+      message.error('Invalid Google Drive link');
+      return;
+    }
+    setDriveLoading(true);
+    try {
+      const { data } = await api.post('/uploads/google-drive', {
+        file_id: fileId,
+        access_token: driveToken || '',
+      });
+      addFetchedFile(data, 'google_drive');
+      message.success(`Added ${data.filename} from Google Drive`);
+      setDriveLink('');
+      setDriveToken('');
+      setDriveModalOpen(false);
+    } catch (error) {
+      console.error('Drive import error', error);
+      message.error('Failed to import from Google Drive');
+    } finally {
+      setDriveLoading(false);
+    }
+  };
+
+  const handleDrivePick = async () => {
+    if (!DRIVE_CLIENT_ID) return;
+    setDriveLoading(true);
+    try {
+      const docs = await pickGoogleDriveFiles(DRIVE_CLIENT_ID);
+      for (const d of docs) {
+        const { data } = await api.post('/uploads/google-drive', {
+          file_id: d.id,
+          access_token: d.token,
+        });
+        addFetchedFile(data, 'google_drive');
+      }
+      if (docs.length) {
+        message.success(`Added ${docs.length} file(s) from Google Drive`);
+        setDriveModalOpen(false);
+      }
+    } catch (error: any) {
+      console.error('Drive picker error', error);
+      message.error(error?.message || 'Google Drive picker failed');
+    } finally {
+      setDriveLoading(false);
+    }
   };
 
   return (
@@ -416,16 +548,43 @@ export function ExtraDocuments() {
             <Input.TextArea placeholder='Document content' rows={6} />
           </Form.Item>
           <Form.Item label='Attachments'>
-            <Upload
-              beforeUpload={handleBeforeUpload}
-              onRemove={onRemove}
-              fileList={fileList}
-              itemRender={(_: any, file: any) => {
-                // console.log(file);
-                return (
-                  <Space>
+            <Space wrap style={{ marginBottom: 8 }}>
+              <Upload
+                beforeUpload={handleBeforeUpload}
+                onRemove={onRemove}
+                fileList={fileList.filter((f) => f.source === 'local')}
+                showUploadList={false}
+              >
+                <Button icon={<UploadOutlined />} loading={uploading}>
+                  Click to Upload
+                </Button>
+              </Upload>
+              <Button
+                icon={<GlobalOutlined />}
+                onClick={() => setUrlModalOpen(true)}
+              >
+                From URL
+              </Button>
+              <Button
+                icon={<CloudOutlined />}
+                onClick={() => setDriveModalOpen(true)}
+              >
+                From Google Drive
+              </Button>
+            </Space>
+            {/* Render ALL files (local + url + drive) here, with source badges */}
+            <div style={{ marginTop: 8 }}>
+              {fileList.length === 0 && (
+                <Text type='secondary' style={{ fontSize: '12px' }}>
+                  No files yet
+                </Text>
+              )}
+              <Space direction='vertical' style={{ width: '100%' }}>
+                {fileList.map((file) => (
+                  <Space key={file.uid}>
                     <FileTextOutlined />
                     {file.name || file.filename || file.response?.filename}
+                    {renderSourceTag(file.source || file.response?.source)}
                     <Button
                       type='link'
                       danger
@@ -433,18 +592,75 @@ export function ExtraDocuments() {
                       icon={<DeleteOutlined />}
                     />
                   </Space>
-                );
-              }}
-            >
-              <Button icon={<UploadOutlined />} loading={uploading}>
-                Click to Upload
-              </Button>
-            </Upload>
+                ))}
+              </Space>
+            </div>
             <div style={{ marginTop: 8, fontSize: '12px', color: '#999' }}>
               Supported formats: PDF, TXT, DOC, DOCX
             </div>
           </Form.Item>
         </Form>
+      </Modal>
+
+      {/* URL import modal */}
+      <Modal
+        title='Add from URL'
+        open={urlModalOpen}
+        onOk={handleUrlSubmit}
+        onCancel={() => setUrlModalOpen(false)}
+        okText='Add'
+        confirmLoading={urlLoading}
+      >
+        <Input
+          placeholder='https://example.com/file.pdf'
+          value={urlValue}
+          onChange={(e) => setUrlValue(e.target.value)}
+          onPressEnter={handleUrlSubmit}
+        />
+        <div style={{ marginTop: 8, fontSize: '12px', color: '#999' }}>
+          The file is downloaded and stored like a normal upload.
+        </div>
+      </Modal>
+
+      {/* Google Drive import modal */}
+      <Modal
+        title='Add from Google Drive'
+        open={driveModalOpen}
+        onOk={handleDriveSubmit}
+        onCancel={() => setDriveModalOpen(false)}
+        okText='Add link'
+        confirmLoading={driveLoading}
+      >
+        <Space direction='vertical' style={{ width: '100%' }}>
+          {DRIVE_CLIENT_ID && (
+            <Button
+              icon={<CloudOutlined />}
+              onClick={handleDrivePick}
+              loading={driveLoading}
+              block
+            >
+              Pick from Google Drive
+            </Button>
+          )}
+          {DRIVE_CLIENT_ID && (
+            <Divider plain style={{ margin: '4px 0' }}>
+              or paste a share link
+            </Divider>
+          )}
+          <Input
+            placeholder='https://drive.google.com/file/d/.../view'
+            value={driveLink}
+            onChange={(e) => setDriveLink(e.target.value)}
+          />
+          <Input.Password
+            placeholder='Access token (optional, for private files)'
+            value={driveToken}
+            onChange={(e) => setDriveToken(e.target.value)}
+          />
+          <div style={{ fontSize: '12px', color: '#999' }}>
+            Publicly shared links work without a token.
+          </div>
+        </Space>
       </Modal>
     </>
   );

@@ -1,3 +1,15 @@
 {
-  "plugin": ["@dietrichgebert/ponytail"]
+  "plugin": [
+    "@dietrichgebert/ponytail"
+  ],
+  "mcp": {
+    "graft": {
+      "type": "local",
+      "command": [
+        "graft",
+        "mcp"
+      ],
+      "enabled": true
+    }
+  }
 }

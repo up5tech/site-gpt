@@ -38,3 +38,14 @@ SQL_ECHO = os.getenv("SQL_ECHO", "false").lower() in ("1", "true", "yes", "on")
 # How often (in hours) the worker should auto re-crawl a website to keep its
 # knowledge base fresh. Set to 0 to disable the periodic scheduler.
 CRAWL_REFRESH_HOURS = int(os.getenv("CRAWL_REFRESH_HOURS", "24"))
+
+# Optional: surface a "Connect Google Drive" picker in the frontend and/or
+# enable a service-account backend flow. The default import path uses an access
+# token sent by the client, so these are not required for basic usage.
+GOOGLE_DRIVE_ENABLED = os.getenv("GOOGLE_DRIVE_ENABLED", "false").lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+GOOGLE_DRIVE_CLIENT_ID = os.getenv("GOOGLE_DRIVE_CLIENT_ID")
