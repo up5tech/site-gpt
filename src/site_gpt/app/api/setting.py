@@ -38,7 +38,7 @@ def get_settings(
         .filter(models.Setting.company_id == user.company_id)
         .all()
     )
-    return [SettingRes.model_validate(q) for q in query]
+    return [SettingRes.model_validate(q, from_attributes=True) for q in query]
 
 
 @router.put("/")
