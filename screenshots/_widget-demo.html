@@ -1,0 +1,30 @@
+<!doctype html>
+<html><head><meta charset='utf-8'><title>Acme Corp</title>
+<style>
+  body{font-family:-apple-system,Segoe UI,Arial,sans-serif;margin:0;background:#f6f7fb;color:#1f2937}
+  .wrap{max-width:880px;margin:0 auto;padding:48px 32px}
+  header{background:#fff;border-bottom:1px solid #e5e7eb;padding:16px 32px;display:flex;align-items:center;justify-content:space-between}
+  .brand{font-weight:700;color:#4c74af;font-size:18px}
+  nav a{color:#4b5563;text-decoration:none;margin-left:24px;font-size:14px}
+  h1{font-size:34px;margin:24px 0 8px}
+  p.lead{font-size:16px;color:#4b5563;line-height:1.6}
+  .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:32px}
+  .card{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:20px}
+  .card h3{margin:0 0 8px;font-size:16px}
+  .card p{margin:0;color:#6b7280;font-size:14px;line-height:1.5}
+</style></head><body>
+<header><div class='brand'>Acme Corp</div><nav><a href='#'>Product</a><a href='#'>Pricing</a><a href='#'>Docs</a><a href='#'>Contact</a></nav></header>
+<div class='wrap'>
+  <h1>Build faster with Acme</h1>
+  <p class='lead'>A short demo page that hosts the SiteGPT chat widget. The floating chat button (bottom-right) is rendered by <code>widget.js</code>.</p>
+  <div class='grid'>
+    <div class='card'><h3>Realtime answers</h3><p>Ask anything about our product — answered from our own knowledge base.</p></div>
+    <div class='card'><h3>Cited sources</h3><p>Every reply links back to the exact page it came from.</p></div>
+    <div class='card'><h3>Drop-in embed</h3><p>Two lines of HTML and you're live on any site.</p></div>
+  </div>
+</div>
+<script>
+  window.ChatWidgetConfig = { apiUrl: 'http://127.0.0.1:8000', website_id: '43fc07d1-d575-41aa-9498-4fea3e092e7a' };
+</script>
+<script src='http://127.0.0.1:8000/widget.js' async></script>
+</body></html>
