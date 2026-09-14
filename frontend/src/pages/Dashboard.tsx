@@ -1,6 +1,5 @@
 import {
   ArrowRightOutlined,
-  CloudUploadOutlined,
   DatabaseOutlined,
   GlobalOutlined,
   LockOutlined,
@@ -11,11 +10,9 @@ import {
 } from '@ant-design/icons';
 import { Layout as AntLayout, Button, Card, Col, Empty, List, Row, Statistic, Tag, Typography } from 'antd';
 import { Link } from 'react-router-dom';
-import { Chat } from '../components/Chat';
 import { useAuth } from '../context/AuthContext';
 import { UserTable } from '@/components/UserTable';
 import { WebsiteTable } from '@/components/WebsiteTable';
-import { ChatProvider } from '@/context/ChatContext';
 import { getDashboardStats, getRecentConversations } from '@/utils/api';
 import type { DashboardStats, RecentConversation } from '@/types/api';
 import { useEffect, useState } from 'react';
@@ -321,9 +318,9 @@ export function Dashboard() {
         </Col>
       </Row>
 
-      {/* Websites + Chat */}
+      {/* Websites */}
       <Row gutter={[24, 24]} style={{ marginBottom: 8 }}>
-        <Col xs={24} lg={15}>
+        <Col span={24}>
           <Card
             title={
               <span style={{ fontWeight: 600 }}>
@@ -342,28 +339,6 @@ export function Dashboard() {
             style={{ height: '100%' }}
           >
             <WebsiteTable />
-          </Card>
-        </Col>
-
-        <Col xs={24} lg={9}>
-          <Card
-            title={
-              <span style={{ fontWeight: 600 }}>
-                <CloudUploadOutlined style={{ marginRight: 8, color: '#6b7280' }} />
-                Chat with your site
-              </span>
-            }
-            extra={
-              <Text type='secondary' style={{ fontSize: 14 }}>
-                Ask about indexed content
-              </Text>
-            }
-            className='premium-card'
-            style={{ height: '100%' }}
-          >
-            <ChatProvider>
-              <Chat />
-            </ChatProvider>
           </Card>
         </Col>
       </Row>

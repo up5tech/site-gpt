@@ -30,6 +30,7 @@ import {
   message,
 } from 'antd';
 import { useEffect, useRef, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 
 const { TextArea } = Input;
 const { Text } = Typography;
@@ -56,6 +57,7 @@ export function Chat() {
   );
   const CONV_PAGE = 20;
   const chatListRef = useRef<HTMLDivElement>(null);
+  const location = useLocation();
 
   const handleFeedback = async (
     index: number,
@@ -94,9 +96,11 @@ export function Chat() {
     const websiteParam = params.get('website');
     if (websiteParam) setSelectedWebsiteId(websiteParam);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [location.search]);
 
-  // When the website changes, start a fresh chat and load its history list.
+  // When the website (or deep-link) changes, start a fresh chat and load its
+  // history list. Also honours ?focus=sessionId / ?focus=latest so a Dashboard
+  // "recent conversation" link opens that conversation with its history loaded.
   useEffect(() => {
     if (!selectedWebsiteId) {
       setConversations([]);
@@ -111,16 +115,21 @@ export function Chat() {
     (async () => {
       const items = await loadConversations(selectedWebsiteId, true);
       const params = new URLSearchParams(window.location.search);
+      const websiteParam = params.get('website');
       const focus = params.get('focus');
-      if (items.length > 0) {
+      // Only act on the deep-link once the selected website matches the URL.
+      if (focus && (!websiteParam || websiteParam === selectedWebsiteId)) {
         if (focus === 'latest') {
-          selectConversation(items[0]);
-        } else if (focus) {
+          if (items.length > 0) selectConversation(items[0]);
+        } else {
+          // Specific session: load it directly. This works whether or not it
+          // appears on the first page of the per-website list, and even when
+          // that list is empty — so the Dashboard "recent conversation" link
+          // always restores the right history instead of opening blank.
           const match = items.find((c) => c.session_id === focus);
           if (match) {
             selectConversation(match);
           } else {
-            // Not on the first page; fetch the session directly instead.
             getConversationMessages(selectedWebsiteId, focus)
               .then((r) => {
                 loadMessages(r.data.items || []);
@@ -133,7 +142,7 @@ export function Chat() {
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedWebsiteId]);
+  }, [selectedWebsiteId, location.search]);
 
   useEffect(() => {
     chatListRef.current?.scrollTo({
