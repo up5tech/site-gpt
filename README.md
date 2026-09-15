@@ -103,9 +103,11 @@ npm install && npm run dev   # :5173
 | Key | Default | Purpose |
 |---|---|---|
 | `DATABASE_URL` | — | SQLAlchemy Postgres URL |
-| `LLM_AI` | `openai` | `ollama\|openai\|custom_openai\|gemini\|groq\|openrouter` |
+| `LLM_AI` | `openai` | chat provider: `ollama\|openai\|custom_openai\|gemini\|groq\|openrouter` |
 | `LLM_MODEL` | `gpt-4o-mini` | chat model |
-| `LLM_EMBEDDING_MODEL` | `text-embedding-3-small` | embedding model |
+| `LLM_EMBEDDING_MODEL` | `text-embedding-3-small` | embedding model name |
+| `EMBEDDING_AI` | `LLM_AI` | **embedding provider, fully independent of `LLM_AI`** (same value set). Leave unset to reuse the chat provider. |
+| `EMBEDDING_DIMENSIONS` | `1536` | vector dimension of the `embeddings` column; must match the embedding model's output dim |
 | `OPENAI_API_BASE_URL` / `OPENAI_API_KEY` | — | OpenAI or Ollama-compatible endpoint |
 | `GEMINI_API_KEY` / `GROQ_API_KEY` / `OPEN_ROUTER_API_KEY` | — | provider keys |
 | `OLLAMA_HOST` / `OLLAMA_USERNAME` / `OLLAMA_PASSWORD` | `http://localhost:11434` | Ollama (optional basic auth) |
@@ -146,11 +148,34 @@ cd frontend && npm run build && npm run lint
 
 ## Embedding dimension caveat
 
-The `embeddings` table column is `Vector(1536)` (matches OpenAI `text-embedding-3-small`).
-If you switch `LLM_AI` to **ollama** with an embedding model that outputs a different
-dimension (e.g. `nomic-embed-text` → 768), ingestion will fail on insert. Either keep a
-1536-dim embedding model, or change the column dimension + `Embedding.embedding` in
-`models.py` to match and regenerate a migration.
+The `embeddings` table column is `Vector(EMBEDDING_DIMENSIONS)`, defaulting to **1536**
+(matches OpenAI `text-embedding-3-small`). The chat and embedding providers are now
+fully independent — set `EMBEDDING_AI` to point the embedding model at a different
+provider than the chat model.
+
+Because some embedding models emit a different dimension, set `EMBEDDING_DIMENSIONS`
+to match your chosen model:
+
+| Embedding model | Provider | Dimension |
+|---|---|---|
+| `text-embedding-3-small` / `text-embedding-3-large` | openai / custom_openai | 1536 (or request via `dimensions`) |
+| `bge-m3` | ollama | 1024 |
+| `nomic-embed-text` / `nomic-embed-text-v2-moe` | ollama | 768 |
+
+If you change `EMBEDDING_DIMENSIONS` from 1536, you must also:
+
+1. Generate & apply a migration that alters the column:
+   ```bash
+   uv run alembic revision --autogenerate -m "embedding dimension"
+   uv run alembic upgrade head
+   ```
+2. **Re-ingest** every website (`POST /api/ingest`) so stored vectors match the
+   new dimension — existing vectors of the old size will no longer be queryable.
+
+OpenAI-compatible providers (openai, custom_openai, openrouter, groq, gemini) that
+support the `dimensions` param will be asked for `EMBEDDING_DIMENSIONS` automatically
+for `text-embedding-3-*` / `auto` models. Ollama models emit a fixed native dimension,
+so `EMBEDDING_DIMENSIONS` must equal that model's native size.
 
 ## Fixes & improvements applied
 

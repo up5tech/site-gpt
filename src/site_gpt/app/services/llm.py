@@ -8,6 +8,8 @@ from langchain_openai import ChatOpenAI
 from openai import OpenAI
 
 from site_gpt.app.core.config import (
+    EMBEDDING_AI,
+    EMBEDDING_DIMENSIONS,
     GEMINI_API_KEY,
     GROQ_API_KEY,
     LLM_AI,
@@ -31,10 +33,10 @@ class _OpenAICompatibleEmbeddings:
     ``400 input is required``, even though the raw SDK works. Going through
     the SDK directly is reliable.
 
-    Also requests ``dimensions=1536`` when the model supports OpenAI's
-    ``dimensions`` param, so the produced vectors match the ``Vector(1536)``
-    column regardless of what the gateway's ``auto`` router would otherwise
-    return (it defaults to 3072).
+    Also requests ``dimensions=EMBEDDING_DIMENSIONS`` when the model supports
+    OpenAI's ``dimensions`` param, so the produced vectors match the
+    ``Vector(EMBEDDING_DIMENSIONS)`` column regardless of what the gateway's
+    ``auto`` router would otherwise return.
     """
 
     def __init__(self, model: str, *, api_key=None, base_url=None, dimensions=None):
@@ -54,9 +56,14 @@ class _OpenAICompatibleEmbeddings:
 
 
 def _embedding_dimensions(model: str):
-    """1536 when the model supports OpenAI's ``dimensions`` param, else None."""
+    """Return the ``dimensions`` value to request from OpenAI-style embedding
+    APIs that support it (``text-embedding-3-*`` and ``auto``). ``None`` for
+    models that emit a fixed native dimension (e.g. Ollama ``bge-m3``,
+    ``nomic-embed-text``) — there the column dimension must match the model's
+    native dimension (see ``EMBEDDING_DIMENSIONS``).
+    """
     if model == "auto" or model.startswith("text-embedding-3"):
-        return 1536
+        return EMBEDDING_DIMENSIONS
     return None
 
 
@@ -98,8 +105,10 @@ def get_llm():
 
 
 def get_embedding_model():
+    """Build the embedding client for the *embedding* provider (EMBEDDING_AI),
+    which is fully independent of the chat provider (LLM_AI)."""
     dims = _embedding_dimensions(LLM_EMBEDDING_MODEL)
-    if LLM_AI == "ollama":
+    if EMBEDDING_AI == "ollama":
         if OLLAMA_USERNAME and OLLAMA_PASSWORD:
             auth_str = f"{OLLAMA_USERNAME}:{OLLAMA_PASSWORD}"
             b64_auth = base64.b64encode(auth_str.encode()).decode()
@@ -110,28 +119,28 @@ def get_embedding_model():
             )
         else:
             return OllamaEmbeddings(model=LLM_EMBEDDING_MODEL)
-    elif LLM_AI == "openrouter":
+    elif EMBEDDING_AI == "openrouter":
         return _OpenAICompatibleEmbeddings(
             model=LLM_EMBEDDING_MODEL,
             api_key=OPEN_ROUTER_API_KEY,  # type: ignore
             base_url="https://openrouter.ai/api/v1",
             dimensions=dims,
         )
-    elif LLM_AI == "groq":
+    elif EMBEDDING_AI == "groq":
         return _OpenAICompatibleEmbeddings(
             model=LLM_EMBEDDING_MODEL,
             api_key=GROQ_API_KEY,  # type: ignore
             base_url="https://api.groq.com/openai/v1",
             dimensions=dims,
         )
-    elif LLM_AI == "gemini":
+    elif EMBEDDING_AI == "gemini":
         return _OpenAICompatibleEmbeddings(
             model=LLM_EMBEDDING_MODEL,
             api_key=GEMINI_API_KEY,  # type: ignore
             base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
             dimensions=dims,
         )
-    elif LLM_AI == "custom_openai":
+    elif EMBEDDING_AI == "custom_openai":
         return _OpenAICompatibleEmbeddings(
             model=LLM_EMBEDDING_MODEL,
             api_key=OPENAI_API_KEY,  # type: ignore

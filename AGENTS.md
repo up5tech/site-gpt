@@ -20,7 +20,7 @@ No test suite exists (`tests/` is empty) — verify by import/compile: `uv run p
 - `src/site_gpt/app/api/` — one module per resource; `routes.py` holds auth/chat/ingest/widget endpoints. Routers define full paths internally or rely on prefix in `main.py` — check before adding routes.
 - `src/site_gpt/app/models.py` + `src/site_gpt/app/db/base.py` (BaseModel: uuid `id`, `created_at/updated_at`) — all FKs use `ondelete` + cascade relationships; follow that pattern.
 - `src/site_gpt/app/schemas/` — Pydantic models mirror each resource; paginated lists use `PaginatedResponse`.
-- `src/site_gpt/app/services/` — `llm.py` (multi-provider switch on `LLM_AI`), `rag.py` (raw SQL pgvector `<->` search + chat history), `ingest.py` (chunk 1000/200 + embed), `crawler.py` (sitemap + trafilatura), `redis.py` (queue `queue:jobs` via `brpop`), `mail.py`.
+- `src/site_gpt/app/services/` — `llm.py` (chat provider switches on `LLM_AI`; **embedding provider switches independently on `EMBEDDING_AI`**, defaulting to `LLM_AI`), `rag.py` (raw SQL pgvector `<->` search + chat history), `ingest.py` (chunk 1000/200 + embed), `crawler.py` (sitemap + trafilatura), `redis.py` (queue `queue:jobs` via `brpop`), `mail.py`.
 - `src/site_gpt/app/core/config.py` — env-only config, no defaults with secrets except dev JWT fallback. New settings go here + `.env.example`.
 - `src/site_gpt/app/scripts/widget.js` — vanilla JS, no build; config via `window.ChatWidgetConfig`.
 - `frontend/src/` — pages per route (`App.tsx`), `utils/api.ts` (axios + JWT), `context/AuthContext` (token storage), Ant Design components.
@@ -28,7 +28,7 @@ No test suite exists (`tests/` is empty) — verify by import/compile: `uv run p
 ## Conventions
 
 - Python: SQLAlchemy 2.0 `Mapped/mapped_column` style, `Session = Depends(get_db)`, JWT via `core/auth.py` (`hash_password`/`verify_password`/`create_access_token`). Don't introduce new auth libs.
-- Embeddings are `Vector(1536)` — embedding model changes must match this dimension or require a migration.
+- Embeddings are `Vector(EMBEDDING_DIMENSIONS)` (default 1536) — the embedding model's output dimension must match `EMBEDDING_DIMENSIONS`; changing it requires an Alembic migration + re-ingest. `EMBEDDING_AI` selects the embedding provider independently of the chat provider `LLM_AI`.
 - Chunking: `RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)` — keep consistent between `ingest.py` and new code.
 - RAG search SQL lives in `rag.py::search` (documents only, top 5, `website_id` scoped). Extend there, don't duplicate.
 - Worker jobs are `{"type": "ingest", "website_id": ...}` on Redis list `queue:jobs`; `handle_ingest` in `worker.py` sets `websites.ingest_status` (`none → processing → completed`).

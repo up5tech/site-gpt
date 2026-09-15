@@ -12,6 +12,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from site_gpt.app.core.config import EMBEDDING_DIMENSIONS
 from site_gpt.app.db.base import BaseModel
 
 
@@ -201,7 +202,7 @@ class Embedding(BaseModel):
         ForeignKey("extra_documents.id", ondelete="CASCADE"), nullable=True
     )
     content: Mapped[str] = mapped_column(Text)
-    embedding = mapped_column(Vector(1536))
+    embedding = mapped_column(Vector(EMBEDDING_DIMENSIONS))
 
 
 class ChatMessage(BaseModel):

@@ -14,6 +14,17 @@ LLM_AI = os.getenv("LLM_AI", "openai")
 LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4o-mini")
 LLM_EMBEDDING_MODEL = os.getenv("LLM_EMBEDDING_MODEL", "text-embedding-3-small")
 
+# The embedding provider is fully independent of the chat provider. It defaults
+# to the chat provider (LLM_AI) so existing single-provider setups keep working
+# unchanged — set EMBEDDING_AI explicitly to mix providers, e.g. chat via Ollama
+# (Qwen) but embeddings via OpenAI text-embedding-3-small, or vice versa.
+EMBEDDING_AI = os.getenv("EMBEDDING_AI", LLM_AI)
+# Dimension of the vectors stored in the `embeddings` table. Must match the
+# chosen embedding model's output dimension (e.g. 1024 for bge-m3, 768 for
+# nomic-embed-text). Changing this from the default requires an Alembic
+# migration that alters the column AND re-ingesting the knowledge base.
+EMBEDDING_DIMENSIONS = int(os.getenv("EMBEDDING_DIMENSIONS", "1536"))
+
 OPENAI_API_BASE_URL = os.getenv("OPENAI_API_BASE_URL", "https://api.openai.com/v1")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
