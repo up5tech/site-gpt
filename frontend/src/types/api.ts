@@ -123,6 +123,24 @@ export interface RecentConversations {
   items: RecentConversation[];
 }
 
+export interface Contact {
+  id: string;
+  website_id: string;
+  session_id: string;
+  first_name: string;
+  last_name: string;
+  email: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ContactList {
+  items: Contact[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 /** Public widget config fetched by the embeddable widget (key/value map). */
 export type WidgetConfig = Record<string, string>;
 

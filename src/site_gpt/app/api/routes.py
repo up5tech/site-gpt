@@ -26,6 +26,11 @@ from site_gpt.app.schemas.chat import (
     RecentConversationsResponse,
 )
 from site_gpt.app.schemas.company import CompanyRegister
+from site_gpt.app.schemas.contact import (
+    ContactCreate,
+    ContactListResponse,
+    ContactRes,
+)
 from site_gpt.app.schemas.user import UserLogin
 from site_gpt.app.services.conversations import (
     delete_conversation,
@@ -109,6 +114,131 @@ def chat_feedback(
     db.add(feedback)
     db.commit()
     return {"status": "ok"}
+
+
+@router.post("/api/contacts")
+def upsert_contact(
+    body: ContactCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+    _: None = Depends(rate_limit("chat", max_requests=40, window_seconds=60)),
+):
+    """Public: save the visitor's contact info before chatting.
+
+    Upsert on (website_id, session_id) so resubmits overwrite instead of
+    duplicating. No auth, by design — same scoping as the chat endpoints."""
+    if not body.session_id.strip() or not body.first_name.strip() or not body.last_name.strip() or not body.email.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="session_id, first_name, last_name and email are required",
+        )
+    website = (
+        db.query(models.Website)
+        .filter(models.Website.id == body.website_id)
+        .first()
+    )
+    if not website:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Website not found"
+        )
+    contact = (
+        db.query(models.Contact)
+        .filter(
+            models.Contact.website_id == body.website_id,
+            models.Contact.session_id == body.session_id,
+        )
+        .first()
+    )
+    if contact:
+        contact.first_name = body.first_name.strip()
+        contact.last_name = body.last_name.strip()
+        contact.email = body.email.strip()
+    else:
+        contact = models.Contact(
+            website_id=body.website_id,
+            session_id=body.session_id,
+            first_name=body.first_name.strip(),
+            last_name=body.last_name.strip(),
+            email=body.email.strip(),
+        )
+        db.add(contact)
+    db.commit()
+    db.refresh(contact)
+    return ContactRes.model_validate(contact)
+
+
+@router.get("/api/contacts", response_model=ContactListResponse)
+def list_contacts_endpoint(
+    website_id: str,
+    limit: int = 50,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_manager_user),
+):
+    """List a website's contacts. Manager-scoped by company."""
+    try:
+        site_uuid = _UUID(str(website_id))
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid website_id"
+        )
+    website = (
+        db.query(models.Website)
+        .filter(
+            models.Website.id == site_uuid,
+            models.Website.company_id == user.company_id,
+        )
+        .first()
+    )
+    if not website:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Website not found"
+        )
+    q = (
+        db.query(models.Contact)
+        .filter(models.Contact.website_id == website.id)
+        .order_by(models.Contact.created_at.desc())
+    )
+    total = q.count()
+    rows = q.limit(limit).offset(offset).all()
+    return ContactListResponse(
+        items=[ContactRes.model_validate(r) for r in rows],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get("/api/contacts/{session_id}", response_model=ContactRes)
+def get_contact_endpoint(
+    session_id: str,
+    website_id: str,
+    db: Session = Depends(get_db),
+):
+    """Public: fetch one session's contact.
+
+    Lets the widget restore (or prefill) contact info after localStorage
+    was cleared. Same `website_id` scoping as the chat endpoints — no auth,
+    by design."""
+    try:
+        site_uuid = _UUID(str(website_id))
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid website_id"
+        )
+    contact = (
+        db.query(models.Contact)
+        .filter(
+            models.Contact.website_id == site_uuid,
+            models.Contact.session_id == session_id,
+        )
+        .first()
+    )
+    if not contact:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Contact not found"
+        )
+    return ContactRes.model_validate(contact)
 
 
 @router.get("/api/widget-config")

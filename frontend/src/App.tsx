@@ -5,6 +5,7 @@ import { LayoutComponent } from './components/Layout';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import AuthProvider from './context/AuthContext';
 import { ChatProvider } from './context/ChatContext';
+import { Contacts } from './pages/Contacts';
 import { Dashboard } from './pages/Dashboard';
 import { ExtraDocuments } from './pages/ExtraDocuments';
 import { Login } from './pages/Login';
@@ -51,6 +52,14 @@ function App() {
                 element={
                   <ProtectedRoute>
                     <Playground />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path='/contacts'
+                element={
+                  <ProtectedRoute>
+                    <Contacts />
                   </ProtectedRoute>
                 }
               />

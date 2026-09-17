@@ -1,4 +1,4 @@
-import { Button, Card, Form, Input, Typography, message } from 'antd';
+import { App, Button, Card, Form, Input, Typography } from 'antd';
 import { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import type { Location } from 'react-router-dom';
@@ -8,6 +8,7 @@ import { login, setAuthToken } from '../utils/api';
 const { Title, Text } = Typography;
 
 export function Login() {
+  const { message } = App.useApp();
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();

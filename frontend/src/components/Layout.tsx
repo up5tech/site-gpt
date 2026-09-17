@@ -23,6 +23,7 @@ export function LayoutComponent({ children }: Props) {
     { key: '/', label: 'Dashboard' },
     { key: '/websites', label: 'Websites' },
     { key: '/playground', label: 'Playground' },
+    { key: '/contacts', label: 'Contacts' },
     { key: '/users', label: 'Users' },
     { key: '/documents', label: 'Documents' },
   ];

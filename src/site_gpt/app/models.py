@@ -95,6 +95,9 @@ class Website(BaseModel):
     extra_documents = relationship(
         "ExtraDocument", cascade="all, delete-orphan", passive_deletes=True
     )
+    contacts = relationship(
+        "Contact", cascade="all, delete-orphan", passive_deletes=True
+    )
 
 
 class WebsitePage(BaseModel):
@@ -229,3 +232,20 @@ class ChatFeedback(BaseModel):
     session_id: Mapped[str] = mapped_column(String(255), nullable=False)
     rating: Mapped[str] = mapped_column(String(20), nullable=False)  # "up" | "down"
     comment: Mapped[str] = mapped_column(Text, nullable=True)
+
+
+class Contact(BaseModel):
+    __tablename__ = "contacts"
+
+    __table_args__ = (
+        Index("idx_contacts_website_id", "website_id"),
+        UniqueConstraint("website_id", "session_id"),
+    )
+
+    website_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("websites.id", ondelete="CASCADE"), nullable=False
+    )
+    session_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    first_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    last_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    email: Mapped[str] = mapped_column(String(255), nullable=False)

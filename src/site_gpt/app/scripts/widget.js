@@ -16,6 +16,7 @@
     welcomeMessage: 'Hi 👋 How can I help you?',
     enableHistory: true,
     suggestedQuestions: [],
+    requireContactInfo: true,
   };
 
   const config = Object.assign(
@@ -30,6 +31,7 @@
     const id = crypto.randomUUID();
     localStorage.setItem('chat_widget_session', id);
     localStorage.removeItem('chat_widget_history');
+    localStorage.removeItem('chat_widget_contact');
     return id;
   }
 
@@ -118,6 +120,59 @@
         border: none;
         padding: 10px 14px;
         cursor: pointer;
+      }
+
+      .contact-form {
+        flex: 1;
+        overflow-y: auto;
+        padding: 16px 14px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+
+      .contact-form p {
+        font-size: 14px;
+        margin: 0 0 4px;
+      }
+
+      .contact-form label {
+        font-size: 12px;
+        color: #555;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+
+      .contact-form input {
+        border: 1px solid #ccc;
+        border-radius: 6px;
+        padding: 8px 10px;
+        font-size: 14px;
+        outline: none;
+        width: 100%;
+        box-sizing: border-box;
+      }
+
+      .contact-form .error {
+        font-size: 12px;
+        color: #c00;
+        min-height: 16px;
+      }
+
+      .contact-form button.submit {
+        background: ${config.theme.primaryColor};
+        color: white;
+        border: none;
+        border-radius: 6px;
+        padding: 10px;
+        cursor: pointer;
+        font-size: 14px;
+      }
+
+      .contact-form button.submit:disabled {
+        opacity: 0.6;
+        cursor: default;
       }
 
       .row {
@@ -238,7 +293,7 @@
         <button class="clear-btn" id="clearBtn">Clear</button>
       </div>
       <div class="chat-messages" id="messages"></div>
-      <div class="chat-input">
+      <div class="chat-input" id="chatInput">
         <input id="input" placeholder="${config.placeholder}" />
         <button id="sendBtn">Send</button>
       </div>
@@ -395,6 +450,7 @@
   }
 
   function renderSuggestions() {
+    if (needsContact()) return;
     if (!config.suggestedQuestions || config.suggestedQuestions.length === 0)
       return;
     if (messagesEl.children.length > 0) return;
@@ -409,8 +465,113 @@
     messagesEl.appendChild(wrap);
   }
 
+  // ================= CONTACT =================
+  function getContact() {
+    try {
+      return JSON.parse(localStorage.getItem('chat_widget_contact') || 'null');
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function needsContact() {
+    return config.requireContactInfo && !getContact();
+  }
+
+  function setChatInputVisible(visible) {
+    const bar = shadow.getElementById('chatInput');
+    if (bar) bar.style.display = visible ? 'flex' : 'none';
+  }
+
+  // Restore contact from the server (e.g. localStorage was cleared).
+  // Returns true when a saved contact was found and restored.
+  async function loadServerContact() {
+    if (!hasWebsiteId || !config.apiUrl) return false;
+    try {
+      const base = config.apiUrl.replace(/\/$/, '');
+      const res = await fetch(
+        `${base}/api/contacts/${encodeURIComponent(sessionId)}` +
+          `?website_id=${encodeURIComponent(config.website_id)}`,
+      );
+      if (!res.ok) return false;
+      const data = await res.json();
+      if (!data || !data.email) return false;
+      localStorage.setItem(
+        'chat_widget_contact',
+        JSON.stringify({
+          first_name: data.first_name,
+          last_name: data.last_name,
+          email: data.email,
+        }),
+      );
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function showContactForm() {
+    setChatInputVisible(false);
+    messagesEl.innerHTML = '';
+    const form = document.createElement('form');
+    form.className = 'contact-form';
+    form.innerHTML = `
+      <p><b>${config.botName}</b> — please introduce yourself to start chatting.</p>
+      <label>First name<input name="first_name" autocomplete="given-name" /></label>
+      <label>Last name<input name="last_name" autocomplete="family-name" /></label>
+      <label>Email<input name="email" type="email" autocomplete="email" /></label>
+      <div class="error"></div>
+      <button class="submit" type="submit">Start chat</button>
+    `;
+    const errEl = form.querySelector('.error');
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      const first_name = form.first_name.value.trim();
+      const last_name = form.last_name.value.trim();
+      const email = form.email.value.trim();
+      if (!first_name || !last_name || email.indexOf('@') < 0) {
+        errEl.textContent =
+          'Please fill first name, last name and a valid email.';
+        return;
+      }
+      const btn = form.querySelector('.submit');
+      btn.disabled = true;
+      try {
+        const base = (config.apiUrl || '').replace(/\/$/, '');
+        const res = await fetch(`${base}/api/contacts`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            website_id: config.website_id,
+            session_id: sessionId,
+            first_name,
+            last_name,
+            email,
+          }),
+        });
+        if (!res.ok) throw new Error('save failed');
+        localStorage.setItem(
+          'chat_widget_contact',
+          JSON.stringify({ first_name, last_name, email }),
+        );
+        messagesEl.innerHTML = '';
+        setChatInputVisible(true);
+        addMessage(config.welcomeMessage, 'bot');
+        renderSuggestions();
+      } catch (err) {
+        errEl.textContent = 'Could not save. Please try again.';
+        btn.disabled = false;
+      }
+    };
+    messagesEl.appendChild(form);
+  }
+
   // ================= SEND =================
   async function sendMessage(prefillText) {
+    if (needsContact()) {
+      showContactForm();
+      return;
+    }
     const text = (prefillText || inputEl.value || '').trim();
     if (!text) return;
 
@@ -492,6 +653,10 @@
   clearBtn.onclick = () => {
     sessionId = newSession();
     messagesEl.innerHTML = '';
+    if (needsContact()) {
+      showContactForm();
+      return;
+    }
     addMessage(config.welcomeMessage, 'bot');
     renderSuggestions();
   };
@@ -590,6 +755,15 @@
     }
 
     await loadServerConfig();
+
+    if (needsContact()) {
+      const restored = await loadServerContact();
+      if (!restored) {
+        showContactForm();
+        return;
+      }
+    }
+    setChatInputVisible(true);
 
     const loadedFromServer = await loadServerHistory();
     if (!loadedFromServer) loadHistory();

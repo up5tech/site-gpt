@@ -1,5 +1,5 @@
 import axios, { AxiosInstance } from 'axios';
-import type { ChatResponse, ConversationList, ConversationMessages, DashboardStats, FeedbackRequest, LoginResponse, RecentConversations, WidgetConfig } from '../types/api';
+import type { ChatResponse, ContactList, ConversationList, ConversationMessages, DashboardStats, FeedbackRequest, LoginResponse, RecentConversations, WidgetConfig } from '../types/api';
 
 // Base API instance with proxy /api -> backend
 const api: AxiosInstance = axios.create({
@@ -71,6 +71,12 @@ export const getConversationMessages = (websiteId: string, sessionId: string) =>
 export const deleteConversation = (websiteId: string, sessionId: string) =>
   api.delete('/conversations/' + encodeURIComponent(sessionId), {
     params: { website_id: websiteId },
+  });
+
+// Contacts (visitors who filled the widget pre-chat form)
+export const getContacts = (websiteId: string, params: { limit?: number; offset?: number } = {}) =>
+  api.get<ContactList>('/contacts', {
+    params: { website_id: websiteId, ...params },
   });
 
 // Dashboard: latest conversations across the whole company
