@@ -12,9 +12,99 @@ from site_gpt.app.core.config import CRAWL_REFRESH_HOURS
 from site_gpt.app.db.session import SessionLocal
 from site_gpt.app import models
 
+# A website still in `processing` longer than this is assumed to belong to a
+# worker that died mid-ingest (deploy, OOM kill, hard reboot). It must be
+# recovered explicitly: the scheduler only picks up `completed` sites, so an
+# orphaned `processing` row would otherwise never be re-ingested again.
+# Deliberately generous so a legitimately slow crawl is not re-queued.
+STUCK_INGEST_AFTER = timedelta(hours=6)
+
+
+def _is_stuck(
+    website,
+    *,
+    now: datetime | None = None,
+    threshold: timedelta = STUCK_INGEST_AFTER,
+) -> bool:
+    """Whether a website row is an orphaned `processing` ingest.
+
+    `websites.updated_at` is bumped when `handle_ingest` flips the row to
+    `processing` and is not touched again until it completes or fails, so it
+    marks when the ingest started.
+    """
+    if website.ingest_status != "processing":
+        return False
+
+    started_at = website.updated_at
+    if started_at is None:
+        return True
+
+    now = now or datetime.now(UTC)
+    if started_at.tzinfo is None:
+        started_at = started_at.replace(tzinfo=UTC)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=UTC)
+    return now - started_at > threshold
+
+
+def recover_stuck_ingests(
+    db,
+    *,
+    now: datetime | None = None,
+    threshold: timedelta = STUCK_INGEST_AFTER,
+) -> list[str]:
+    """Mark orphaned `processing` ingests as `failed`; return their ids.
+
+    The caller re-enqueues them, so the knowledge base catches up instead of
+    silently serving stale content forever.
+    """
+    now = now or datetime.now(UTC)
+    candidates = (
+        db.query(models.Website)
+        .filter(models.Website.ingest_status == "processing")
+        .all()
+    )
+
+    recovered: list[str] = []
+    for website in candidates:
+        if _is_stuck(website, now=now, threshold=threshold):
+            website.ingest_status = "failed"
+            recovered.append(str(website.id))
+
+    if recovered:
+        db.commit()
+    return recovered
+
+
+async def requeue_stuck_ingests(
+    *, now: datetime | None = None, threshold: timedelta = STUCK_INGEST_AFTER
+) -> list[str]:
+    """Recover stuck ingests and re-enqueue them. Returns the website ids."""
+    db = SessionLocal()
+    try:
+        website_ids = recover_stuck_ingests(db, now=now, threshold=threshold)
+        for website_id in website_ids:
+            try:
+                await enqueue_job({"type": "ingest", "website_id": website_id})
+            except Exception as e:
+                # One Redis hiccup must not skip the remaining recoveries.
+                print(
+                    f"[worker] could not re-queue website {website_id}: {e}"
+                )
+                continue
+            print(f"[worker] recovered stuck ingest for website {website_id}")
+        return website_ids
+    finally:
+        db.close()
+
 
 async def worker():
     print("Worker started, waiting for jobs...")
+    # Pick up ingests orphaned by a previous process before consuming jobs.
+    try:
+        await requeue_stuck_ingests()
+    except Exception as e:
+        print(f"[worker] stuck-ingest recovery failed: {e}")
     # Periodic re-crawl scheduler (keeps knowledge fresh).
     asyncio.create_task(scheduler_loop())
     while True:
@@ -182,6 +272,10 @@ async def scheduler_loop():
         sleep_seconds = max(60, CRAWL_REFRESH_HOURS * 3600 // 12)
         await asyncio.sleep(sleep_seconds)
         try:
+            # Another worker may have died mid-ingest while this one kept
+            # running, so check for orphans on every scheduler tick too.
+            await requeue_stuck_ingests()
+
             db = SessionLocal()
             threshold = datetime.now(UTC) - timedelta(hours=CRAWL_REFRESH_HOURS)
             due = (
@@ -198,9 +292,16 @@ async def scheduler_loop():
                 # until this run finishes.
                 site.ingest_status = "processing"
                 db.commit()
-                await enqueue_job(
-                    {"type": "ingest", "website_id": str(site.id)}
-                )
+                try:
+                    await enqueue_job(
+                        {"type": "ingest", "website_id": str(site.id)}
+                    )
+                except Exception as e:
+                    # Never leave a row in `processing` when no job exists.
+                    site.ingest_status = "failed"
+                    db.commit()
+                    print(f"[scheduler] failed to queue website {site.id}: {e}")
+                    continue
                 print(f"[scheduler] queued refresh for website {site.id}")
             db.close()
         except Exception as e:
