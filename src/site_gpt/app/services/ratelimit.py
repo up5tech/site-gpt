@@ -12,6 +12,8 @@ from collections import deque
 
 from fastapi import HTTPException, Request
 
+from site_gpt.app.core.config import TRUSTED_PROXY_IPS
+
 _lock = asyncio.Lock()
 _hits: dict[str, deque[float]] = defaultdict(deque)
 
@@ -35,10 +37,35 @@ def _parse_ip(value: str):
         return None
 
 
+def _trusted_networks(entries) -> list:
+    """Parse `TRUSTED_PROXY_IPS` entries into networks, skipping rubbish."""
+    networks = []
+    for entry in entries:
+        try:
+            networks.append(ipaddress.ip_network(entry, strict=False))
+        except ValueError:
+            continue
+    return networks
+
+
+# Configured allowlist (empty when TRUSTED_PROXY_IPS is unset).
+_TRUSTED_PROXIES = _trusted_networks(TRUSTED_PROXY_IPS)
+
+
 def _is_trusted_peer(value: str) -> bool:
-    """Whether the direct peer may be a reverse proxy worth trusting."""
+    """Whether the direct peer may be a reverse proxy worth trusting.
+
+    Loopback/private addresses are trusted implicitly (proxy on the same host,
+    Docker network or VPC). A public-address proxy — a cloud load balancer —
+    has to be listed in `TRUSTED_PROXY_IPS`, otherwise every visitor would be
+    keyed by the LB's address and share a single rate-limit bucket.
+    """
     addr = _parse_ip(value)
-    return bool(addr and (addr.is_loopback or addr.is_private))
+    if addr is None:
+        return False
+    if addr.is_loopback or addr.is_private:
+        return True
+    return any(addr in network for network in _TRUSTED_PROXIES)
 
 
 def _client_ip(request: Request) -> str:

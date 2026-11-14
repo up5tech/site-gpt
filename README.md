@@ -115,6 +115,7 @@ npm install && npm run dev   # :5173
 | `MAIL_*` | — | forgot/reset password via fastapi-mail (`MAIL_SERVER`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD`, `MAIL_FROM`, `MAIL_FROM_NAME`, `MAIL_TLS`, `MAIL_SSL`) |
 | `JWT_SECRET_KEY` | dev default | **change in prod** |
 | `CORS_ORIGINS` | `*` | comma-separated allowed origins; `allow_credentials` is disabled while it is `*` |
+| `TRUSTED_PROXY_IPS` | *(empty)* | comma-separated IPs/CIDRs of reverse proxies / load balancers whose `X-Forwarded-For` is trusted; loopback and private peers are trusted automatically |
 | `FRONTEND_URL` | `http://localhost:5173` | public admin URL, used in password-reset links |
 | `CRAWL_REFRESH_HOURS` | `24` | worker re-crawl interval; `0` disables the scheduler |
 | `RAG_MAX_DISTANCE` | `0.5` | max cosine distance for a retrieved chunk to count as context; above it the chunk is dropped and an empty result returns a canned "no information" reply without an LLM call. Lower = stricter, negative disables |
@@ -161,6 +162,7 @@ V1 is self-hosted. None of the dev defaults below should survive into production
 |---|---|---|
 | `JWT_SECRET_KEY` | hardcoded fallback in `core/config.py` | **required** — e.g. `openssl rand -hex 32` |
 | `CORS_ORIGINS` | `*` | explicit comma-separated list, e.g. `https://app.example.com` |
+| `TRUSTED_PROXY_IPS` | *(empty)* | the proxy/LB addresses (IPs or CIDRs) that terminate TLS — required when that proxy connects from a **public** IP, see below |
 | `DATABASE_URL` | — | dedicated Postgres role/database, `pgvector` installed |
 | `MAIL_*` | Gmail placeholders | real SMTP host/port/user/password — password reset only works once set |
 | `FRONTEND_URL` | `http://localhost:5173` | public admin URL (used in reset links) |
@@ -176,6 +178,11 @@ Run uvicorn behind nginx/Caddy/Traefik terminating **TLS 1.2+**:
 
 - terminate HTTPS at the proxy; uvicorn stays on plain HTTP bound to `127.0.0.1:8000`
 - forward `Host`, `X-Forwarded-For`, `X-Forwarded-Proto`
+- if the proxy/load balancer connects from a **public** address, list it in
+  `TRUSTED_PROXY_IPS` (comma-separated IPs/CIDRs). Otherwise the app ignores
+  `X-Forwarded-For` and rate limits everyone by the LB's address, so one abusive
+  visitor exhausts the bucket for all of them. Loopback and private addresses
+  (`127.0.0.1`, `::1`, `10.x`, `172.16-31.x`, `192.168.x`) need no entry
 - **disable response buffering for `/api/chat/stream`** (nginx: `proxy_buffering off;`).
   The endpoint already sends `X-Accel-Buffering: no`; with buffering on, SSE answers
   arrive in one block instead of streaming
@@ -290,9 +297,10 @@ so `EMBEDDING_DIMENSIONS` must equal that model's native size.
   `/api/ingest` at 10 req/min, `/api/token` (login, brute-force guard) at 10 req/min,
   `/api/register` + `/api/forgot-password` (spam/email-flood guard) at 3 req/hour and
   `/api/users/reset-password` (token-guessing guard, separate bucket from forgot-password)
-  at 10 req/5 min (429 on exceed). `X-Forwarded-For` is only trusted when the direct peer is a loopback or
-  private address (a reverse proxy on the same host/VPC); direct clients are keyed by their
-  socket IP, so the header cannot be rotated to bypass a limit. Swap for a Redis counter if
+  at 10 req/5 min   (429 on exceed). `X-Forwarded-For` is only trusted when the direct peer is a loopback or
+  private address (a reverse proxy on the same host/VPC) or is listed in
+  `TRUSTED_PROXY_IPS`; direct clients are keyed by their socket IP, so the header cannot be
+  rotated to bypass a limit. Swap for a Redis counter if
   you run multiple workers.
 - **Periodic re-crawl.** The worker now runs a `scheduler_loop` that, every
   `CRAWL_REFRESH_HOURS` (default 24, set `0` to disable), re-enqueues ingest for websites

@@ -43,6 +43,18 @@ REDIS_DB = os.getenv("REDIS_DB", "0")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*")
 
+# Comma-separated IPs/CIDRs of reverse proxies or load balancers whose
+# X-Forwarded-For header may be trusted (e.g. a cloud LB with a public address).
+# Loopback/private peers are trusted automatically; use this only for proxies
+# that connect from a public IP, otherwise every visitor shares one rate-limit
+# bucket (keyed by the LB's address). Entries that are not valid IPs/CIDRs are
+# ignored.
+TRUSTED_PROXY_IPS = tuple(
+    entry.strip()
+    for entry in os.getenv("TRUSTED_PROXY_IPS", "").split(",")
+    if entry.strip()
+)
+
 # Verbose SQL logging. Off by default in production; set SQL_ECHO=true to debug.
 SQL_ECHO = os.getenv("SQL_ECHO", "false").lower() in ("1", "true", "yes", "on")
 
