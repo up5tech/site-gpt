@@ -24,6 +24,10 @@ import { useAuth } from '../context/AuthContext';
 import { Website } from '../types/api';
 import api from '../utils/api';
 import { WidgetPreview } from '../components/WidgetPreview';
+import {
+  WIDGET_VERSION_PLACEHOLDER,
+  buildWidgetSnippet,
+} from '../utils/widgetSnippet';
 
 const { Title, Text, Paragraph } = Typography;
 
@@ -90,6 +94,37 @@ export function Settings() {
   // Cache-busting token for the install snippet: the API publishes the current
   // widget.js content hash, so re-copying the snippet always gets fresh code.
   const [widgetVersion, setWidgetVersion] = useState('');
+  const [widgetVersionState, setWidgetVersionState] = useState<
+    'loading' | 'ok' | 'missing'
+  >('loading');
+
+  const loadWidgetVersion = async () => {
+    const apiUrl = import.meta.env.VITE_BACKEND_URL || window.location.origin;
+    const cleanApiUrl = apiUrl.replace(/\/+$/, '');
+    setWidgetVersionState('loading');
+
+    // Two attempts: a single failed HEAD should not silently produce a snippet
+    // that cannot bust the widget cache.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const response = await fetch(`${cleanApiUrl}/widget.js`, {
+          method: 'HEAD',
+        });
+        const version = response.headers.get('x-widget-version');
+        if (response.ok && version) {
+          setWidgetVersion(version);
+          setWidgetVersionState('ok');
+          return;
+        }
+      } catch {
+        // fall through to the retry
+      }
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+
+    setWidgetVersion('');
+    setWidgetVersionState('missing');
+  };
 
   useEffect(() => {
     if (user) {
@@ -107,10 +142,8 @@ export function Settings() {
   // Ask the API for the current widget.js hash so the install snippet carries a
   // ?v= token that busts its cache as soon as a new widget is deployed.
   useEffect(() => {
-    const apiUrl = import.meta.env.VITE_BACKEND_URL || window.location.origin;
-    fetch(`${apiUrl.replace(/\/+$/, '')}/widget.js`, { method: 'HEAD' })
-      .then((response) => setWidgetVersion(response.headers.get('x-widget-version') || ''))
-      .catch(() => setWidgetVersion(''));
+    loadWidgetVersion();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const fetchAppearance = async () => {
@@ -193,20 +226,12 @@ export function Settings() {
     }
   };
 
-  const getWidgetScript = () => {
-    const apiUrl = import.meta.env.VITE_BACKEND_URL || window.location.origin;
-    const cleanApiUrl = apiUrl.replace(/\/+$/, '');
-    const versionQuery = widgetVersion ? `?v=${widgetVersion}` : '';
-
-    return `<!-- Site GPT Chat Widget -->
-<script>
-  window.ChatWidgetConfig = {
-    website_id: '${selectedWebsiteId}',
-    apiUrl: '${cleanApiUrl}'
-  };
-</script>
-<script src="${cleanApiUrl}/widget.js${versionQuery}" async></script>`;
-  };
+  const getWidgetScript = () =>
+    buildWidgetSnippet({
+      websiteId: selectedWebsiteId,
+      apiUrl: import.meta.env.VITE_BACKEND_URL || window.location.origin,
+      version: widgetVersion,
+    });
 
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
@@ -332,6 +357,25 @@ export function Settings() {
                     Copy Code
                   </Button>
                 </div>
+                {widgetVersionState === 'missing' && (
+                  <Alert
+                    style={{ marginBottom: 8 }}
+                    type='warning'
+                    showIcon
+                    message='Could not read the widget version'
+                    description={
+                      `The API did not return an X-Widget-Version header, so the snippet below ` +
+                      `still contains ${WIDGET_VERSION_PLACEHOLDER}. Sites without a version token ` +
+                      `can keep running an old widget.js for up to 5 minutes after a deploy — ` +
+                      `replace the placeholder with the X-Widget-Version value from GET /widget.js.`
+                    }
+                    action={
+                      <Button size='small' onClick={loadWidgetVersion}>
+                        Retry
+                      </Button>
+                    }
+                  />
+                )}
                 <Input.TextArea
                   value={getWidgetScript()}
                   rows={12}
