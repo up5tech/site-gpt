@@ -365,9 +365,14 @@ def load_website_site_map(
             raise HTTPException(status_code=404, detail="Website not found")
         urls = extract_urls_from_sitemap(website.site_map_url)
         for url in urls:
+            # Scoped to this website: pages of another tenant that happen to
+            # share a URL must not make this sync skip them.
             if (
                 db.query(models.WebsitePage)
-                .filter(models.WebsitePage.url == url)
+                .filter(
+                    models.WebsitePage.website_id == website_id,
+                    models.WebsitePage.url == url,
+                )
                 .first()
             ):
                 continue
