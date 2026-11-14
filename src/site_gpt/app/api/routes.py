@@ -7,7 +7,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from site_gpt.app import models
-from site_gpt.app.api.setting import _default_setting_rows
+from site_gpt.app.api.setting import WIDGET_PUBLIC_KEYS, _default_setting_rows
 from site_gpt.app.core.auth import (
     create_access_token,
     get_manager_user,
@@ -261,12 +261,17 @@ def widget_config(website_id: str, db: Session = Depends(get_db)):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Website not found"
         )
+    # Allowlist only: this endpoint is public, so internal settings added in
+    # future must never leak through it (see WIDGET_PUBLIC_KEYS).
     settings = (
         db.query(models.Setting)
-        .filter(models.Setting.company_id == website.company_id)
+        .filter(
+            models.Setting.company_id == website.company_id,
+            models.Setting.key.in_(WIDGET_PUBLIC_KEYS),
+        )
         .all()
     )
-    return {s.key: s.value for s in settings}
+    return {s.key: s.value for s in settings if s.key in WIDGET_PUBLIC_KEYS}
 
 
 @router.post("/api/chat/stream")
