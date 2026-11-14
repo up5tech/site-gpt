@@ -19,10 +19,63 @@
     requireContactInfo: true,
   };
 
-  const config = Object.assign(
-    {},
-    DEFAULT_CONFIG,
-    window.ChatWidgetConfig || {},
+  // ================= SANITIZE CONFIG =================
+  // `botName`, `placeholder`, the colours and the dimensions are interpolated
+  // into shadow.innerHTML and a form template, and into CSS. They come from the
+  // owner's settings (or from a tampered /api/widget-config answer), so text is
+  // escaped at those sinks and colours/sizes must match a strict pattern;
+  // anything else falls back to the default, leaving valid config untouched.
+  const HEX_COLOR = /^#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
+  const FUNC_COLOR = /^(?:rgb|hsl)a?\(\s*[0-9.,%\s/]+\)$/i;
+  const DIMENSION = /^\d{1,4}(?:px|rem|em|%|vw|vh)$/i;
+
+  function safeColor(value, fallback) {
+    const candidate = String(value === null || value === undefined ? '' : value).trim();
+    const allowed = HEX_COLOR.test(candidate) || FUNC_COLOR.test(candidate);
+    return allowed ? candidate : fallback;
+  }
+
+  function safeDimension(value, fallback) {
+    const candidate = String(value === null || value === undefined ? '' : value).trim();
+    return DIMENSION.test(candidate) ? candidate : fallback;
+  }
+
+  function safeText(value, fallback, maxLength) {
+    if (typeof value !== 'string') return fallback;
+    const trimmed = value.trim().slice(0, maxLength || 120);
+    return trimmed || fallback;
+  }
+
+  function sanitizeConfig(cfg) {
+    const theme = cfg.theme || {};
+    return Object.assign({}, cfg, {
+      botName: safeText(cfg.botName, DEFAULT_CONFIG.botName),
+      placeholder: safeText(cfg.placeholder, DEFAULT_CONFIG.placeholder, 200),
+      welcomeMessage: safeText(
+        cfg.welcomeMessage,
+        DEFAULT_CONFIG.welcomeMessage,
+        500,
+      ),
+      position: cfg.position === 'bottom-left' ? 'bottom-left' : 'bottom-right',
+      width: safeDimension(cfg.width, DEFAULT_CONFIG.width),
+      height: safeDimension(cfg.height, DEFAULT_CONFIG.height),
+      footerColor: safeColor(cfg.footerColor, DEFAULT_CONFIG.footerColor),
+      theme: Object.assign({}, theme, {
+        primaryColor: safeColor(
+          theme.primaryColor,
+          DEFAULT_CONFIG.theme.primaryColor,
+        ),
+        backgroundColor: safeColor(
+          theme.backgroundColor,
+          DEFAULT_CONFIG.theme.backgroundColor,
+        ),
+      }),
+    });
+  }
+
+  // ================= CONFIG INSTANCE =================
+  const config = sanitizeConfig(
+    Object.assign({}, DEFAULT_CONFIG, window.ChatWidgetConfig || {}),
   );
   const hasWebsiteId = !!config.website_id;
 
@@ -289,12 +342,12 @@
 
     <div class="chat-box" id="chatBox">
       <div class="chat-header">
-        <span id="chatHeaderName">${config.botName}</span>
+        <span id="chatHeaderName">${escapeHtml(config.botName)}</span>
         <button class="clear-btn" id="clearBtn">Clear</button>
       </div>
       <div class="chat-messages" id="messages"></div>
       <div class="chat-input" id="chatInput">
-        <input id="input" placeholder="${config.placeholder}" />
+        <input id="input" placeholder="${escapeHtml(config.placeholder)}" />
         <button id="sendBtn">Send</button>
       </div>
     </div>
@@ -552,7 +605,7 @@
     const form = document.createElement('form');
     form.className = 'contact-form';
     form.innerHTML = `
-      <p><b>${config.botName}</b> — please introduce yourself to start chatting.</p>
+      <p><b>${escapeHtml(config.botName)}</b> — please introduce yourself to start chatting.</p>
       <label>First name<input name="first_name" autocomplete="given-name" /></label>
       <label>Last name<input name="last_name" autocomplete="family-name" /></label>
       <label>Email<input name="email" type="email" autocomplete="email" /></label>
@@ -734,12 +787,31 @@
       );
       if (!res.ok) return;
       const cfg = await res.json();
-      if (cfg.assistant_name) config.botName = cfg.assistant_name;
-      if (cfg.widget_header_color) config.theme.primaryColor = cfg.widget_header_color;
-      if (cfg.widget_footer_color) config.footerColor = cfg.widget_footer_color;
-      if (cfg.widget_position) config.position = cfg.widget_position;
-      if (cfg.greeting_message) config.welcomeMessage = cfg.greeting_message;
-      if (cfg.placeholder_text) config.placeholder = cfg.placeholder_text;
+      // Server values are sanitised with the same rules as ChatWidgetConfig.
+      if (cfg.assistant_name)
+        config.botName = safeText(cfg.assistant_name, config.botName);
+      if (cfg.widget_header_color)
+        config.theme.primaryColor = safeColor(
+          cfg.widget_header_color,
+          config.theme.primaryColor,
+        );
+      if (cfg.widget_footer_color)
+        config.footerColor = safeColor(cfg.widget_footer_color, config.footerColor);
+      if (cfg.widget_position)
+        config.position =
+          cfg.widget_position === 'bottom-left' ? 'bottom-left' : 'bottom-right';
+      if (cfg.greeting_message)
+        config.welcomeMessage = safeText(
+          cfg.greeting_message,
+          config.welcomeMessage,
+          500,
+        );
+      if (cfg.placeholder_text)
+        config.placeholder = safeText(
+          cfg.placeholder_text,
+          config.placeholder,
+          200,
+        );
       if (cfg.suggested_questions)
         config.suggestedQuestions = String(cfg.suggested_questions)
           .split('\n')

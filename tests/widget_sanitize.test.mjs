@@ -24,6 +24,27 @@ function extractFn(name) {
   throw new Error(`widget.js: unbalanced braces around ${name}`);
 }
 
+function extractConst(name) {
+  const start = source.indexOf(`const ${name} = `);
+  if (start === -1) throw new Error(`widget.js: const ${name} not found`);
+  let depth = 0;
+  for (let i = source.indexOf('{', start); i < source.length; i++) {
+    if (source[i] === '{') depth++;
+    else if (source[i] === '}' && --depth === 0) {
+      return source.slice(start, i + 2); // include the trailing ';'
+    }
+  }
+  throw new Error(`widget.js: unbalanced braces around ${name}`);
+}
+
+function extractSection(title) {
+  const marker = `// ================= ${title} =================`;
+  const start = source.indexOf(marker);
+  if (start === -1) throw new Error(`widget.js: section ${title} not found`);
+  const next = source.indexOf('// =================', start + marker.length);
+  return source.slice(start, next === -1 ? source.length : next);
+}
+
 const { escapeHtml, safeUrl, renderMarkdown } = new Function(
   `${extractFn('escapeHtml')}\n${extractFn('safeUrl')}\n${extractFn('renderMarkdown')}\n` +
     'return { escapeHtml, safeUrl, renderMarkdown };',
@@ -111,6 +132,124 @@ check('inline code still renders', renderMarkdown('`x`') === '<code>x</code>');
 check('fenced code still renders', renderMarkdown('```a\nb```').includes('<pre>'));
 check('newlines become <br>', renderMarkdown('a\nb') === 'a<br>b');
 check('empty input is tolerated', renderMarkdown(undefined) === '');
+
+// --- Owner-supplied config values ------------------------------------------
+// botName / placeholder / colours / dimensions are interpolated into
+// shadow.innerHTML and a form template, and into CSS.
+const sanitizer = new Function(
+  `${extractConst('DEFAULT_CONFIG')}\n${extractSection('SANITIZE CONFIG')}\n` +
+    'return { sanitizeConfig, safeColor, safeDimension, safeText };',
+)();
+
+const { sanitizeConfig, safeColor, safeDimension, safeText } = sanitizer;
+const DEFAULT_PRIMARY = '#4c74af';
+
+for (const payload of [
+  'red;} .x { color: red }',
+  'expression(alert(1))',
+  'url(javascript:alert(1))',
+  'url(//attacker.example.net/leak.png)',
+  '#fff;}body{display:none',
+  '" onmouseover="alert(1)',
+  'javascript:alert(1)',
+]) {
+  const out = safeColor(payload, DEFAULT_PRIMARY);
+  check(`rejects unsafe colour ${JSON.stringify(payload)}`, out === DEFAULT_PRIMARY, out);
+}
+
+for (const ok of ['#fff', '#4c74af', '#4c74afcc', 'rgb(1, 2, 3)', 'rgba(1,2,3,0.5)', 'hsl(210, 50%, 40%)']) {
+  check(`accepts colour ${ok}`, safeColor(ok, DEFAULT_PRIMARY) === ok, safeColor(ok, DEFAULT_PRIMARY));
+}
+
+for (const payload of [
+  '1px;} body { display: none }',
+  '360px" onload="alert(1)',
+  '99999px',
+  'calc(100% - 2px)',
+  '1e9px',
+  '',
+]) {
+  check(`rejects unsafe dimension ${JSON.stringify(payload)}`, safeDimension(payload, '360px') === '360px');
+}
+
+for (const ok of ['360px', '480px', '20rem', '100%', '90vw']) {
+  check(`accepts dimension ${ok}`, safeDimension(ok, '360px') === ok);
+}
+
+check('safeText trims and caps length', safeText('  hi  ', 'x') === 'hi');
+check('safeText caps at the max length', safeText('a'.repeat(50), 'x', 10).length === 10);
+check('safeText falls back for empty input', safeText('   ', 'fallback') === 'fallback');
+check('safeText falls back for non-strings', safeText(42, 'fallback') === 'fallback');
+
+const maliciousConfig = sanitizeConfig({
+  botName: '<img src=x onerror="alert(1)">',
+  placeholder: '" onfocus="alert(1)',
+  width: '360px"><script>alert(1)</script>',
+  height: '1px;} body { display: none }',
+  footerColor: 'red; background: url(//attacker.example.net/leak.png)',
+  position: 'somewhere-else',
+  theme: {
+    primaryColor: 'red;} .chat-box { display: none }',
+    backgroundColor: 'url(//attacker.example.net/leak.png)',
+  },
+});
+
+check('malicious primary colour falls back', maliciousConfig.theme.primaryColor === DEFAULT_PRIMARY, maliciousConfig.theme.primaryColor);
+check('malicious background colour falls back', maliciousConfig.theme.backgroundColor === '#ffffff', maliciousConfig.theme.backgroundColor);
+check('malicious footer colour falls back', maliciousConfig.footerColor === DEFAULT_PRIMARY, maliciousConfig.footerColor);
+check('malicious width falls back', maliciousConfig.width === '360px', maliciousConfig.width);
+check('malicious height falls back', maliciousConfig.height === '480px', maliciousConfig.height);
+check('unknown position falls back', maliciousConfig.position === 'bottom-right', maliciousConfig.position);
+check(
+  'injected botName cannot become markup once escaped',
+  !/<img/i.test(escapeHtml(maliciousConfig.botName)),
+  escapeHtml(maliciousConfig.botName),
+);
+check(
+  'injected placeholder cannot break out of the attribute',
+  !/"\s*onfocus/i.test(escapeHtml(maliciousConfig.placeholder)),
+  escapeHtml(maliciousConfig.placeholder),
+);
+
+const legitConfig = sanitizeConfig({
+  botName: 'Acme Support',
+  placeholder: 'Ask about pricing',
+  welcomeMessage: 'Hi! How can I help?',
+  width: '400px',
+  height: '600px',
+  position: 'bottom-left',
+  footerColor: 'rgb(20, 30, 40)',
+  theme: { primaryColor: '#123456', backgroundColor: '#fafafa' },
+});
+check(
+  'legitimate config is left unchanged',
+  legitConfig.botName === 'Acme Support' &&
+    legitConfig.placeholder === 'Ask about pricing' &&
+    legitConfig.welcomeMessage === 'Hi! How can I help?' &&
+    legitConfig.width === '400px' &&
+    legitConfig.height === '600px' &&
+    legitConfig.position === 'bottom-left' &&
+    legitConfig.footerColor === 'rgb(20, 30, 40)' &&
+    legitConfig.theme.primaryColor === '#123456' &&
+    legitConfig.theme.backgroundColor === '#fafafa',
+  JSON.stringify(legitConfig),
+);
+
+// --- The interpolation sites themselves ------------------------------------
+check(
+  'template escapes botName',
+  source.includes('${escapeHtml(config.botName)}'),
+);
+check(
+  'template escapes the placeholder',
+  source.includes('placeholder="${escapeHtml(config.placeholder)}"'),
+);
+check(
+  'contact form escapes botName',
+  source.includes('<b>${escapeHtml(config.botName)}</b>'),
+);
+check('no raw ${config.botName} interpolation remains', !/\$\{config\.botName\}/.test(source));
+check('no raw ${config.placeholder} interpolation remains', !/\$\{config\.placeholder\}/.test(source));
 
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed, ${passed} passed`);
