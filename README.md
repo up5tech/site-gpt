@@ -287,9 +287,10 @@ so `EMBEDDING_DIMENSIONS` must equal that model's native size.
   Guarded so a full crawl failure can't wipe a site's knowledge base.
 - **Rate limiting.** `services/ratelimit.py` (in-memory fixed window, per client IP) caps
   `/api/chat` + `/api/chat/stream` at 20 req/min, `/api/chat/feedback` at 40 req/min,
-  `/api/ingest` at 10 req/min, `/api/token` (login, brute-force guard) at 10 req/min and
-  `/api/register` + `/api/forgot-password` (spam/email-flood guard) at 3 req/hour
-  (429 on exceed). `X-Forwarded-For` is only trusted when the direct peer is a loopback or
+  `/api/ingest` at 10 req/min, `/api/token` (login, brute-force guard) at 10 req/min,
+  `/api/register` + `/api/forgot-password` (spam/email-flood guard) at 3 req/hour and
+  `/api/users/reset-password` (token-guessing guard, separate bucket from forgot-password)
+  at 10 req/5 min (429 on exceed). `X-Forwarded-For` is only trusted when the direct peer is a loopback or
   private address (a reverse proxy on the same host/VPC); direct clients are keyed by their
   socket IP, so the header cannot be rotated to bypass a limit. Swap for a Redis counter if
   you run multiple workers.

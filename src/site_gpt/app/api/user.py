@@ -88,6 +88,11 @@ def forgot_password(
 def reset_password(
     body: ResetPasswordRequest,
     db: Session = Depends(get_db),
+    # Token-guessing guard. Deliberately a separate bucket from "reset" so
+    # requesting a link never blocks submitting the token it produced.
+    _: None = Depends(
+        rate_limit("reset-confirm", max_requests=10, window_seconds=300)
+    ),
 ):
     exist_user = (
         db.query(models.User).filter(models.User.email == body.email).first()
