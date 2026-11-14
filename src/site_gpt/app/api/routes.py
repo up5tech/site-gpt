@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import os
 from uuid import UUID as _UUID
@@ -40,6 +41,11 @@ from site_gpt.app.services.conversations import (
     get_conversation_messages,
     list_conversations,
     list_recent_conversations,
+)
+from site_gpt.app.services.quota import (
+    QUOTA_MESSAGE,
+    consume_message,
+    quota_sse_events,
 )
 from site_gpt.app.services.rag import ask, ask_stream
 from site_gpt.app.services.ratelimit import rate_limit
@@ -134,7 +140,7 @@ async def ingest(
 
 
 @router.post("/api/chat")
-def chat(
+async def chat(
     body: ChatRequest,
     request: Request,
     db: Session = Depends(get_db),
@@ -151,7 +157,14 @@ def chat(
         )
     _ensure_website_active(website)
     _ensure_embed_allowed(request, db, website, allow_authenticated=True)
-    return ask(db, body.website_id, body.session_id, body.question)
+    # Daily per-website ceiling: per-IP limits do not bound a viral embed.
+    if not await consume_message(website.id):
+        return {"answer": QUOTA_MESSAGE, "sources": []}
+    # `ask` does blocking I/O (embedding, pgvector, LLM); keep it off the loop,
+    # which this handler now shares because it awaits the quota check.
+    return await asyncio.to_thread(
+        ask, db, body.website_id, body.session_id, body.question
+    )
 
 
 @router.post("/api/chat/feedback")
@@ -381,6 +394,12 @@ async def chat_stream(
         )
     _ensure_website_active(website)
     _ensure_embed_allowed(request, db, website, allow_authenticated=True)
+    if not await consume_message(website.id):
+        return StreamingResponse(
+            quota_sse_events(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
     return StreamingResponse(
         ask_stream(db, body.website_id, body.session_id, body.question),
         media_type="text/event-stream",

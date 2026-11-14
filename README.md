@@ -120,6 +120,7 @@ npm install && npm run dev   # :5173
 | `CRAWL_REFRESH_HOURS` | `24` | worker re-crawl interval; `0` disables the scheduler |
 | `RAG_MAX_DISTANCE` | `0.6` | max cosine distance for a retrieved chunk to count as context; above it the chunk is dropped and an empty result returns a canned "no information" reply without an LLM call. Lower = stricter, negative disables |
 | `MAX_UPLOAD_MB` | `20` | largest accepted upload or remote import (URL / Google Drive); enforced while streaming, larger requests get `413` and leave no file behind |
+| `DAILY_MESSAGE_LIMIT` | `1000` | daily chat-message ceiling per website, counted in Redis and reset at UTC midnight; past it the visitor gets a friendly reply instead of an LLM call (`0` disables). Per-IP limits alone cannot bound a viral embed's spend |
 | `SQL_ECHO` | `false` | log every SQL statement (debugging only) |
 | `VITE_BACKEND_URL` (frontend) | — | backend base URL |
 | `GOOGLE_DRIVE_ENABLED` / `GOOGLE_DRIVE_CLIENT_ID` | `false` / — | optional; backend flag + OAuth client id for the Google Drive import flow |
@@ -322,6 +323,14 @@ so `EMBEDDING_DIMENSIONS` must equal that model's native size.
   `CRAWL_REFRESH_HOURS` (default 24, set `0` to disable), re-enqueues ingest for websites
   whose `ingest_status == 'completed'` and last update is older than the interval — keeping
   the knowledge base fresh with no extra infra.
+- **Daily per-website message cap.** Per-IP rate limiting caps a single visitor and nothing else, so one
+  viral embed could spend a customer's whole LLM budget in a day. `POST /api/chat` and
+  `POST /api/chat/stream` now count each message in Redis (`quota:messages:<website_id>:<UTC date>`,
+  expiring at the next UTC midnight) and, once `DAILY_MESSAGE_LIMIT` is reached, answer with a
+  friendly "daily limit" reply — as a normal `answer` or as the usual SSE `chunk`/`done` pair — without
+  calling the LLM or embedding the question. `0` disables the cap, and a Redis outage fails open
+  (chat keeps working, the error is logged) rather than taking the widget down. The counter is spent
+  before the LLM call and never refunded, and flushing Redis resets today's counts.
 - **`websites.status` disables a bot.** Anything other than `active` (case-insensitive) now
   returns `403 {"detail": "This website is disabled."}` from `POST /api/chat`,
   `POST /api/chat/stream`, `GET /api/widget-config`, both `/api/contacts` endpoints and
