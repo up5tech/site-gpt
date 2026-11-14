@@ -20,7 +20,7 @@ No test suite exists (`tests/` is empty) — verify by import/compile: `uv run p
 - `src/site_gpt/app/api/` — one module per resource; `routes.py` holds auth/chat/ingest/widget endpoints. Routers define full paths internally or rely on prefix in `main.py` — check before adding routes.
 - `src/site_gpt/app/models.py` + `src/site_gpt/app/db/base.py` (BaseModel: uuid `id`, `created_at/updated_at`) — all FKs use `ondelete` + cascade relationships; follow that pattern.
 - `src/site_gpt/app/schemas/` — Pydantic models mirror each resource; paginated lists use `PaginatedResponse`.
-- `src/site_gpt/app/services/` — `llm.py` (chat provider switches on `LLM_AI`; **embedding provider switches independently on `EMBEDDING_AI`**, defaulting to `LLM_AI`), `rag.py` (raw SQL pgvector `<->` search + chat history), `ingest.py` (chunk 1000/200 + embed), `crawler.py` (sitemap + trafilatura), `redis.py` (queue `queue:jobs` via `brpop`), `mail.py`.
+- `src/site_gpt/app/services/` — `llm.py` (chat provider switches on `LLM_AI`; **embedding provider switches independently on `EMBEDDING_AI`**, defaulting to `LLM_AI`), `rag.py` (raw SQL pgvector `<->` search + chat history), `ingest.py` (chunk 1000/200 + embed), `crawler.py` (sitemap + trafilatura), `parse.py` (file text extraction), `sources.py` (upload source providers), `ratelimit.py` (in-memory per-IP limiter), `redis.py` (queue `queue:jobs` via `brpop`), `mail.py` (`await`-ing `send_email_async`; `send_email` is a sync wrapper for sync routes).
 - `src/site_gpt/app/core/config.py` — env-only config, no defaults with secrets except dev JWT fallback. New settings go here + `.env.example`.
 - `src/site_gpt/app/scripts/widget.js` — vanilla JS, no build; config via `window.ChatWidgetConfig`.
 - `frontend/src/` — pages per route (`App.tsx`), `utils/api.ts` (axios + JWT), `context/AuthContext` (token storage), Ant Design components.
@@ -30,7 +30,9 @@ No test suite exists (`tests/` is empty) — verify by import/compile: `uv run p
 - Python: SQLAlchemy 2.0 `Mapped/mapped_column` style, `Session = Depends(get_db)`, JWT via `core/auth.py` (`hash_password`/`verify_password`/`create_access_token`). Don't introduce new auth libs.
 - Embeddings are `Vector(EMBEDDING_DIMENSIONS)` (default 1536) — the embedding model's output dimension must match `EMBEDDING_DIMENSIONS`; changing it requires an Alembic migration + re-ingest. `EMBEDDING_AI` selects the embedding provider independently of the chat provider `LLM_AI`.
 - Chunking: `RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)` — keep consistent between `ingest.py` and new code.
-- RAG search SQL lives in `rag.py::search` (documents only, top 5, `website_id` scoped). Extend there, don't duplicate.
+- RAG search SQL lives in `rag.py::search` (single query over `embeddings` joined to `documents` **and** `extra_documents`, top 5, website-scoped with company-wide extra documents). Extend there, don't duplicate.
+- Settings keys: add defaults to `DEFAULT_SETTINGS` in `api/setting.py` (single source of truth for registration and `POST /api/settings`). A key is only readable by the public widget if it is also in `WIDGET_PUBLIC_KEYS`.
+- Mail is async: use `send_email_async(...)` (await it) in async code or worker jobs; `send_email(...)` is only a sync wrapper for sync endpoints and never blocks a running loop.
 - Worker jobs are `{"type": "ingest", "website_id": ...}` on Redis list `queue:jobs`; `handle_ingest` in `worker.py` sets `websites.ingest_status` (`none → processing → completed`).
 - Frontend: axios through `utils/api.ts`, Ant Design for UI, `VITE_BACKEND_URL` for base URL. No new UI framework.
 - Uploads go to `uploads/` with metadata in `attachments` table (`status='tmp'` default).
@@ -38,6 +40,7 @@ No test suite exists (`tests/` is empty) — verify by import/compile: `uv run p
 ## DB migrations
 
 - Model change → `uv run alembic revision --autogenerate -m "[name]"`, review diff, `uv run alembic upgrade head`. Never edit applied migrations; ensure `pgvector` extension exists.
+- Current head is `07f83918a289` (`contacts`); `a1b2c3d4e5f6` is a merge revision of two older heads, not the head. Chain new migrations from the current head and keep a single linear head.
 
 ## Do / don't
 

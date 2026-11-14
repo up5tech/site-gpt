@@ -60,16 +60,16 @@ Turn any company website + extra documents into an embeddable AI chat bot (RAG).
 src/site_gpt/app/
   main.py              # FastAPI app + router wiring
   api/                 # routes.py (auth/chat/ingest/widget), company, user, website, document, extra_document, setting, upload
-  models.py            # Company, User, Website, WebsitePage, Document, ExtraDocument, Attachment, Embedding, ChatMessage, Setting
+  models.py            # Company, User, Setting, Website, WebsitePage, Document, ExtraDocument, Attachment, Embedding, ChatMessage, ChatFeedback, Contact
   schemas/             # Pydantic request/response per resource
-  services/            # llm.py, rag.py, ingest.py, crawler.py, redis.py, mail.py
+  services/            # llm.py, rag.py, ingest.py, crawler.py, parse.py, sources.py, ratelimit.py, redis.py, mail.py
   core/                # config.py (env), auth.py (hash/JWT)
-  db/                  # session.py, base.py, vector_store.py
+  db/                  # session.py, base.py
   scripts/widget.js    # embeddable chat widget (window.ChatWidgetConfig)
   worker.py            # Redis queue consumer (ingest jobs)
 frontend/src/
-  pages/ (Dashboard, Websites, WebsiteDetail, ExtraDocuments, Users, Settings, Login, Register)
-  components/ (Layout, Chat, WebsiteTable, CompanyTable, UserTable)
+  pages/ (Dashboard, Websites, WebsiteDetail, ExtraDocuments, Playground, Contacts, Users, Settings, Login, Register)
+  components/ (Layout, Chat, WidgetPreview, ProtectedRoute, WebsiteTable, CompanyTable, UserTable)
   context/ (AuthContext, ChatContext), utils/api.ts, types/api.ts
 alembic/                # DB migrations
 uploads/                # uploaded attachment storage
@@ -112,8 +112,12 @@ npm install && npm run dev   # :5173
 | `GEMINI_API_KEY` / `GROQ_API_KEY` / `OPEN_ROUTER_API_KEY` | — | provider keys |
 | `OLLAMA_HOST` / `OLLAMA_USERNAME` / `OLLAMA_PASSWORD` | `http://localhost:11434` | Ollama (optional basic auth) |
 | `REDIS_HOST` / `REDIS_PORT` / `REDIS_PASSWORD` / `REDIS_DB` | `localhost/6379` | job queue |
-| `MAIL_*` | — | forgot/reset password via fastapi-mail |
+| `MAIL_*` | — | forgot/reset password via fastapi-mail (`MAIL_SERVER`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD`, `MAIL_FROM`, `MAIL_FROM_NAME`, `MAIL_TLS`, `MAIL_SSL`) |
 | `JWT_SECRET_KEY` | dev default | **change in prod** |
+| `CORS_ORIGINS` | `*` | comma-separated allowed origins; `allow_credentials` is disabled while it is `*` |
+| `FRONTEND_URL` | `http://localhost:5173` | public admin URL, used in password-reset links |
+| `CRAWL_REFRESH_HOURS` | `24` | worker re-crawl interval; `0` disables the scheduler |
+| `SQL_ECHO` | `false` | log every SQL statement (debugging only) |
 | `VITE_BACKEND_URL` (frontend) | — | backend base URL |
 | `GOOGLE_DRIVE_ENABLED` / `GOOGLE_DRIVE_CLIENT_ID` | `false` / — | optional; backend flag + OAuth client id for the Google Drive import flow |
 | `VITE_GOOGLE_DRIVE_CLIENT_ID` (frontend) | — | optional; when set, shows the "Pick from Google Drive" picker button |
@@ -145,6 +149,62 @@ npm install && npm run dev   # :5173
 uv run alembic revision --autogenerate -m "[name]" && uv run alembic upgrade head
 cd frontend && npm run build && npm run lint
 ```
+
+## Deploying V1
+
+V1 is self-hosted. None of the dev defaults below should survive into production.
+
+### 1. Secrets and config
+
+| Key | Dev default | Production |
+|---|---|---|
+| `JWT_SECRET_KEY` | hardcoded fallback in `core/config.py` | **required** — e.g. `openssl rand -hex 32` |
+| `CORS_ORIGINS` | `*` | explicit comma-separated list, e.g. `https://app.example.com` |
+| `DATABASE_URL` | — | dedicated Postgres role/database, `pgvector` installed |
+| `MAIL_*` | Gmail placeholders | real SMTP host/port/user/password — password reset only works once set |
+| `FRONTEND_URL` | `http://localhost:5173` | public admin URL (used in reset links) |
+| `SQL_ECHO` | `false` | keep `false` |
+
+`CORS_ORIGINS` is parsed as a comma-separated list. `allow_credentials` is disabled
+automatically while the value is `*`, so an explicit list is also what enables
+credential/cookie flows.
+
+### 2. TLS and reverse proxy
+
+Run uvicorn behind nginx/Caddy/Traefik terminating **TLS 1.2+**:
+
+- terminate HTTPS at the proxy; uvicorn stays on plain HTTP bound to `127.0.0.1:8000`
+- forward `Host`, `X-Forwarded-For`, `X-Forwarded-Proto`
+- **disable response buffering for `/api/chat/stream`** (nginx: `proxy_buffering off;`).
+  The endpoint already sends `X-Accel-Buffering: no`; with buffering on, SSE answers
+  arrive in one block instead of streaming
+- run the worker as a separate process: `uv run python -m site_gpt.app.worker`
+- serve the built admin UI (`cd frontend && npm run build`) from the proxy or any static
+  host; it bakes in `VITE_BACKEND_URL` at build time
+- `/widget.js` and `/api/widget-config` must be reachable from the sites that embed the widget
+
+### 3. Migrations
+
+```bash
+# fresh database: create it and install the extension first
+# CREATE EXTENSION IF NOT EXISTS vector;
+uv run alembic upgrade head      # head is 07f83918a289 (contacts)
+```
+
+The migration chain is linear from that head; never edit an already-applied revision.
+
+### 4. Accepted V1 limitations
+
+These are known, documented and deliberately not fixed in V1 (see `plans/PLAN_V1.md` §7):
+
+| ID | Limitation | Impact / mitigation |
+|---|---|---|
+| K4 | `GET /api/conversations/{session_id}` and `GET /api/contacts/{session_id}` are **public by design** — the widget restores history and lead details without a login. A guessed `session_id` combined with a known `website_id` exposes that session's transcript or contact details. | Session ids are random UUIDs; treat transcripts and captured leads as non-secret. Requiring auth here would break the widget, so the fix is deferred to V2. |
+| K5 | `services/ratelimit.py` is an in-memory fixed window, **per process**. Limits reset on restart and are not shared across workers. | Run one API process, or put a real limiter (Redis / edge) in front before scaling horizontally. |
+| K8 | 👍/👎 feedback is stored in `chat_feedback` and nothing else: it never influences answers and there is no review screen. | Inspect rows in the DB. Feeding approved answers back into RAG is a V2 feature. |
+
+Also note `/docs` and `/openapi.json` are enabled and unauthenticated (FastAPI default) —
+restrict them at the proxy if that matters to you.
 
 ## Embedding dimension caveat
 
@@ -180,9 +240,11 @@ so `EMBEDDING_DIMENSIONS` must equal that model's native size.
 ## Fixes & improvements applied
 
 - **RAG now answers from uploaded documents too.** `services/rag.py::search` previously
-  only queried `documents` (crawled pages). It now UNIONs `embeddings` from both
-  `documents` (by `website_id`) and `extra_documents` (by `website_id` **or** company), so
-  the chatbot actually uses the knowledge users upload.
+  only queried `documents` (crawled pages). It now runs one SQL query over `embeddings`
+  with `LEFT JOIN`s to `documents` and `extra_documents`, keeping a chunk when it belongs
+  to a `documents` row of this website **or** to an `extra_documents` row linked to this
+  website **or** to the same company, so the chatbot actually uses the knowledge users
+  upload.
 - **Ingestion no longer crashes.** `crawler.crawl_page` now returns `(title, text)`, fixing
   the `KeyError: 'title'` that broke every ingest job in `worker.py`. The worker also
   upserts pages by URL (no more duplicate growth) and is wrapped in error handling that sets
@@ -223,8 +285,9 @@ so `EMBEDDING_DIMENSIONS` must equal that model's native size.
   usable content have their embeddings dropped, so removed/empty sources stop surfacing.
   Guarded so a full crawl failure can't wipe a site's knowledge base.
 - **Rate limiting.** `services/ratelimit.py` (in-memory fixed window, per client IP) caps
-  `/api/chat` + `/api/chat/stream` at 20 req/min and `/api/ingest` at 10 req/min (429 on
-  exceed). Swap for a Redis counter if you run multiple workers.
+  `/api/chat` + `/api/chat/stream` at 20 req/min, `/api/chat/feedback` at 40 req/min and
+  `/api/ingest` at 10 req/min (429 on exceed). Swap for a Redis counter if you run
+  multiple workers.
 - **Periodic re-crawl.** The worker now runs a `scheduler_loop` that, every
   `CRAWL_REFRESH_HOURS` (default 24, set `0` to disable), re-enqueues ingest for websites
   whose `ingest_status == 'completed'` and last update is older than the interval — keeping
@@ -233,13 +296,16 @@ so `EMBEDDING_DIMENSIONS` must equal that model's native size.
 ## Further hardening (latest round)
 
 - **Default settings are auto-seeded on register.** `POST /api/register` now creates the
-  company's default `Settings` (`assistant_name`, `widget_header_color`,
-  `widget_footer_color`) so the admin/settings panel is usable immediately — no separate
-  "create settings" step required.
+  company's default `Settings` from the single `DEFAULT_SETTINGS` dict in
+  `api/setting.py` — the 7 appearance keys (`assistant_name`, `widget_header_color`,
+  `widget_footer_color`, `widget_position`, `greeting_message`, `placeholder_text`,
+  `suggested_questions`) — so the admin/settings panel is usable immediately, with no
+  separate "create settings" step required.
 - **`POST /api/settings` is now idempotent.** It only inserts the default rows whose key is
   missing for the company, so calling it repeatedly never produces duplicate settings
   (previously it blindly `add_all`'d and could stack rows). Returns `created` / `skipped`
-  counts.
+  counts. The defaults come from the same `DEFAULT_SETTINGS` dict used at registration, so
+  there is one list to maintain.
 - **Deleting a page removes its knowledge immediately.** `DELETE
   /api/websites/{id}/pages/{page_id}` now also deletes the matching `Document` (and its
   embeddings via the FK `ON DELETE CASCADE`) by URL+website, so a removed page stops being
@@ -271,6 +337,9 @@ so `EMBEDDING_DIMENSIONS` must equal that model's native size.
   `PUT /api/settings` upsert also creates any missing key for older companies), and
   editable from the new **Appearance** tab in Settings. The embed script no longer
   hardcodes colors/name — it only needs `website_id` + `apiUrl`.
+- **Public config is allowlisted.** `GET /api/widget-config` returns only the keys in
+  `WIDGET_PUBLIC_KEYS` (`api/setting.py`) — exactly those 7 appearance keys. Any internal
+  setting added later stays private unless it is explicitly added to that tuple.
 
 ## Chat streaming fix (SSE error)
 
