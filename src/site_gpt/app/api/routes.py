@@ -72,6 +72,19 @@ def _is_authenticated(request: Request, db: Session) -> bool:
     )
 
 
+def _ensure_website_active(website: models.Website) -> None:
+    """A website is only served while its `status` is `active`.
+
+    `status` used to be written by the API and never read, so disabling a bot
+    meant deleting the website and losing its documents, history and leads.
+    """
+    if (website.status or "").strip().lower() != "active":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This website is disabled.",
+        )
+
+
 def _ensure_embed_allowed(
     request: Request,
     db: Session,
@@ -113,6 +126,7 @@ async def ingest(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Website not found"
         )
+    _ensure_website_active(website)
     website.ingest_status = "processing"
     db.commit()
     await enqueue_job({"type": "ingest", "website_id": website_id})
@@ -135,6 +149,7 @@ def chat(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Website not found"
         )
+    _ensure_website_active(website)
     _ensure_embed_allowed(request, db, website, allow_authenticated=True)
     return ask(db, body.website_id, body.session_id, body.question)
 
@@ -199,6 +214,7 @@ def upsert_contact(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Website not found"
         )
+    _ensure_website_active(website)
     _ensure_embed_allowed(request, db, website)
     contact = (
         db.query(models.Contact)
@@ -293,6 +309,7 @@ def get_contact_endpoint(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Website not found"
         )
+    _ensure_website_active(website)
     _ensure_embed_allowed(request, db, website)
     contact = (
         db.query(models.Contact)
@@ -331,6 +348,7 @@ def widget_config(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Website not found"
         )
+    _ensure_website_active(website)
     _ensure_embed_allowed(request, db, website)
     # Allowlist only: this endpoint is public, so internal settings added in
     # future must never leak through it (see WIDGET_PUBLIC_KEYS).
@@ -361,6 +379,7 @@ async def chat_stream(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Website not found"
         )
+    _ensure_website_active(website)
     _ensure_embed_allowed(request, db, website, allow_authenticated=True)
     return StreamingResponse(
         ask_stream(db, body.website_id, body.session_id, body.question),

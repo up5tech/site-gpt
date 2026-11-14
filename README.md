@@ -322,6 +322,13 @@ so `EMBEDDING_DIMENSIONS` must equal that model's native size.
   `CRAWL_REFRESH_HOURS` (default 24, set `0` to disable), re-enqueues ingest for websites
   whose `ingest_status == 'completed'` and last update is older than the interval — keeping
   the knowledge base fresh with no extra infra.
+- **`websites.status` disables a bot.** Anything other than `active` (case-insensitive) now
+  returns `403 {"detail": "This website is disabled."}` from `POST /api/chat`,
+  `POST /api/chat/stream`, `GET /api/widget-config`, both `/api/contacts` endpoints and
+  `POST /api/ingest`. The worker also skips an ingest job for a disabled website and the
+  refresh scheduler only picks `active` ones, so disabling a site stops its crawl and
+  embedding spend too. Documents, conversations and leads are untouched — flip `status`
+  back to `active` to serve the bot again.
 
 ## Further hardening (latest round)
 

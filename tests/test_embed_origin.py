@@ -35,6 +35,8 @@ def website():
     site.id = uuid4()
     site.url = WEBSITE_URL
     site.company_id = uuid4()
+    # These tests are about origin matching, so the site must be served at all.
+    site.status = "active"
     return site
 
 

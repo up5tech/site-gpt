@@ -142,6 +142,12 @@ async def handle_ingest(data):
             print("Website not found")
             return
 
+        # A disabled website must not be crawled or embedded: it is queued
+        # before the owner disables it, or by the refresh scheduler.
+        if (website.status or "").strip().lower() != "active":
+            print(f"[worker] skipping ingest for disabled website {website.id}")
+            return
+
         website.ingest_status = "processing"
         db.commit()
 
@@ -280,6 +286,7 @@ async def scheduler_loop():
             threshold = datetime.now(UTC) - timedelta(hours=CRAWL_REFRESH_HOURS)
             due = (
                 db.query(models.Website)
+                .filter(models.Website.status == "active")
                 .filter(models.Website.ingest_status == "completed")
                 .filter(
                     (models.Website.updated_at == None)
