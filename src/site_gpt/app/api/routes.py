@@ -133,6 +133,13 @@ async def ingest(
             status_code=status.HTTP_404_NOT_FOUND, detail="Website not found"
         )
     _ensure_website_active(website)
+    # One ingest per website at a time: a double click used to enqueue a second
+    # crawl that re-embedded the same pages concurrently with the first.
+    if (website.ingest_status or "") == "processing":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="An ingest is already running for this website.",
+        )
     website.ingest_status = "processing"
     db.commit()
     await enqueue_job({"type": "ingest", "website_id": website_id})

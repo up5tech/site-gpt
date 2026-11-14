@@ -281,6 +281,11 @@ so `EMBEDDING_DIMENSIONS` must equal that model's native size.
   chunks before re-embedding, so re-running ingest won't duplicate vectors.
 - **`POST /api/ingest` is now protected** — requires a manager/admin token and ownership of
   the website (was fully public).
+- **One ingest per website at a time.** `POST /api/ingest` returns `409` while the website is
+  already `processing`, so a double click can no longer queue a second crawl that re-embeds the
+  same pages concurrently with the first. A finished or failed ingest can be retried normally;
+  a website left `processing` by a dead worker is recovered by `requeue_stuck_ingests`
+  (`STUCK_INGEST_AFTER`, 6h).
 - **Settings are scoped per company** — `GET/PUT /api/settings` no longer leaks or edits
   other companies' settings.
 - **Upload safety** — files are stored under a UUID name (collision- and path-traversal-safe)
