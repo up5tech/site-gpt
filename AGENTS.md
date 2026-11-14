@@ -12,7 +12,9 @@ uv run alembic upgrade head                     # apply migrations
 cd frontend && npm run dev                      # UI :5173 (VITE_BACKEND_URL=http://localhost:8000)
 ```
 
-No test suite exists (`tests/` is empty) — verify by import/compile: `uv run python -c "import site_gpt.app.main"` and `cd frontend && npm run build`.
+Unit tests use plain `unittest` (no extra deps): `uv run python -m unittest discover -s tests -v` — covers `split_text`, `extract_text_from_file`, `collect_sources`, `format_history`, `_client_ip` and the settings registry/allowlist. Also verify by import/compile: `uv run python -c "import site_gpt.app.main"` and `cd frontend && npm run build`.
+
+Run the suite (or a single file: `uv run python -m unittest tests.test_settings -v`) after changing services under `src/site_gpt/app/services/` or the settings keys.
 
 ## Layout & ownership
 
