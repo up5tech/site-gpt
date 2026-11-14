@@ -50,6 +50,13 @@ SQL_ECHO = os.getenv("SQL_ECHO", "false").lower() in ("1", "true", "yes", "on")
 # knowledge base fresh. Set to 0 to disable the periodic scheduler.
 CRAWL_REFRESH_HOURS = int(os.getenv("CRAWL_REFRESH_HOURS", "24"))
 
+# Maximum cosine distance for a retrieved chunk to be used as context. Chunks
+# further away are discarded, and when nothing survives the question is
+# answered with a canned "no information" reply without calling the LLM.
+# Lower = stricter; raise it if relevant answers start saying "no information".
+# A negative value disables the threshold (V1 behaviour: always use top-k).
+RAG_MAX_DISTANCE = float(os.getenv("RAG_MAX_DISTANCE", "0.5"))
+
 # Optional: surface a "Connect Google Drive" picker in the frontend and/or
 # enable a service-account backend flow. The default import path uses an access
 # token sent by the client, so these are not required for basic usage.

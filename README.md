@@ -45,7 +45,7 @@ Turn any company website + extra documents into an embeddable AI chat bot (RAG).
 2. Add website (URL + sitemap) → add/select pages → `POST /api/ingest`
 3. Worker crawls pages (`trafilatura`), chunks (1000/200), embeds, stores in `pgvector`
 4. Extra documents (text/file uploads in `uploads/`) are ingested the same way
-5. Chat: `POST /api/chat` → embed question → pgvector similarity search (top 5) → LLM answers with context + last 10 chat messages
+5. Chat: `POST /api/chat` → embed question → pgvector similarity search (top 5, chunks further than `RAG_MAX_DISTANCE` discarded) → LLM answers with context + last 10 chat messages. When no chunk passes the threshold the bot replies "I don't have information about that" **without calling the LLM**
 6. Embed on any site via `GET /widget.js`
 
 ## Tech stack
@@ -117,6 +117,7 @@ npm install && npm run dev   # :5173
 | `CORS_ORIGINS` | `*` | comma-separated allowed origins; `allow_credentials` is disabled while it is `*` |
 | `FRONTEND_URL` | `http://localhost:5173` | public admin URL, used in password-reset links |
 | `CRAWL_REFRESH_HOURS` | `24` | worker re-crawl interval; `0` disables the scheduler |
+| `RAG_MAX_DISTANCE` | `0.5` | max cosine distance for a retrieved chunk to count as context; above it the chunk is dropped and an empty result returns a canned "no information" reply without an LLM call. Lower = stricter, negative disables |
 | `SQL_ECHO` | `false` | log every SQL statement (debugging only) |
 | `VITE_BACKEND_URL` (frontend) | — | backend base URL |
 | `GOOGLE_DRIVE_ENABLED` / `GOOGLE_DRIVE_CLIENT_ID` | `false` / — | optional; backend flag + OAuth client id for the Google Drive import flow |

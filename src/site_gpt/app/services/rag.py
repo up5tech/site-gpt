@@ -10,13 +10,20 @@ from sqlalchemy.orm import Session
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from site_gpt.app import models
+from site_gpt.app.core.config import RAG_MAX_DISTANCE
 from site_gpt.app.services.ingest import embed_texts
 from site_gpt.app.services.llm import get_llm
 
 logger = logging.getLogger(__name__)
 
 
-def search(db: Session, query_vector: list[float], website_id: UUID, limit: int = 5):
+def search(
+    db: Session,
+    query_vector: list[float],
+    website_id: UUID,
+    limit: int = 5,
+    max_distance: float | None = None,
+):
     """Search both crawled pages (documents) and uploaded docs (extra_documents).
 
     A chunk is eligible when it comes from a `documents` row of this website,
@@ -25,8 +32,16 @@ def search(db: Session, query_vector: list[float], website_id: UUID, limit: int 
 
     Returns a list of RowMapping with keys: `content`, `title`, `url`,
     `source_type` ("page" for crawled website pages, "document" for uploaded
-    docs). `title`/`url` are used to render citations in the answer.
+    docs) and `distance` (cosine distance to the query). `title`/`url` are used
+    to render citations in the answer.
+
+    Chunks whose `distance` is above `max_distance` are dropped, so an
+    out-of-scope question yields no context instead of the five least-bad
+    matches. `max_distance=None` uses `RAG_MAX_DISTANCE`; a negative threshold
+    disables the filter (V1 behaviour).
     """
+    if max_distance is None:
+        max_distance = RAG_MAX_DISTANCE
     vector_str = "[" + ",".join(map(str, query_vector)) + "]"
 
     website = (
@@ -41,7 +56,8 @@ def search(db: Session, query_vector: list[float], website_id: UUID, limit: int 
                COALESCE(d.title, ed.name) AS title,
                d.url AS url,
                CASE WHEN e.document_id IS NOT NULL THEN 'page'
-                    ELSE 'document' END AS source_type
+                    ELSE 'document' END AS source_type,
+               e.embedding <-> CAST(:vector AS vector) AS distance
         FROM embeddings e
         LEFT JOIN documents d ON e.document_id = d.id
         LEFT JOIN extra_documents ed ON e.extra_document_id = ed.id
@@ -55,11 +71,11 @@ def search(db: Session, query_vector: list[float], website_id: UUID, limit: int 
                 )
             )
         )
-        ORDER BY e.embedding <-> CAST(:vector AS vector)
+        ORDER BY distance
         LIMIT :limit
     """)
 
-    return (
+    rows = (
         db.execute(
             sql,
             {
@@ -72,6 +88,23 @@ def search(db: Session, query_vector: list[float], website_id: UUID, limit: int 
         .mappings()
         .all()
     )
+
+    if max_distance is not None and max_distance >= 0:
+        kept = [
+            row
+            for row in rows
+            if row["distance"] is not None and row["distance"] <= max_distance
+        ]
+        if len(kept) != len(rows):
+            logger.debug(
+                "rag.search dropped %d/%d chunks above distance %.3f",
+                len(rows) - len(kept),
+                len(rows),
+                max_distance,
+            )
+        rows = kept
+
+    return rows
 
 
 def collect_sources(results) -> list[dict]:
@@ -125,6 +158,22 @@ def save_message(
     db.commit()
 
 
+# Static reply used when retrieval returns nothing above the distance threshold.
+# Answered without an LLM call on purpose: with no usable context a model can
+# only guess, so this keeps the failure mode honest and saves a request.
+NO_CONTEXT_ANSWER = (
+    "I'm sorry, I don't have information about that. "
+    "Please contact the team for more details."
+)
+
+
+def _no_context_answer(db: Session, website_id: UUID, session_id: str, question: str):
+    """Persist the exchange and return the canned "no information" reply."""
+    save_message(db, website_id, session_id, "user", question)
+    save_message(db, website_id, session_id, "assistant", NO_CONTEXT_ANSWER)
+    return {"answer": NO_CONTEXT_ANSWER, "sources": []}
+
+
 SYSTEM_PROMPT = (
     "You are a helpful assistant embedded on a company website. "
     "Answer the user's question using ONLY the provided context. "
@@ -139,6 +188,9 @@ def ask(db: Session, website_id: UUID, session_id: str, question: str):
     query_vector = embed_texts([question])[0]
     # search in vector store (pages + uploaded documents)
     results = search(db, query_vector, website_id)
+    # Nothing relevant enough: answer without spending an LLM call.
+    if not results:
+        return _no_context_answer(db, website_id, session_id, question)
     # build context
     context = "\n\n".join([row["content"] for row in results])
     # load memory
@@ -197,6 +249,22 @@ async def ask_stream(db: Session, website_id: UUID, session_id: str, question: s
         # this one question (matches the synchronous `ask`).
         query_vector = (await asyncio.to_thread(embed_texts, [question]))[0]
         results = await asyncio.to_thread(search, db, query_vector, website_id)
+        if not results:
+            # No chunk passed the threshold: answer without calling the LLM.
+            await asyncio.to_thread(
+                save_message, db, website_id, session_id, "user", question
+            )
+            yield f"data: {json.dumps({'chunk': NO_CONTEXT_ANSWER})}\n\n"
+            await asyncio.to_thread(
+                save_message,
+                db,
+                website_id,
+                session_id,
+                "assistant",
+                NO_CONTEXT_ANSWER,
+            )
+            yield f"data: {json.dumps({'done': True, 'sources': []})}\n\n"
+            return
         context = "\n\n".join([row["content"] for row in results])
         sources = collect_sources(results)
         messages = await asyncio.to_thread(get_chat_history, db, website_id, session_id)
