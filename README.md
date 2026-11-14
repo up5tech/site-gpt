@@ -191,6 +191,12 @@ Run uvicorn behind nginx/Caddy/Traefik terminating **TLS 1.2+**:
 - serve the built admin UI (`cd frontend && npm run build`) from the proxy or any static
   host; it bakes in `VITE_BACKEND_URL` at build time
 - `/widget.js` and `/api/widget-config` must be reachable from the sites that embed the widget
+- the public widget endpoints (`/api/chat`, `/api/chat/stream`, `/api/widget-config`,
+  `POST /api/contacts`, `GET /api/contacts/{session_id}`) only serve requests whose
+  `Origin`/`Referer` matches the website's host (or is absent / a localhost demo), so a
+  `website_id` copied from another customer's page cannot be embedded elsewhere. If you
+  embed the widget on a domain different from the website's `url`, update the website URL
+  or requests from that domain will get `403`
 
 ### 3. Migrations
 
@@ -210,6 +216,7 @@ These are known, documented and deliberately not fixed in V1 (see `plans/PLAN_V1
 |---|---|---|
 | K4 | `GET /api/conversations/{session_id}` and `GET /api/contacts/{session_id}` are **public by design** — the widget restores history and lead details without a login. A guessed `session_id` combined with a known `website_id` exposes that session's transcript or contact details. | Session ids are random UUIDs; treat transcripts and captured leads as non-secret. Requiring auth here would break the widget, so the fix is deferred to V2. |
 | K5 | `services/ratelimit.py` is an in-memory fixed window, **per process**. Limits reset on restart and are not shared across workers. | Run one API process, or put a real limiter (Redis / edge) in front before scaling horizontally. |
+| K18 | The widget's Origin/Referer check is **soft**: requests with no `Origin`/`Referer` (non-browser clients, forged headers, `referrerpolicy="no-referrer"`) are still accepted, and loopback origins are always allowed so local demos work. | It blocks ordinary cross-site embedding (copying a `website_id` into another page), not a determined API caller. A signed per-website embed token would close it and needs a schema change, so it is deferred to V2. |
 | K8 | 👍/👎 feedback is stored in `chat_feedback` and nothing else: it never influences answers and there is no review screen. | Inspect rows in the DB. Feeding approved answers back into RAG is a V2 feature. |
 
 Also note `/docs` and `/openapi.json` are enabled and unauthenticated (FastAPI default) —

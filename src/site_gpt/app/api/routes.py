@@ -13,6 +13,7 @@ from site_gpt.app.core.auth import (
     get_manager_user,
     hash_password,
     verify_password,
+    verify_token,
 )
 from site_gpt.app.core.config import JWT_ALGORITHM, JWT_SECRET_KEY
 from site_gpt.app.db.session import get_db
@@ -32,6 +33,7 @@ from site_gpt.app.schemas.contact import (
     ContactRes,
 )
 from site_gpt.app.schemas.user import UserLogin
+from site_gpt.app.services import embed_guard
 from site_gpt.app.services.conversations import (
     delete_conversation,
     get_conversation_messages,
@@ -43,6 +45,51 @@ from site_gpt.app.services.ratelimit import rate_limit
 from site_gpt.app.services.redis import enqueue_job, redis_client
 
 router = APIRouter()
+
+
+def _is_authenticated(request: Request, db: Session) -> bool:
+    """True when the request carries a valid JWT for an active user.
+
+    The admin playground calls the same public chat endpoints as the widget but
+    with the dashboard's token; those requests are not scoped by Origin.
+    """
+    scheme, _, token = (request.headers.get("authorization") or "").partition(" ")
+    if scheme.lower() != "bearer" or not token:
+        return False
+    try:
+        payload = verify_token(token, JWT_SECRET_KEY, [JWT_ALGORITHM])
+    except HTTPException:
+        return False
+    user_id = payload.get("sub")
+    if not user_id:
+        return False
+    return (
+        db.query(models.User)
+        .filter(models.User.id == user_id, models.User.status == "active")
+        .first()
+        is not None
+    )
+
+
+def _ensure_embed_allowed(
+    request: Request,
+    db: Session,
+    website: models.Website,
+    *,
+    allow_authenticated: bool = False,
+) -> None:
+    """Refuse requests whose Origin/Referer names a foreign site.
+
+    Guards the public widget surface against someone copying a `website_id`
+    and embedding another customer's bot from their own site.
+    """
+    if allow_authenticated and _is_authenticated(request, db):
+        return
+    if not embed_guard.is_allowed_embed_request(request, website):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This origin is not allowed to embed that assistant.",
+        )
 
 
 @router.post("/api/ingest")
@@ -78,6 +125,16 @@ def chat(
     db: Session = Depends(get_db),
     _: None = Depends(rate_limit("chat", max_requests=20, window_seconds=60)),
 ):
+    website = (
+        db.query(models.Website)
+        .filter(models.Website.id == body.website_id)
+        .first()
+    )
+    if not website:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Website not found"
+        )
+    _ensure_embed_allowed(request, db, website, allow_authenticated=True)
     return ask(db, body.website_id, body.session_id, body.question)
 
 
@@ -141,6 +198,7 @@ def upsert_contact(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Website not found"
         )
+    _ensure_embed_allowed(request, db, website)
     contact = (
         db.query(models.Contact)
         .filter(
@@ -213,6 +271,7 @@ def list_contacts_endpoint(
 def get_contact_endpoint(
     session_id: str,
     website_id: str,
+    request: Request,
     db: Session = Depends(get_db),
 ):
     """Public: fetch one session's contact.
@@ -226,6 +285,14 @@ def get_contact_endpoint(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid website_id"
         )
+    website = (
+        db.query(models.Website).filter(models.Website.id == site_uuid).first()
+    )
+    if not website:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Website not found"
+        )
+    _ensure_embed_allowed(request, db, website)
     contact = (
         db.query(models.Contact)
         .filter(
@@ -242,7 +309,9 @@ def get_contact_endpoint(
 
 
 @router.get("/api/widget-config")
-def widget_config(website_id: str, db: Session = Depends(get_db)):
+def widget_config(
+    website_id: str, request: Request, db: Session = Depends(get_db)
+):
     """Public, unauthenticated config the embeddable widget fetches by
     website id: assistant name, colors, greeting, placeholder, position and
     suggested questions. Replaces the need to hardcode these in ChatWidgetConfig."""
@@ -261,6 +330,7 @@ def widget_config(website_id: str, db: Session = Depends(get_db)):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Website not found"
         )
+    _ensure_embed_allowed(request, db, website)
     # Allowlist only: this endpoint is public, so internal settings added in
     # future must never leak through it (see WIDGET_PUBLIC_KEYS).
     settings = (
@@ -281,6 +351,16 @@ async def chat_stream(
     db: Session = Depends(get_db),
     _: None = Depends(rate_limit("chat", max_requests=20, window_seconds=60)),
 ):
+    website = (
+        db.query(models.Website)
+        .filter(models.Website.id == body.website_id)
+        .first()
+    )
+    if not website:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Website not found"
+        )
+    _ensure_embed_allowed(request, db, website, allow_authenticated=True)
     return StreamingResponse(
         ask_stream(db, body.website_id, body.session_id, body.question),
         media_type="text/event-stream",
