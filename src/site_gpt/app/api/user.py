@@ -17,6 +17,7 @@ from site_gpt.app.schemas.user import (
     UserUpdate,
 )
 from site_gpt.app.services.mail import send_email
+from site_gpt.app.services.ratelimit import rate_limit
 
 router = APIRouter()
 
@@ -51,6 +52,8 @@ def update_users_me(
 def forgot_password(
     body: ForgotPasswordRequest,
     db: Session = Depends(get_db),
+    # Spam guard: every call can send an email through the configured SMTP.
+    _: None = Depends(rate_limit("reset", max_requests=3, window_seconds=3600)),
 ):
     # Always return success to avoid leaking which emails are registered.
     exist_user = (

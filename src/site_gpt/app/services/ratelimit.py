@@ -5,6 +5,7 @@ this for a Redis-backed counter (the interface stays the same).
 """
 
 import asyncio
+import ipaddress
 import time
 from collections import defaultdict
 from collections import deque
@@ -27,12 +28,43 @@ async def allow(key: str, max_requests: int, window_seconds: int) -> bool:
         return True
 
 
+def _parse_ip(value: str):
+    try:
+        return ipaddress.ip_address(value)
+    except ValueError:
+        return None
+
+
+def _is_trusted_peer(value: str) -> bool:
+    """Whether the direct peer may be a reverse proxy worth trusting."""
+    addr = _parse_ip(value)
+    return bool(addr and (addr.is_loopback or addr.is_private))
+
+
 def _client_ip(request: Request) -> str:
-    # Honour X-Forwarded-For when behind a proxy, fall back to socket IP.
-    fwd = request.headers.get("x-forwarded-for")
-    if fwd:
-        return fwd.split(",")[0].strip()
-    return request.client.host if request.client else "unknown"
+    """Resolve the client IP without letting callers spoof it.
+
+    `X-Forwarded-For` is attacker-controlled, so it is only honoured when the
+    direct peer is loopback or a private address — i.e. a reverse proxy on the
+    same host or VPC. A direct internet connection always uses the socket
+    address, otherwise rotating the header would bypass every rate limit.
+    """
+    if request.client is None:
+        return "unknown"
+
+    peer = request.client.host
+    if not _is_trusted_peer(peer):
+        return peer
+
+    forwarded = request.headers.get("x-forwarded-for")
+    if not forwarded:
+        return peer
+
+    candidate = forwarded.split(",")[0].strip()
+    if _parse_ip(candidate) is None:
+        # Malformed/forged header entry: fall back to the socket address.
+        return peer
+    return candidate
 
 
 def rate_limit(scope: str, max_requests: int = 20, window_seconds: int = 60):

@@ -441,6 +441,7 @@ def health(db: Session = Depends(get_db)):
 def register(
     registration: CompanyRegister,
     db: Session = Depends(get_db),
+    _: None = Depends(rate_limit("register", max_requests=3, window_seconds=3600)),
 ):
     # check params
     if (
@@ -491,7 +492,12 @@ def register(
 
 
 @router.post("/api/token")
-def get_token(login: UserLogin, db: Session = Depends(get_db)):
+def get_token(
+    login: UserLogin,
+    db: Session = Depends(get_db),
+    # Brute-force guard: the login endpoint is public and always reachable.
+    _: None = Depends(rate_limit("login", max_requests=10, window_seconds=60)),
+):
     user = (
         db.query(models.User)
         .filter(models.User.email == login.email, models.User.status == "active")
