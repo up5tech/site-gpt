@@ -11,30 +11,30 @@ const source = readFileSync(
   'utf8',
 );
 
+// Slice out a block starting at `start` and ending at its matching brace.
+// Throws (failing the run) if the block is missing or unbalanced, so a rename
+// or a syntax change in widget.js can never make the checks silently pass.
+function extractFrom(start, trailing = 0) {
+  let depth = 0;
+  for (let i = source.indexOf('{', start); i !== -1 && i < source.length; i++) {
+    if (source[i] === '{') depth++;
+    else if (source[i] === '}' && --depth === 0) {
+      return source.slice(start, i + 1 + trailing);
+    }
+  }
+  throw new Error(`widget.js: unbalanced braces from offset ${start}`);
+}
+
 function extractFn(name) {
   const start = source.indexOf(`function ${name}(`);
   if (start === -1) throw new Error(`widget.js: function ${name} not found`);
-  let depth = 0;
-  for (let i = source.indexOf('{', start); i < source.length; i++) {
-    if (source[i] === '{') depth++;
-    else if (source[i] === '}' && --depth === 0) {
-      return source.slice(start, i + 1);
-    }
-  }
-  throw new Error(`widget.js: unbalanced braces around ${name}`);
+  return extractFrom(start);
 }
 
 function extractConst(name) {
   const start = source.indexOf(`const ${name} = `);
   if (start === -1) throw new Error(`widget.js: const ${name} not found`);
-  let depth = 0;
-  for (let i = source.indexOf('{', start); i < source.length; i++) {
-    if (source[i] === '{') depth++;
-    else if (source[i] === '}' && --depth === 0) {
-      return source.slice(start, i + 2); // include the trailing ';'
-    }
-  }
-  throw new Error(`widget.js: unbalanced braces around ${name}`);
+  return extractFrom(start, 1); // include the trailing ';'
 }
 
 function extractSection(title) {
@@ -100,11 +100,10 @@ for (const scheme of [
 ]) {
   const out = renderMarkdown(`[click me](${scheme})`);
   check(
-    `refuses ${JSON.stringify(scheme)} as a link`,
-    !/<a/i.test(out) && !/javascript:/i.test(out),
+    `refuses ${JSON.stringify(scheme)}: no link and label kept as text`,
+    !/<a/i.test(out) && !/javascript:/i.test(out) && out.includes('click me'),
     out,
   );
-  check(`keeps the label for ${JSON.stringify(scheme)}`, out.includes('click me'), out);
 }
 
 const attrBreak = renderMarkdown('[x](https://evil.test/"onmouseover="alert(1))');
@@ -132,6 +131,42 @@ check('inline code still renders', renderMarkdown('`x`') === '<code>x</code>');
 check('fenced code still renders', renderMarkdown('```a\nb```').includes('<pre>'));
 check('newlines become <br>', renderMarkdown('a\nb') === 'a<br>b');
 check('empty input is tolerated', renderMarkdown(undefined) === '');
+
+// --- Structural invariant: nothing but our own tags can come out ------------
+// Rather than trusting a payload list, assert the property on every sample:
+// the output may only contain the five tags renderMarkdown emits, and every
+// href it emits must be absolute http(s).
+const ALLOWED_TAGS = new Set(['a', 'b', 'code', 'pre', 'br']);
+
+for (const payload of [
+  '<img src=x onerror="alert(1)">',
+  '"><script>alert(1)</script>',
+  '<a href="javascript:alert(1)">x</a>',
+  '<<script>script>alert(1)<</script>/script>',
+  '&#60;script&#62;alert(1)&#60;/script&#62;',
+  '[<img src=x onerror="alert(1)">](https://example.com)',
+  '[x](javascript:alert(1))',
+  '[x](https://a.test/" onmouseover="alert(1))',
+  '**<svg/onload=alert(1)>**',
+  '`<iframe src=//evil.test>`',
+  '```\n<iframe src=//evil.test>\n```',
+  '[x](https://a.test/?q=<img src=x onerror=1>)',
+  '[x](https://a.test)\n\n<img src=x onerror=1>',
+]) {
+  const html = renderMarkdown(payload);
+  const unexpected = [...html.matchAll(/<\/?([a-zA-Z0-9]+)/g)]
+    .map((m) => m[1].toLowerCase())
+    .filter((tag) => !ALLOWED_TAGS.has(tag));
+  const badHrefs = [...html.matchAll(/href="([^"]*)"/g)]
+    .map((m) => m[1])
+    .filter((href) => !/^https?:\/\//i.test(href));
+
+  check(
+    `payload neutralised: ${JSON.stringify(payload)}`,
+    unexpected.length === 0 && badHrefs.length === 0,
+    { html, unexpected, badHrefs },
+  );
+}
 
 // --- Owner-supplied config values ------------------------------------------
 // botName / placeholder / colours / dimensions are interpolated into
@@ -235,7 +270,26 @@ check(
   JSON.stringify(legitConfig),
 );
 
-// --- The interpolation sites themselves ------------------------------------
+// --- The sinks and interpolation sites themselves --------------------------
+// The helpers above could stay perfect while widget.js stops calling them, so
+// assert the call sites too: both message bubbles render through
+// renderMarkdown, source citations never go through innerHTML, and only values
+// that sanitizeConfig validated are interpolated into markup.
+check(
+  'escapeHtml runs before the markdown replacements',
+  extractFn('renderMarkdown').indexOf('escapeHtml(') <
+    extractFn('renderMarkdown').indexOf('<pre>'),
+);
+check(
+  'chat bubbles render through renderMarkdown',
+  /bubble\.innerHTML\s*=\s*renderMarkdown\(/.test(source),
+);
+check(
+  'streamed replies render through renderMarkdown',
+  /thinkingMsg\.innerHTML\s*=\s*renderMarkdown\(/.test(source),
+);
+check('source citations never use innerHTML', !/src\.innerHTML/.test(source));
+check('source links are validated with safeUrl', /safeUrl\(s\.url\)/.test(source));
 check(
   'template escapes botName',
   source.includes('${escapeHtml(config.botName)}'),
@@ -248,8 +302,23 @@ check(
   'contact form escapes botName',
   source.includes('<b>${escapeHtml(config.botName)}</b>'),
 );
-check('no raw ${config.botName} interpolation remains', !/\$\{config\.botName\}/.test(source));
-check('no raw ${config.placeholder} interpolation remains', !/\$\{config\.placeholder\}/.test(source));
+
+const rawConfigInterpolations = [
+  ...source.matchAll(/\$\{config\.([A-Za-z0-9_.]+)\}/g),
+].map((m) => m[1]);
+const SANITISED_CONFIG_VALUES = new Set([
+  'width',
+  'height',
+  'footerColor',
+  'theme.primaryColor',
+  'theme.backgroundColor',
+]);
+check(
+  'only sanitised config values are interpolated raw',
+  rawConfigInterpolations.length > 0 &&
+    rawConfigInterpolations.every((name) => SANITISED_CONFIG_VALUES.has(name)),
+  rawConfigInterpolations,
+);
 
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed, ${passed} passed`);

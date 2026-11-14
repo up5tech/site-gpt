@@ -381,7 +381,7 @@
   // innerHTML. HTML is therefore escaped first and markdown is applied to the
   // escaped string, so no tag can ever be introduced by the content itself.
   function escapeHtml(text) {
-    return String(text)
+    return String(text === null || text === undefined ? '' : text)
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
@@ -397,7 +397,7 @@
   }
 
   function renderMarkdown(text) {
-    return escapeHtml(text === null || text === undefined ? '' : text)
+    return escapeHtml(text)
       .replace(/```([\s\S]*?)```/g, '<pre>$1</pre>')
       .replace(/`([^`]+)`/g, '<code>$1</code>')
       .replace(/\*\*(.*?)\*\*/g, '<b>$1</b>')
@@ -460,7 +460,7 @@
       sources.forEach((s, index) => {
         if (index > 0) src.appendChild(document.createTextNode(', '));
         const label = s.title || s.url || 'document';
-        const url = s.url ? safeUrl(s.url) : null;
+        const url = safeUrl(s.url);
         if (url) {
           const link = document.createElement('a');
           link.href = url;
