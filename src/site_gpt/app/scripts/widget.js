@@ -323,12 +323,36 @@
   }
 
   // ================= MARKDOWN =================
+  // Everything below is untrusted: it is either model output or text taken
+  // from the customer's crawled documents, and the result is assigned to
+  // innerHTML. HTML is therefore escaped first and markdown is applied to the
+  // escaped string, so no tag can ever be introduced by the content itself.
+  function escapeHtml(text) {
+    return String(text)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  // Only absolute http(s) links are allowed; javascript:, data:, vbscript: and
+  // friends are dropped (the label is kept as plain text).
+  function safeUrl(url) {
+    const trimmed = String(url || '').trim();
+    return /^https?:\/\//i.test(trimmed) ? trimmed : null;
+  }
+
   function renderMarkdown(text) {
-    return text
+    return escapeHtml(text === null || text === undefined ? '' : text)
       .replace(/```([\s\S]*?)```/g, '<pre>$1</pre>')
       .replace(/`([^`]+)`/g, '<code>$1</code>')
       .replace(/\*\*(.*?)\*\*/g, '<b>$1</b>')
-      .replace(/\[(.*?)\]\((.*?)\)/g, '<a href="$2" target="_blank">$1</a>')
+      .replace(/\[(.*?)\]\((.*?)\)/g, (match, label, href) => {
+        const url = safeUrl(href);
+        if (!url) return label;
+        return `<a href="${url}" target="_blank" rel="noopener noreferrer">${label}</a>`;
+      })
       .replace(/\n/g, '<br>');
   }
 
@@ -374,17 +398,29 @@
     if (sources && sources.length > 0) {
       const src = document.createElement('div');
       src.className = 'sources';
-      let html = '<strong>Sources:</strong> ';
-      html += sources
-        .map((s) => {
-          const label = s.title || s.url || 'document';
-          if (s.url) {
-            return `<a href="${s.url}" target="_blank" rel="noopener noreferrer">${label}</a>`;
-          }
-          return `<span>${label}</span>`;
-        })
-        .join(', ');
-      src.innerHTML = html;
+      // Built with DOM nodes (textContent), never innerHTML: source titles come
+      // from the customer's crawled pages and are untrusted.
+      const heading = document.createElement('strong');
+      heading.textContent = 'Sources:';
+      src.appendChild(heading);
+      src.appendChild(document.createTextNode(' '));
+      sources.forEach((s, index) => {
+        if (index > 0) src.appendChild(document.createTextNode(', '));
+        const label = s.title || s.url || 'document';
+        const url = s.url ? safeUrl(s.url) : null;
+        if (url) {
+          const link = document.createElement('a');
+          link.href = url;
+          link.target = '_blank';
+          link.rel = 'noopener noreferrer';
+          link.textContent = label;
+          src.appendChild(link);
+        } else {
+          const span = document.createElement('span');
+          span.textContent = label;
+          src.appendChild(span);
+        }
+      });
       row.appendChild(src);
     }
 

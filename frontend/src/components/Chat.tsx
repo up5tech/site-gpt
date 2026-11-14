@@ -35,6 +35,13 @@ import { useLocation } from 'react-router-dom';
 const { TextArea } = Input;
 const { Text } = Typography;
 
+// Source URLs come from crawled documents. React escapes the text, but it does
+// not neutralise a javascript: href, so only absolute http(s) links are rendered.
+const safeHref = (url?: string | null): string | undefined => {
+  const trimmed = (url || '').trim();
+  return /^https?:\/\//i.test(trimmed) ? trimmed : undefined;
+};
+
 export function Chat() {
   const {
     messages,
@@ -464,22 +471,21 @@ export function Chat() {
                       <Text type='secondary' style={{ fontSize: 12 }}>
                         Sources:
                       </Text>{' '}
-                      {item.sources.map((s, i) => (
-                        <span key={i}>
-                          {i > 0 && ', '}
-                          {s.url ? (
-                            <a
-                              href={s.url}
-                              target='_blank'
-                              rel='noopener noreferrer'
-                            >
-                              {s.title || s.url}
-                            </a>
-                          ) : (
-                            <span>{s.title || 'document'}</span>
-                          )}
-                        </span>
-                      ))}
+                      {item.sources.map((s, i) => {
+                        const href = safeHref(s.url);
+                        return (
+                          <span key={i}>
+                            {i > 0 && ', '}
+                            {href ? (
+                              <a href={href} target='_blank' rel='noopener noreferrer'>
+                                {s.title || href}
+                              </a>
+                            ) : (
+                              <span>{s.title || 'document'}</span>
+                            )}
+                          </span>
+                        );
+                      })}
                     </div>
                   )}
 
