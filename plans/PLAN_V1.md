@@ -39,13 +39,14 @@ records:
 | New env var or new `settings` key | **V2** |
 | New third-party dependency | **V2** |
 
-> **Recorded exceptions to this table:** `RAG_MAX_DISTANCE` (§3.5, S7) and
-> `TRUSTED_PROXY_IPS` (§3.5, S8) were **pulled forward into V1** after the
-> freeze. Both were required to fix behaviour that was actively wrong (answers
-> built from irrelevant chunks; rate limits bypassable by a header), and the
-> rule above blocks new `settings` keys as well, so there was no in-policy way
-> to make either value configurable. Both stay deployment-level (env, not
-> per-company) and migration-free. Any *further* config key still belongs to V2.
+> **Recorded exceptions to this table:** `RAG_MAX_DISTANCE` (§3.5, S7),
+> `TRUSTED_PROXY_IPS` (§3.5, S8) and `MAX_UPLOAD_MB` (§3.5, S9) were **pulled
+> forward into V1** after the freeze. Each fixes behaviour that was actively
+> wrong (answers built from irrelevant chunks; rate limits bypassable by a
+> header; unbounded uploads that could OOM the API), and the rule above blocks
+> new `settings` keys as well, so there was no in-policy way to make these
+> values configurable. All stay deployment-level (env, not per-company) and
+> migration-free. Any *further* config key still belongs to V2.
 
 **Freeze rule:** once §9 is satisfied, tag the commit `v1` and stop adding to
 V1. All subsequent product work lands on V2 via `plans/SPEC.md`.
@@ -228,9 +229,9 @@ Backend `.env` (see `.env.example`): `DATABASE_URL`, `JWT_SECRET_KEY`,
 `GEMINI_API_KEY`, `OPEN_ROUTER_API_KEY`, `GROQ_API_KEY`, `OLLAMA_HOST`,
 `OLLAMA_USERNAME`, `OLLAMA_PASSWORD`, `MAIL_*`, `REDIS_*`, `FRONTEND_URL`,
 `CORS_ORIGINS`, `TRUSTED_PROXY_IPS`, `CRAWL_REFRESH_HOURS`, `RAG_MAX_DISTANCE`,
-`SQL_ECHO`, `GOOGLE_DRIVE_ENABLED`, `GOOGLE_DRIVE_CLIENT_ID`.
+`MAX_UPLOAD_MB`, `SQL_ECHO`, `GOOGLE_DRIVE_ENABLED`, `GOOGLE_DRIVE_CLIENT_ID`.
 
-The last two entries are the §1 recorded exceptions, added after the freeze.
+The last three entries are the §1 recorded exceptions, added after the freeze.
 
 Frontend `frontend/.env`: `VITE_BACKEND_URL`, `VITE_GOOGLE_DRIVE_CLIENT_ID`.
 
@@ -383,6 +384,7 @@ These are verified against the code, not inferred from docs.
 | K12 | `send_email` builds `ConnectionConfig` at import time and `USE_CREDENTIALS=True` even when `MAIL_*` are unset. | Low | `services/mail.py:15-26` | Covered by S1 | — |
 | K13 | **No retrieval floor.** `search` returned the top 5 chunks unconditionally, so a question outside the knowledge base still received unrelated passages and the prompt forced an answer from them. | Medium | `services/rag.py::search` before S7 | Fix in §8/S7 (adds `RAG_MAX_DISTANCE`) | — |
 | K14 | **`X-Forwarded-For` trusted unconditionally.** Any caller could rotate the header to reset the rate-limit window, defeating every limit. | High before deploy | `services/ratelimit.py::_client_ip` before S8 | Fix in §8/S8 (adds `TRUSTED_PROXY_IPS`) | — |
+| K15 | **Unbounded uploads / remote imports.** `api/upload.py` read the whole body with `await file.read()` and `services/sources.py` buffered `resp.content`, both with no size limit — one large request could OOM the API or fill `uploads/`. | High | `api/upload.py`, `services/sources.py` before S9 | Fix in §8/S9 (adds `MAX_UPLOAD_MB`) | — |
 
 ---
 
@@ -469,15 +471,28 @@ key.
 - **Acceptance:** rotating `X-Forwarded-For` on a direct connection never resets
   a window; with the LB allowlisted, each visitor is counted separately.
 
-> **Order:** S1 → S2 → S3 → S4 → S5 → S6 → S7 → S8. S1 and S3 are prerequisites
-> for V2; completing them in V1 removes the entire Phase 0 from
+### S9 — Upload size limit (post-freeze, recorded exception)
+- `MAX_UPLOAD_MB` (env, default `20`) caps both local uploads and remote imports.
+  Local uploads are written in 64 KiB chunks and the partial file is deleted the
+  moment the limit is exceeded; URL / Google Drive fetches stream through
+  `services/sources.read_limited`, which also rejects an oversized
+  `Content-Length` before reading the body. Both paths answer `413`.
+- **Why the exception:** the limit has to be tunable per deployment (hosted
+  services allow more than a laptop), and the §1 rule blocks new env *and*
+  `settings` keys.
+- **Acceptance:** an upload above the limit returns `413` and leaves no file in
+  `uploads/`; a remote import above it returns `413`; a request under the limit
+  still saves and ingests normally.
+
+> **Order:** S1 → S2 → S3 → S4 → S5 → S6 → S7 → S8 → S9. S1 and S3 are
+> prerequisites for V2; completing them in V1 removes the entire Phase 0 from
 > `plans/SPEC.md`.
 
 ---
 
 ## 9. Definition of done — V1 freeze checklist
 
-- [ ] S1–S8 merged; `git status` clean apart from intentional untracked files.
+- [ ] S1–S9 merged; `git status` clean apart from intentional untracked files.
 - [ ] `uv run python -c "import site_gpt.app.main"` succeeds.
 - [ ] `uv run alembic upgrade head` applies cleanly from an empty DB with
       `pgvector` installed; head is `07f83918a289`.

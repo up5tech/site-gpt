@@ -11,9 +11,59 @@ and ``worker.py``) stays completely source-independent. To support a new origin
 ``PROVIDERS`` below — no other code needs to change.
 """
 
+import re
 from dataclasses import dataclass
 
 import httpx
+
+from site_gpt.app.core.config import MAX_UPLOAD_BYTES, MAX_UPLOAD_MB
+
+
+class FileTooLarge(Exception):
+    """Raised when fetched content would exceed MAX_UPLOAD_BYTES."""
+
+
+async def read_limited(response) -> bytes:
+    """Read a streaming HTTP response, aborting as soon as it is too big.
+
+    The body is consumed chunk by chunk, so an oversized (or unbounded)
+    response never has to be buffered in full to be rejected. Callers wrap
+    this in `client.stream(...)` so httpx does not buffer either.
+    """
+    declared = response.headers.get("content-length")
+    if declared:
+        try:
+            if int(declared) > MAX_UPLOAD_BYTES:
+                raise FileTooLarge(
+                    f"File is larger than the {MAX_UPLOAD_MB} MB limit."
+                )
+        except ValueError:
+            pass  # malformed header: fall through to the streaming check
+
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in response.aiter_bytes():
+        total += len(chunk)
+        if total > MAX_UPLOAD_BYTES:
+            raise FileTooLarge(
+                f"File is larger than the {MAX_UPLOAD_MB} MB limit."
+            )
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+async def _download(
+    client: httpx.AsyncClient, url: str
+) -> tuple[bytes, str | None, str | None]:
+    """Stream one URL and return (content, content_type, content-disposition)."""
+    async with client.stream("GET", url) as resp:
+        resp.raise_for_status()
+        content = await read_limited(resp)
+        return (
+            content,
+            resp.headers.get("content-type"),
+            resp.headers.get("content-disposition"),
+        )
 
 
 @dataclass
@@ -40,13 +90,11 @@ class UrlProvider(SourceProvider):
         async with httpx.AsyncClient(
             timeout=30, follow_redirects=True, headers=headers
         ) as client:
-            resp = await client.get(ref)
-            resp.raise_for_status()
+            content, content_type, _ = await _download(client, ref)
             # Best-effort filename from the URL path; fall back to "file".
             filename = ref.rstrip("/").split("?")[0].split("/")[-1] or "file"
-            content_type = resp.headers.get("content-type")
             return AcquiredFile(
-                content=resp.content,
+                content=content,
                 filename=filename,
                 content_type=content_type,
             )
@@ -84,13 +132,14 @@ class GoogleDriveProvider(SourceProvider):
 
             # Google Drive may return a Google-Doc export rather than a binary
             # download; for now we only support direct binary files.
-            resp = await client.get(f"{self.API}/{ref}?alt=media")
-            resp.raise_for_status()
+            content, header_type, _ = await _download(
+                client, f"{self.API}/{ref}?alt=media"
+            )
 
             filename = info.get("name") or ref
-            content_type = info.get("mimeType") or resp.headers.get("content-type")
+            content_type = info.get("mimeType") or header_type
             return AcquiredFile(
-                content=resp.content,
+                content=content,
                 filename=filename,
                 content_type=content_type,
             )
@@ -100,25 +149,26 @@ class GoogleDriveProvider(SourceProvider):
         async with httpx.AsyncClient(
             timeout=60, follow_redirects=True
         ) as client:
-            resp = await client.get(f"{self.PUBLIC}&id={ref}")
+            content, content_type, disposition = await _download(
+                client, f"{self.PUBLIC}&id={ref}"
+            )
             # Large files trigger a virus-scan warning page with a confirm
             # token; follow it to get the real binary.
-            if "text/html" in resp.headers.get("content-type", ""):
-                import re
-
-                match = re.search(r"confirm=([0-9A-Za-z_-]+)", resp.text)
+            if "text/html" in (content_type or ""):
+                match = re.search(
+                    r"confirm=([0-9A-Za-z_-]+)", content.decode("utf-8", "ignore")
+                )
                 if match:
-                    resp = await client.get(
-                        f"{self.PUBLIC}&id={ref}&confirm={match.group(1)}"
+                    content, content_type, disposition = await _download(
+                        client, f"{self.PUBLIC}&id={ref}&confirm={match.group(1)}"
                     )
             filename = ref
-            disp = resp.headers.get("content-disposition")
-            if disp and "filename=" in disp:
-                filename = disp.split("filename=")[-1].strip('"')
+            if disposition and "filename=" in disposition:
+                filename = disposition.split("filename=")[-1].strip('"')
             return AcquiredFile(
-                content=resp.content,
+                content=content,
                 filename=filename,
-                content_type=resp.headers.get("content-type"),
+                content_type=content_type,
             )
 
 

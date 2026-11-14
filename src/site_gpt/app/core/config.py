@@ -69,6 +69,12 @@ CRAWL_REFRESH_HOURS = int(os.getenv("CRAWL_REFRESH_HOURS", "24"))
 # A negative value disables the threshold (V1 behaviour: always use top-k).
 RAG_MAX_DISTANCE = float(os.getenv("RAG_MAX_DISTANCE", "0.5"))
 
+# Largest file the API accepts from an upload or downloads from a remote source,
+# in megabytes. Enforced while streaming, so an oversized request is rejected
+# without being buffered into memory or written to disk in full.
+MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "20"))
+MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
+
 # Optional: surface a "Connect Google Drive" picker in the frontend and/or
 # enable a service-account backend flow. The default import path uses an access
 # token sent by the client, so these are not required for basic usage.

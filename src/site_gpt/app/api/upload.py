@@ -1,15 +1,58 @@
 import os
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, File, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from site_gpt.app import models
 from site_gpt.app.core.auth import get_current_user
+from site_gpt.app.core.config import MAX_UPLOAD_BYTES, MAX_UPLOAD_MB
 from site_gpt.app.db.session import get_db
-from site_gpt.app.services.sources import AcquiredFile, get_provider
+from site_gpt.app.services.sources import AcquiredFile, FileTooLarge, get_provider
 
 router = APIRouter()
+
+# Read uploads in small chunks so an oversized body is rejected without ever
+# being buffered in full (see MAX_UPLOAD_BYTES).
+UPLOAD_CHUNK_SIZE = 64 * 1024
+
+
+def _too_large() -> HTTPException:
+    return HTTPException(
+        status_code=413,
+        detail=(
+            "File too large. The maximum allowed size is "
+            f"{MAX_UPLOAD_MB} MB."
+        ),
+    )
+
+
+async def _stream_to_disk(file: UploadFile, file_path: str) -> int:
+    """Write an upload to disk chunk by chunk, aborting over the limit.
+
+    Returns the number of bytes written. The partial file is removed when the
+    limit is exceeded (or anything else fails), so a rejected upload leaves no
+    trace on disk.
+    """
+    if file.size is not None and file.size > MAX_UPLOAD_BYTES:
+        raise _too_large()
+
+    total = 0
+    try:
+        with open(file_path, "wb") as out:
+            while True:
+                chunk = await file.read(UPLOAD_CHUNK_SIZE)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > MAX_UPLOAD_BYTES:
+                    raise _too_large()
+                out.write(chunk)
+    except Exception:
+        if os.path.exists(file_path):
+            os.remove(file_path)
+        raise
+    return total
 
 
 class UrlUploadIn(BaseModel):
@@ -80,15 +123,13 @@ async def upload_file(
 
     os.makedirs("uploads", exist_ok=True)
     file_path = os.path.join("uploads", safe_name)
-    with open(file_path, "wb") as f:
-        content = await file.read()
-        f.write(content)
+    file_size = await _stream_to_disk(file, file_path)
 
     fileUpload = models.Attachment(
         filename=original_name,
         file_url=safe_name,
         status="tmp",
-        file_size=len(content),
+        file_size=file_size,
         file_type=file.content_type,
         user_id=user.id,
         source="local",
@@ -100,7 +141,7 @@ async def upload_file(
         "file_id": fileUpload.id,
         "filename": original_name,
         "file_url": safe_name,
-        "file_size": len(content),
+        "file_size": file_size,
         "file_type": file.content_type,
         "source": "local",
         "source_ref": None,
@@ -115,7 +156,10 @@ async def upload_from_url(
 ):
     """Fetch a file from any HTTP(S) URL and store it like a local upload."""
     provider = get_provider("url")
-    acquired = await provider.acquire(payload.url, payload.token)
+    try:
+        acquired = await provider.acquire(payload.url, payload.token)
+    except FileTooLarge:
+        raise _too_large()
     return _save_attachment(
         db, user, acquired, source="url", source_ref=payload.url
     )
@@ -129,7 +173,12 @@ async def upload_from_google_drive(
 ):
     """Import a file from Google Drive given its file id + an access token."""
     provider = get_provider("google_drive")
-    acquired = await provider.acquire(payload.file_id, payload.access_token)
+    try:
+        acquired = await provider.acquire(
+            payload.file_id, payload.access_token
+        )
+    except FileTooLarge:
+        raise _too_large()
     return _save_attachment(
         db, user, acquired, source="google_drive", source_ref=payload.file_id
     )

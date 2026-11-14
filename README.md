@@ -119,6 +119,7 @@ npm install && npm run dev   # :5173
 | `FRONTEND_URL` | `http://localhost:5173` | public admin URL, used in password-reset links |
 | `CRAWL_REFRESH_HOURS` | `24` | worker re-crawl interval; `0` disables the scheduler |
 | `RAG_MAX_DISTANCE` | `0.5` | max cosine distance for a retrieved chunk to count as context; above it the chunk is dropped and an empty result returns a canned "no information" reply without an LLM call. Lower = stricter, negative disables |
+| `MAX_UPLOAD_MB` | `20` | largest accepted upload or remote import (URL / Google Drive); enforced while streaming, larger requests get `413` and leave no file behind |
 | `SQL_ECHO` | `false` | log every SQL statement (debugging only) |
 | `VITE_BACKEND_URL` (frontend) | — | backend base URL |
 | `GOOGLE_DRIVE_ENABLED` / `GOOGLE_DRIVE_CLIENT_ID` | `false` / — | optional; backend flag + OAuth client id for the Google Drive import flow |
