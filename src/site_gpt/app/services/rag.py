@@ -35,10 +35,11 @@ def search(
     docs) and `distance` (cosine distance to the query). `title`/`url` are used
     to render citations in the answer.
 
-    Chunks whose `distance` is above `max_distance` are dropped, so an
-    out-of-scope question yields no context instead of the five least-bad
-    matches. `max_distance=None` uses `RAG_MAX_DISTANCE`; a negative threshold
-    disables the filter (V1 behaviour).
+    Chunks whose `distance` is above `max_distance` are excluded **in the
+    query**, so the `LIMIT` applies to chunks that actually qualify (and junk
+    chunks never leave the database). An out-of-scope question therefore yields
+    no context instead of the five least-bad matches. `max_distance=None` uses
+    `RAG_MAX_DISTANCE`; a negative threshold disables the filter (V1 behaviour).
     """
     if max_distance is None:
         max_distance = RAG_MAX_DISTANCE
@@ -51,7 +52,26 @@ def search(
     )
     company_id = website.company_id if website else None
 
-    sql = text("""
+    params: dict = {
+        "website_id": website_id,
+        "company_id": company_id,
+        "vector": vector_str,
+        "limit": limit,
+    }
+
+    # Threshold in the WHERE clause, not after the fact: the limit then applies
+    # to qualifying chunks only. `distance` is a SELECT alias, which Postgres
+    # does not allow in WHERE, so the expression is repeated (still index-usable
+    # by the HNSW index on embeddings.embedding).
+    distance_filter = ""
+    if max_distance is not None and max_distance >= 0:
+        distance_filter = (
+            "            AND (e.embedding <-> CAST(:vector AS vector))"
+            " <= :max_distance\n"
+        )
+        params["max_distance"] = float(max_distance)
+
+    sql = text(f"""
         SELECT e.content AS content,
                COALESCE(d.title, ed.name) AS title,
                d.url AS url,
@@ -71,40 +91,11 @@ def search(
                 )
             )
         )
-        ORDER BY distance
+{distance_filter}        ORDER BY distance
         LIMIT :limit
     """)
 
-    rows = (
-        db.execute(
-            sql,
-            {
-                "website_id": website_id,
-                "company_id": company_id,
-                "vector": vector_str,
-                "limit": limit,
-            },
-        )
-        .mappings()
-        .all()
-    )
-
-    if max_distance is not None and max_distance >= 0:
-        kept = [
-            row
-            for row in rows
-            if row["distance"] is not None and row["distance"] <= max_distance
-        ]
-        if len(kept) != len(rows):
-            logger.debug(
-                "rag.search dropped %d/%d chunks above distance %.3f",
-                len(rows) - len(kept),
-                len(rows),
-                max_distance,
-            )
-        rows = kept
-
-    return rows
+    return db.execute(sql, params).mappings().all()
 
 
 def collect_sources(results) -> list[dict]:

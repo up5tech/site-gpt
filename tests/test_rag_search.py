@@ -32,7 +32,7 @@ def execute_sql(db):
     return str(db.execute.call_args.args[0])
 
 
-class SearchDistanceTests(unittest.TestCase):
+class SearchQueryTests(unittest.TestCase):
     def test_distance_is_selected_for_every_chunk(self):
         rows = [row("a", 0.11), row("b", 0.42)]
         db = make_db(rows)
@@ -42,38 +42,60 @@ class SearchDistanceTests(unittest.TestCase):
         self.assertIn("AS distance", execute_sql(db))
         self.assertEqual([r["distance"] for r in results], [0.11, 0.42])
 
-    def test_chunks_above_threshold_are_dropped(self):
-        db = make_db([row("good", 0.2), row("meh", 0.61), row("junk", 0.95)])
+    def test_threshold_is_a_sql_predicate_before_the_limit(self):
+        db = make_db([])
 
-        results = rag.search(db, [0.1], uuid4(), max_distance=0.5)
+        rag.search(db, [0.1], uuid4(), max_distance=0.5)
 
-        self.assertEqual([r["content"] for r in results], ["good"])
+        sql = execute_sql(db)
+        self.assertIn(":max_distance", sql)
+        # The limit must apply to qualifying chunks, not to the raw candidates.
+        self.assertLess(sql.index(":max_distance"), sql.index("LIMIT :limit"))
 
-    def test_all_chunks_above_threshold_returns_empty(self):
-        db = make_db([row("junk1", 0.8), row("junk2", 0.9)])
+    def test_threshold_value_is_bound_as_parameter(self):
+        db = make_db([])
 
-        self.assertEqual(rag.search(db, [0.1], uuid4(), max_distance=0.5), [])
+        rag.search(db, [0.1], uuid4(), max_distance=0.42)
 
-    def test_row_without_distance_is_dropped(self):
-        db = make_db([{"content": "x", "title": "t", "url": None,
-                       "source_type": "document", "distance": None}])
+        self.assertEqual(db.execute.call_args.args[1]["max_distance"], 0.42)
 
-        self.assertEqual(rag.search(db, [0.1], uuid4(), max_distance=0.5), [])
+    def test_default_threshold_comes_from_config(self):
+        db = make_db([])
 
-    def test_negative_threshold_disables_filtering(self):
+        with patch.object(rag, "RAG_MAX_DISTANCE", 0.2):
+            rag.search(db, [0.1], uuid4())
+
+        self.assertEqual(db.execute.call_args.args[1]["max_distance"], 0.2)
+
+    def test_negative_threshold_omits_the_predicate_and_parameter(self):
         db = make_db([row("far", 1.9)])
 
         results = rag.search(db, [0.1], uuid4(), max_distance=-1)
 
+        self.assertNotIn(":max_distance", execute_sql(db))
+        self.assertNotIn("max_distance", db.execute.call_args.args[1])
         self.assertEqual(len(results), 1)
 
-    def test_default_threshold_comes_from_config(self):
-        db = make_db([row("close", 0.1), row("far", 0.4)])
+    def test_results_are_not_re_filtered_or_truncated_in_python(self):
+        # Filtering and truncation are the query's job; anything it returns is
+        # kept, so a result beyond the fifth position is never silently lost.
+        eight = [row(f"chunk{i}", 0.1 + i / 100) for i in range(8)]
+        db = make_db(eight)
 
-        with patch.object(rag, "RAG_MAX_DISTANCE", 0.2):
-            results = rag.search(db, [0.1], uuid4())
+        results = rag.search(db, [0.1], uuid4(), limit=10, max_distance=0.5)
 
-        self.assertEqual([r["content"] for r in results], ["close"])
+        self.assertEqual([r["content"] for r in results], [r["content"] for r in eight])
+
+    def test_chunks_after_the_fifth_position_are_returned(self):
+        rows = [row(f"chunk{i}", 0.1 + i / 100) for i in range(8)]
+        db = make_db(rows)
+
+        results = rag.search(db, [0.1], uuid4(), limit=10, max_distance=0.5)
+
+        self.assertEqual(len(results), 8)
+        self.assertEqual(results[5]["content"], "chunk5")
+        self.assertEqual(results[7]["content"], "chunk7")
+        self.assertEqual(db.execute.call_args.args[1]["limit"], 10)
 
     def test_limit_is_still_passed_through(self):
         db = make_db([])
