@@ -1,4 +1,3 @@
-import asyncio
 from uuid import UUID as _UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -497,9 +496,15 @@ def delete_conversation_endpoint(
 
 
 @router.get("/health")
-def health(db: Session = Depends(get_db)):
+async def health(db: Session = Depends(get_db)):
     """Liveness/readiness probe. Verifies DB and Redis connectivity so an
-    orchestrator can detect a degraded backend instead of a blind 'ok'."""
+    orchestrator can detect a degraded backend instead of a blind 'ok'.
+
+    The Redis ping must run on the app's own loop: `redis.asyncio` binds its
+    connection pool to the loop that first connects, so pinging from a private
+    loop (as this endpoint used to) left the shared client attached to a closed
+    loop and made the next enqueue fail with "attached to a different loop".
+    """
     result: dict = {"status": "ok", "db": False, "redis": False}
     try:
         db.execute(text("SELECT 1"))
@@ -507,9 +512,7 @@ def health(db: Session = Depends(get_db)):
     except Exception:
         pass
     try:
-        loop = asyncio.new_event_loop()
-        result["redis"] = bool(loop.run_until_complete(redis_client.ping()))
-        loop.close()
+        result["redis"] = bool(await redis_client.ping())
     except Exception:
         pass
     if not (result["db"] and result["redis"]):

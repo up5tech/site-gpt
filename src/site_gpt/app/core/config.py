@@ -67,7 +67,10 @@ CRAWL_REFRESH_HOURS = int(os.getenv("CRAWL_REFRESH_HOURS", "24"))
 # answered with a canned "no information" reply without calling the LLM.
 # Lower = stricter; raise it if relevant answers start saying "no information".
 # A negative value disables the threshold (V1 behaviour: always use top-k).
-RAG_MAX_DISTANCE = float(os.getenv("RAG_MAX_DISTANCE", "0.5"))
+# Measured with the configured embedding model: an answerable question lands at
+# ~0.48-0.55 from its chunk, an unrelated one at ~0.67-0.75. 0.6 sits between
+# them; 0.5 (the earlier default) rejected most legitimate questions.
+RAG_MAX_DISTANCE = float(os.getenv("RAG_MAX_DISTANCE", "0.6"))
 
 # Largest file the API accepts from an upload or downloads from a remote source,
 # in megabytes. Enforced while streaming, so an oversized request is rejected

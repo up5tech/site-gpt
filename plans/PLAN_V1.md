@@ -87,7 +87,7 @@ V1. All subsequent product work lands on V2 via `plans/SPEC.md`.
 | Capability | Implementation | Anchor |
 |---|---|---|
 | Retrieval | single raw-SQL pgvector `<->` query over **both** crawled `documents` and `extra_documents` (website- or company-scoped), top 5 | `services/rag.py:19-74` |
-| Retrieval floor | each chunk carries its cosine `distance`; chunks above `RAG_MAX_DISTANCE` (default `0.5`, negative disables) are dropped, and an empty result gets the canned “no information” reply without an LLM call | `services/rag.py::search`, `ask`, `ask_stream` (§8/S7) |
+| Retrieval floor | each chunk carries its cosine `distance`; chunks above `RAG_MAX_DISTANCE` (default `0.6`, negative disables) are dropped, and an empty result gets the canned “no information” reply without an LLM call | `services/rag.py::search`, `ask`, `ask_stream` (§8/S7) |
 | Grounding | `SYSTEM_PROMPT` answers only from context, admits missing info | `services/rag.py:128-134` |
 | Memory | last 10 messages of the session | `services/rag.py:98-115` |
 | Sync chat | `POST /api/chat` → `{answer, sources}` | `api/routes.py:74` |
@@ -444,7 +444,7 @@ key.
 
 ### S7 — Retrieval quality floor (post-freeze, recorded exception)
 - `services/rag.py::search` now selects each chunk's cosine `distance` and drops
-  chunks above `RAG_MAX_DISTANCE` (env, default `0.5`; a negative value restores
+  chunks above `RAG_MAX_DISTANCE` (env, default `0.6`; a negative value restores
   the pre-freeze “always use top-k” behaviour).
 - `ask` and `ask_stream` return a canned “no information” answer **without an
   LLM call** when nothing survives the threshold, persisting the exchange so
@@ -487,7 +487,17 @@ key.
   `uploads/`; a remote import above it returns `413`; a request under the limit
   still saves and ingests normally.
 
-> **Order:** S1 → S2 → S3 → S4 → S5 → S6 → S7 → S8 → S9. S1 and S3 are
+### S10 — `/health` Redis probe (found in the V1 freeze run)
+- `GET /health` ran `redis_client.ping()` on a private `asyncio.new_event_loop()`
+  and closed it. `redis.asyncio` binds its connection pool to the loop that first
+  connects, so the shared client was left attached to a dead loop: the next
+  `POST /api/ingest` returned **500** (`got Future attached to a different loop`)
+  and `/health` itself then reported `redis: false`.
+- **Fix:** the endpoint is `async` and awaits the ping on the app's own loop.
+- **Acceptance:** `tests/test_health.py` (ok / degraded / raising / must be async)
+  and a live run where `/health` → `/api/ingest` returns `200`.
+
+> **Order:** S1 → S2 → S3 → S4 → S5 → S6 → S7 → S8 → S9 → S10. S1 and S3 are
 > prerequisites for V2; completing them in V1 removes the entire Phase 0 from
 > `plans/SPEC.md`.
 
@@ -495,25 +505,39 @@ key.
 
 ## 9. Definition of done — V1 freeze checklist
 
-- [ ] S1–S9 merged; `git status` clean apart from intentional untracked files.
-- [ ] `uv run python -c "import site_gpt.app.main"` succeeds.
-- [ ] `uv run alembic upgrade head` applies cleanly from an empty DB with
+- [x] S1–S9 merged; `git status` clean apart from intentional untracked files.
+- [x] `uv run python -c "import site_gpt.app.main"` succeeds.
+- [x] `uv run alembic upgrade head` applies cleanly from an empty DB with
       `pgvector` installed; head is `07f83918a289`.
-- [ ] `cd frontend && npm run build && npm run lint` pass.
-- [ ] `GET /health` returns `{"status":"ok","db":true,"redis":true}`.
+- [ ] `cd frontend && npm run build && npm run lint` pass. — **build passes;
+      lint FAILS**: `frontend/` has no ESLint config at all, and ESLint 9 refuses
+      to run without a flat `eslint.config.js`, so the script has never linted
+      anything. Tracked as follow-up work, not a V1 code defect.
+- [x] `GET /health` returns `{"status":"ok","db":true,"redis":true}`
+      (see the S10 fix: it used to poison the shared Redis client).
 - [ ] End-to-end smoke: register → sitemap sync → ingest → status `completed`
       → Playground answer with citations → SSE stream works → widget opens on
       `_widget-demo.html` → lead appears on `/contacts` → 👍/👎 records a row.
-- [ ] Password reset delivers a real email.
-- [ ] `GET /api/widget-config` exposes only the 7 appearance keys.
-- [ ] With the default `RAG_MAX_DISTANCE`, an out-of-scope question returns the
+      — **verified on a fresh DB**: register, login, website, sitemap sync (2
+      URLs), ingest `completed`, chat answered with a citation, out-of-scope
+      question got the canned reply, SSE streamed chunks + `sources`, lead on
+      `/contacts`, 👍 row in `chat_feedback`, conversation restored; **not
+      verified**: opening `_widget-demo.html` in a browser.
+- [ ] Password reset delivers a real email. — not exercised in the freeze run.
+- [x] `GET /api/widget-config` exposes only the 7 appearance keys.
+- [x] With the default `RAG_MAX_DISTANCE`, an out-of-scope question returns the
       canned “no information” reply with no LLM call, and an in-scope one still
-      answers with citations (`-1` restores the old behaviour).
+      answers with citations (`-1` restores the old behaviour). — the freeze run
+      showed the old `0.5` default rejecting real questions (0.48–0.55), so the
+      default is now `0.6` (off-topic measured at 0.67–0.75).
 - [ ] Rotating `X-Forwarded-For` on a direct connection does not reset a
-      rate-limit window.
-- [ ] `README.md` and `AGENTS.md` match the code.
-- [ ] `graft build` run; graph matches the code.
-- [ ] Commit tagged `v1`.
+      rate-limit window. — covered by `tests/test_ratelimit.py`, not re-run
+      against a live proxy in the freeze run.
+- [ ] `README.md` and `AGENTS.md` match the code. — updated for every change in
+      S1–S10, not audited end to end.
+- [x] `graft build` run; graph matches the code. — `graft` is now `trail`;
+      `trail build` run (94 files parsed, 706 nodes).
+- [x] Commit tagged `v1`.
 
 Once tagged, **V1 receives only security fixes**. All other work goes through
 `plans/SPEC.md`.
