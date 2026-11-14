@@ -29,9 +29,42 @@
   const FUNC_COLOR = /^(?:rgb|hsl)a?\(\s*[0-9.,%\s/]+\)$/i;
   const DIMENSION = /^\d{1,4}(?:px|rem|em|%|vw|vh)$/i;
 
+  // CSS named colours (CSS Color 4), plus the two colour keywords. Matched as
+  // whole words, so a name can never carry a `;`, a `}` or a `url()`.
+  const NAMED_COLORS = new Set(
+    (
+      'aliceblue,antiquewhite,aqua,aquamarine,azure,beige,bisque,black,' +
+      'blanchedalmond,blue,blueviolet,brown,burlywood,cadetblue,chartreuse,' +
+      'chocolate,coral,cornflowerblue,cornsilk,crimson,cyan,darkblue,darkcyan,' +
+      'darkgoldenrod,darkgray,darkgreen,darkgrey,darkkhaki,darkmagenta,' +
+      'darkolivegreen,darkorange,darkorchid,darkred,darksalmon,darkseagreen,' +
+      'darkslateblue,darkslategray,darkslategrey,darkturquoise,darkviolet,' +
+      'deeppink,deepskyblue,dimgray,dimgrey,dodgerblue,firebrick,floralwhite,' +
+      'forestgreen,fuchsia,gainsboro,ghostwhite,gold,goldenrod,gray,green,' +
+      'greenyellow,grey,honeydew,hotpink,indianred,indigo,ivory,khaki,lavender,' +
+      'lavenderblush,lawngreen,lemonchiffon,lightblue,lightcoral,lightcyan,' +
+      'lightgoldenrodyellow,lightgray,lightgreen,lightgrey,lightpink,' +
+      'lightsalmon,lightseagreen,lightskyblue,lightslategray,lightslategrey,' +
+      'lightsteelblue,lightyellow,lime,limegreen,linen,magenta,maroon,' +
+      'mediumaquamarine,mediumblue,mediumorchid,mediumpurple,mediumseagreen,' +
+      'mediumslateblue,mediumspringgreen,mediumturquoise,mediumvioletred,' +
+      'midnightblue,mintcream,mistyrose,moccasin,navajowhite,navy,oldlace,' +
+      'olive,olivedrab,orange,orangered,orchid,palegoldenrod,palegreen,' +
+      'paleturquoise,palevioletred,papayawhip,peachpuff,peru,pink,plum,' +
+      'powderblue,purple,rebeccapurple,red,rosybrown,royalblue,saddlebrown,' +
+      'salmon,sandybrown,seagreen,seashell,sienna,silver,skyblue,slateblue,' +
+      'slategray,slategrey,snow,springgreen,steelblue,tan,teal,thistle,tomato,' +
+      'turquoise,violet,wheat,white,whitesmoke,yellow,yellowgreen,' +
+      'transparent,currentcolor'
+    ).split(','),
+  );
+
   function safeColor(value, fallback) {
     const candidate = String(value === null || value === undefined ? '' : value).trim();
-    const allowed = HEX_COLOR.test(candidate) || FUNC_COLOR.test(candidate);
+    const allowed =
+      HEX_COLOR.test(candidate) ||
+      FUNC_COLOR.test(candidate) ||
+      NAMED_COLORS.has(candidate.toLowerCase());
     return allowed ? candidate : fallback;
   }
 

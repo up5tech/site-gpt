@@ -196,6 +196,32 @@ for (const ok of ['#fff', '#4c74af', '#4c74afcc', 'rgb(1, 2, 3)', 'rgba(1,2,3,0.
   check(`accepts colour ${ok}`, safeColor(ok, DEFAULT_PRIMARY) === ok, safeColor(ok, DEFAULT_PRIMARY));
 }
 
+// Named colours are legitimate settings that must not fall back to the default.
+for (const ok of ['red', 'rebeccapurple', 'navy', 'lightgoldenrodyellow', 'transparent']) {
+  check(`accepts named colour ${ok}`, safeColor(ok, DEFAULT_PRIMARY) === ok, safeColor(ok, DEFAULT_PRIMARY));
+}
+check(
+  'named colours are matched case-insensitively but returned as written',
+  safeColor('REBECCAPURPLE', DEFAULT_PRIMARY) === 'REBECCAPURPLE' &&
+    safeColor('CurrentColor', DEFAULT_PRIMARY) === 'CurrentColor',
+  safeColor('REBECCAPURPLE', DEFAULT_PRIMARY),
+);
+
+// Same strictness as before: a name is only accepted as a whole word.
+for (const payload of [
+  'red;',
+  'red }',
+  'red;background:url(//evil)',
+  'red url(//evil)',
+  'red/**/blue',
+  'notacolour',
+  'red transparent',
+  'rebeccapurple\\9',
+]) {
+  const out = safeColor(payload, DEFAULT_PRIMARY);
+  check(`rejects malformed named colour ${JSON.stringify(payload)}`, out === DEFAULT_PRIMARY, out);
+}
+
 for (const payload of [
   '1px;} body { display: none }',
   '360px" onload="alert(1)',
@@ -253,8 +279,8 @@ const legitConfig = sanitizeConfig({
   width: '400px',
   height: '600px',
   position: 'bottom-left',
-  footerColor: 'rgb(20, 30, 40)',
-  theme: { primaryColor: '#123456', backgroundColor: '#fafafa' },
+  footerColor: 'rebeccapurple',
+  theme: { primaryColor: 'red', backgroundColor: '#fafafa' },
 });
 check(
   'legitimate config is left unchanged',
@@ -264,8 +290,8 @@ check(
     legitConfig.width === '400px' &&
     legitConfig.height === '600px' &&
     legitConfig.position === 'bottom-left' &&
-    legitConfig.footerColor === 'rgb(20, 30, 40)' &&
-    legitConfig.theme.primaryColor === '#123456' &&
+    legitConfig.footerColor === 'rebeccapurple' &&
+    legitConfig.theme.primaryColor === 'red' &&
     legitConfig.theme.backgroundColor === '#fafafa',
   JSON.stringify(legitConfig),
 );
