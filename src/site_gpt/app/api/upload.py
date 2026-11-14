@@ -8,6 +8,7 @@ from site_gpt.app import models
 from site_gpt.app.core.auth import get_current_user
 from site_gpt.app.core.config import MAX_UPLOAD_BYTES, MAX_UPLOAD_MB
 from site_gpt.app.db.session import get_db
+from site_gpt.app.services.net_guard import UnsafeUrl
 from site_gpt.app.services.sources import AcquiredFile, FileTooLarge, get_provider
 
 router = APIRouter()
@@ -160,6 +161,8 @@ async def upload_from_url(
         acquired = await provider.acquire(payload.url, payload.token)
     except FileTooLarge:
         raise _too_large()
+    except UnsafeUrl as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     return _save_attachment(
         db, user, acquired, source="url", source_ref=payload.url
     )

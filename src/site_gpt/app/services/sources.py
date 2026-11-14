@@ -12,11 +12,18 @@ and ``worker.py``) stays completely source-independent. To support a new origin
 """
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
+from urllib.parse import urljoin, urlparse
 
 import httpx
 
 from site_gpt.app.core.config import MAX_UPLOAD_BYTES, MAX_UPLOAD_MB
+from site_gpt.app.services.net_guard import UnsafeUrl, assert_fetchable_url
+
+# Redirects are followed manually so every hop can be re-validated: a public
+# URL may redirect to a private or metadata address.
+MAX_REDIRECTS = 5
 
 
 class FileTooLarge(Exception):
@@ -53,17 +60,35 @@ async def read_limited(response) -> bytes:
 
 
 async def _download(
-    client: httpx.AsyncClient, url: str
+    client: httpx.AsyncClient,
+    url: str,
+    headers_for: Callable[[str], dict[str, str] | None] | None = None,
 ) -> tuple[bytes, str | None, str | None]:
-    """Stream one URL and return (content, content_type, content-disposition)."""
-    async with client.stream("GET", url) as resp:
-        resp.raise_for_status()
-        content = await read_limited(resp)
-        return (
-            content,
-            resp.headers.get("content-type"),
-            resp.headers.get("content-disposition"),
-        )
+    """Fetch a URL through the SSRF guard, following redirects manually.
+
+    Returns (content, content_type, content-disposition). Each redirect target
+    is validated before it is requested, so an internal address can never be
+    reached by bouncing off a public host.
+    """
+    current = url
+    for _ in range(MAX_REDIRECTS + 1):
+        assert_fetchable_url(current)
+        headers = headers_for(current) if headers_for else None
+        async with client.stream("GET", current, headers=headers) as resp:
+            if resp.is_redirect:
+                location = (resp.headers.get("location") or "").strip()
+                if not location:
+                    raise UnsafeUrl(f"Redirect from '{current}' had no Location.")
+                current = urljoin(current, location)
+                continue
+            resp.raise_for_status()
+            content = await read_limited(resp)
+            return (
+                content,
+                resp.headers.get("content-type"),
+                resp.headers.get("content-disposition"),
+            )
+    raise UnsafeUrl(f"Too many redirects (more than {MAX_REDIRECTS}).")
 
 
 @dataclass
@@ -86,11 +111,17 @@ class UrlProvider(SourceProvider):
     """Fetch a file from an arbitrary public/authenticated HTTP(S) URL."""
 
     async def acquire(self, ref: str, token: str | None = None) -> AcquiredFile:
-        headers = {"Authorization": f"Bearer {token}"} if token else None
-        async with httpx.AsyncClient(
-            timeout=30, follow_redirects=True, headers=headers
-        ) as client:
-            content, content_type, _ = await _download(client, ref)
+        # The token is only ever sent to the host the user gave us: a redirect to
+        # another host must not receive the caller's credentials.
+        token_host = urlparse(ref).hostname
+
+        def headers_for(url: str) -> dict[str, str] | None:
+            if token and urlparse(url).hostname == token_host:
+                return {"Authorization": f"Bearer {token}"}
+            return None
+
+        async with httpx.AsyncClient(timeout=30, follow_redirects=False) as client:
+            content, content_type, _ = await _download(client, ref, headers_for)
             # Best-effort filename from the URL path; fall back to "file".
             filename = ref.rstrip("/").split("?")[0].split("/")[-1] or "file"
             return AcquiredFile(
@@ -147,7 +178,7 @@ class GoogleDriveProvider(SourceProvider):
     async def _acquire_public(self, ref: str) -> AcquiredFile:
         """Download a file shared with 'Anyone with the link' (no auth)."""
         async with httpx.AsyncClient(
-            timeout=60, follow_redirects=True
+            timeout=60, follow_redirects=False
         ) as client:
             content, content_type, disposition = await _download(
                 client, f"{self.PUBLIC}&id={ref}"

@@ -1,3 +1,4 @@
+from urllib.parse import urljoin
 from uuid import UUID
 from sqlalchemy.orm import Session
 from langchain_core.documents import Document
@@ -6,10 +7,34 @@ import requests
 from bs4 import BeautifulSoup
 
 from site_gpt.app import models
+from site_gpt.app.services.net_guard import UnsafeUrl, assert_fetchable_url
 
 HEADERS = {
     "User-Agent": "SiteGPTBot/1.0 (+https://github.com/site-gpt)",
 }
+
+# Every hop is re-validated: sitemap entries and redirects are user-controlled
+# and must not be able to reach loopback, internal services or cloud metadata.
+MAX_REDIRECTS = 5
+
+
+def _safe_get(url: str, timeout: int = 15) -> requests.Response:
+    """GET a URL, rejecting non-http(s) and non-public hosts on every hop."""
+    current = url
+    for _ in range(MAX_REDIRECTS + 1):
+        assert_fetchable_url(current)
+        response = requests.get(
+            current, timeout=timeout, headers=HEADERS, allow_redirects=False
+        )
+        if response.is_redirect:
+            location = (response.headers.get("location") or "").strip()
+            if not location:
+                raise UnsafeUrl(f"Redirect from '{current}' had no Location.")
+            current = urljoin(current, location)
+            continue
+        response.raise_for_status()
+        return response
+    raise UnsafeUrl(f"Too many redirects (more than {MAX_REDIRECTS}).")
 
 
 def load_sitemap(url: str):
@@ -23,8 +48,10 @@ def load_sitemap(url: str):
 def crawl_page(url: str) -> tuple[str, str]:
     """Return (title, clean_text). title may be empty; text empty if nothing extracted."""
     try:
-        response = requests.get(url, timeout=15, headers=HEADERS)
-        response.raise_for_status()
+        response = _safe_get(url)
+    except UnsafeUrl as e:
+        print(f"[crawler] refused to fetch {url}: {e}")
+        return "", ""
     except Exception as e:
         print(f"[crawler] failed to fetch {url}: {e}")
         return "", ""
@@ -54,8 +81,10 @@ def crawl_page(url: str) -> tuple[str, str]:
 
 def extract_urls_from_sitemap(sitemap_url: str) -> list[str]:
     try:
-        resp = requests.get(sitemap_url, timeout=15, headers=HEADERS)
-        resp.raise_for_status()
+        resp = _safe_get(sitemap_url)
+    except UnsafeUrl as e:
+        print(f"[crawler] refused to fetch sitemap {sitemap_url}: {e}")
+        return []
     except Exception as e:
         print(f"[crawler] failed to fetch sitemap {sitemap_url}: {e}")
         return []
