@@ -87,6 +87,9 @@ export function Settings() {
   const [websites, setWebsites] = useState<Website[]>([]);
   const [selectedWebsiteId, setSelectedWebsiteId] = useState<string>('');
   const [preview, setPreview] = useState(buildPreview(DEFAULT_APPEARANCE));
+  // Cache-busting token for the install snippet: the API publishes the current
+  // widget.js content hash, so re-copying the snippet always gets fresh code.
+  const [widgetVersion, setWidgetVersion] = useState('');
 
   useEffect(() => {
     if (user) {
@@ -100,6 +103,15 @@ export function Settings() {
     fetchWebsites();
     fetchAppearance();
   }, [user]);
+
+  // Ask the API for the current widget.js hash so the install snippet carries a
+  // ?v= token that busts its cache as soon as a new widget is deployed.
+  useEffect(() => {
+    const apiUrl = import.meta.env.VITE_BACKEND_URL || window.location.origin;
+    fetch(`${apiUrl.replace(/\/+$/, '')}/widget.js`, { method: 'HEAD' })
+      .then((response) => setWidgetVersion(response.headers.get('x-widget-version') || ''))
+      .catch(() => setWidgetVersion(''));
+  }, []);
 
   const fetchAppearance = async () => {
     try {
@@ -184,6 +196,7 @@ export function Settings() {
   const getWidgetScript = () => {
     const apiUrl = import.meta.env.VITE_BACKEND_URL || window.location.origin;
     const cleanApiUrl = apiUrl.replace(/\/+$/, '');
+    const versionQuery = widgetVersion ? `?v=${widgetVersion}` : '';
 
     return `<!-- Site GPT Chat Widget -->
 <script>
@@ -192,7 +205,7 @@ export function Settings() {
     apiUrl: '${cleanApiUrl}'
   };
 </script>
-<script src="${cleanApiUrl}/widget.js" async></script>`;
+<script src="${cleanApiUrl}/widget.js${versionQuery}" async></script>`;
   };
 
   const copyToClipboard = (text: string) => {

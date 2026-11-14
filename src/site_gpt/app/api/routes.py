@@ -1,3 +1,5 @@
+import hashlib
+import os
 from uuid import UUID as _UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -603,8 +605,35 @@ def get_token(
     return {"access_token": access_token, "token_type": "bearer"}
 
 
+# The widget is served to customers' sites, so a cache has to be short enough
+# that a deployed fix reaches them on its own, while the ?v=<version> query in
+# the install snippet busts it immediately.
+WIDGET_JS_PATH = "./src/site_gpt/app/scripts/widget.js"
+WIDGET_JS_MAX_AGE = 300
+_widget_version_cache: tuple[float, int, str] | None = None
+
+
+def widget_version(path: str = WIDGET_JS_PATH) -> str:
+    """Short content hash of widget.js — changes exactly when the file does."""
+    global _widget_version_cache
+    stat = os.stat(path)
+    key = (stat.st_mtime, stat.st_size)
+    if _widget_version_cache is None or _widget_version_cache[:2] != key:
+        with open(path, "rb") as handle:
+            digest = hashlib.sha256(handle.read()).hexdigest()[:8]
+        _widget_version_cache = (key[0], key[1], digest)
+    return _widget_version_cache[2]
+
+
 @router.get("/widget.js")
 def get_widget_js():
     return FileResponse(
-        "./src/site_gpt/app/scripts/widget.js", media_type="application/javascript"
+        WIDGET_JS_PATH,
+        media_type="application/javascript",
+        headers={
+            "Cache-Control": (
+                f"public, max-age={WIDGET_JS_MAX_AGE}, must-revalidate"
+            ),
+            "X-Widget-Version": widget_version(),
+        },
     )

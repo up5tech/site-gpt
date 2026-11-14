@@ -24,6 +24,10 @@ app.add_middleware(
     allow_credentials=allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
+    # The admin Settings page reads this header off /widget.js to build a
+    # cache-busting ?v= token for the install snippet; without exposing it the
+    # browser hides the value from cross-origin JS.
+    expose_headers=["X-Widget-Version"],
 )
 
 app.include_router(router)

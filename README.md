@@ -131,7 +131,9 @@ npm install && npm run dev   # :5173
 - `POST /api/token` — login → JWT
 - `POST /api/ingest?website_id=` — enqueue crawl+embed job
 - `POST /api/chat` — `{website_id, session_id, question}` → `{answer, sources}`
-- `GET /widget.js` — embeddable widget
+- `GET /widget.js` — embeddable widget; served with `Cache-Control: max-age=300`
+  and an `X-Widget-Version` content hash, and accepts `?v=<version>` so an install
+  snippet can bust the cache immediately after a deploy
 - `POST /api/chat/feedback` — public 👍/👎 rating `{website_id, session_id, rating, comment?}`
 - `GET /api/widget-config?website_id=` — public widget appearance/config (assistant name, colors, greeting, placeholder, position, suggested questions)
 - `GET /health`
@@ -143,8 +145,14 @@ npm install && npm run dev   # :5173
 <script>
   window.ChatWidgetConfig = { apiUrl: 'http://localhost:8000', website_id: '<WEBSITE_ID>' };
 </script>
-<script src="http://localhost:8000/widget.js"></script>
+<script src="http://localhost:8000/widget.js?v=<WIDGET_VERSION>"></script>
 ```
+
+`?v=` is optional but recommended: the file is cached for 5 minutes, and the query
+is part of the URL, so a new value fetches the new file immediately. Use the value
+of the `X-Widget-Version` response header (`curl -I http://localhost:8000/widget.js`)
+— it is a hash of `widget.js`, so it changes exactly when the widget changes. The
+Settings page copies a snippet that already includes it.
 
 ## Dev commands
 
