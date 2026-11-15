@@ -115,6 +115,50 @@ check(
   { loadContact, fetchHistory },
 );
 
+// K4: a session whose token chain is past its absolute lifetime can never be
+// claimed again. The widget must start over instead of retrying a dead id for
+// ever, and must not turn that into an unbounded loop.
+const ensureToken = body(extractFn('ensureSessionToken'));
+check(
+  'a 403 from mint starts a new session',
+  /if \(res\.status === 403\) \{/.test(ensureToken) &&
+    /sessionId = newSession\(\);/.test(ensureToken),
+  ensureToken,
+);
+check(
+  'the new session is minted again exactly once',
+  (ensureToken.match(/await mintSessionToken\(\)/g) || []).length === 2,
+  ensureToken,
+);
+check(
+  'a second failure gives up rather than looping',
+  /if \(!res\.ok\) return '';/.test(ensureToken) &&
+    !/while\s*\(|for\s*\(/.test(ensureToken),
+  ensureToken,
+);
+check(
+  'the new-session reset clears the stale token and history',
+  /localStorage\.removeItem\('chat_widget_session_token'\)/.test(
+    body(extractFn('newSession')),
+  ) &&
+    /localStorage\.removeItem\('chat_widget_history'\)/.test(
+      body(extractFn('newSession')),
+    ),
+  extractFn('newSession'),
+);
+check(
+  'the adopted token is stored under the widget key',
+  body(extractFn('adoptSessionToken')).includes(
+    "localStorage.setItem(SESSION_TOKEN_KEY, sessionToken)",
+  ),
+  extractFn('adoptSessionToken'),
+);
+check(
+  'a tokenless mint still leaves the widget working',
+  /return '';/.test(ensureToken) && /catch \(e\)/.test(ensureToken),
+  ensureToken,
+);
+
 // --- behaviour preserved ----------------------------------------------------
 check(
   'the contact form still short-circuits the bootstrap',

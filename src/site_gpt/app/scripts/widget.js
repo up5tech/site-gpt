@@ -243,6 +243,25 @@
     localStorage.removeItem(SESSION_TOKEN_KEY);
   }
 
+  function mintSessionToken() {
+    const base = config.apiUrl.replace(/\/$/, '');
+    return fetch(`${base}/api/session-token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        website_id: config.website_id,
+        session_id: sessionId,
+      }),
+    });
+  }
+
+  function adoptSessionToken(data) {
+    if (!data || typeof data.token !== 'string' || !data.token) return '';
+    sessionToken = data.token;
+    localStorage.setItem(SESSION_TOKEN_KEY, sessionToken);
+    return sessionToken;
+  }
+
   // Mints for a new session and rotates for an existing one (the server accepts
   // rotation only from a caller that already holds the token). A refusal is not
   // an error: a legacy embed simply continues without history.
@@ -250,21 +269,17 @@
     if (sessionToken) return sessionToken;
     if (!hasWebsiteId || !config.apiUrl) return '';
     try {
-      const base = config.apiUrl.replace(/\/$/, '');
-      const res = await fetch(`${base}/api/session-token`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          website_id: config.website_id,
-          session_id: sessionId,
-        }),
-      });
+      let res = await mintSessionToken();
+      if (res.status === 403) {
+        // 403 means this id can never be claimed: either the session's token
+        // chain passed the server's absolute lifetime, or another tab claimed
+        // it. Retrying the same id would fail for ever, so start a new session
+        // and try exactly once — the old history stays with admins, not here.
+        sessionId = newSession();
+        res = await mintSessionToken();
+      }
       if (!res.ok) return '';
-      const data = await res.json();
-      if (!data || typeof data.token !== 'string' || !data.token) return '';
-      sessionToken = data.token;
-      localStorage.setItem(SESSION_TOKEN_KEY, sessionToken);
-      return sessionToken;
+      return adoptSessionToken(await res.json());
     } catch (e) {
       // Offline or blocked: the widget still works, just without history.
       return '';

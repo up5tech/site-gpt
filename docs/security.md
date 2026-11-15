@@ -140,9 +140,12 @@ lifetime closes that: it is counted from the row's `created_at`, which rotation
 never moves, so a chain cannot be extended past it. After it, `verify()` rejects
 the token and `mint()` refuses to rotate it (`403` *"reached its maximum
 lifetime"*, not the "already has a token" message, which would invite a pointless
-retry), and the visitor's widget carries on **without history** — the messages
-stay under the old session id for admins until retention deletes them, and a
-returning visitor needs a new session to get history again.
+retry). The widget handles that: on the mint's `403` it calls `newSession()` and
+mints **once** more, so the visitor keeps a working widget instead of loading a
+session it can never read. The consequence is the same either way — the old
+transcript is unreachable from the browser and its messages stay under the old
+session id for admins until retention deletes them. A second `403` is the end of
+the attempt; the widget then works without history rather than retrying for ever.
 
 So, stated plainly: a stolen token is useful until its TTL expires, and can be
 renewed only inside the session's absolute lifetime; after that it is dead. There

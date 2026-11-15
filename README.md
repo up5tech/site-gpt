@@ -125,7 +125,7 @@ npm install && npm run dev   # :5173
 | `DEFAULT_WIDGET_LANGUAGE` | `auto` | fallback widget UI language when the visitor's browser language cannot be detected (`auto` follows the browser) |
 | `SESSION_TOKEN_MODE` | `compat` | K4: whether reading a session needs its token. `compat` keeps a tokenless read of an *unclaimed* session working for older embeds; `enforce` requires the token everywhere. See [`docs/security.md`](docs/security.md) §5 |
 | `SESSION_TOKEN_TTL_SECONDS` | `2592000` | lifetime of one widget session token value (30 days); an expired token can still be rotated by its holder |
-| `SESSION_TOKEN_MAX_LIFETIME_SECONDS` | `15552000` | absolute lifetime of a session's token chain, counted from its creation (180 days). Rotation cannot extend it, so this — not the TTL — is what bounds a stolen token |
+| `SESSION_TOKEN_MAX_LIFETIME_SECONDS` | `15552000` | absolute lifetime of a session's token chain, counted from its creation (180 days). Rotation cannot extend it, so this — not the TTL — is what bounds a stolen token. Past it `POST /api/session-token` answers 403 and the widget starts a new session and mints once more, so it keeps working (without the old history) |
 | `CORS_ORIGINS` | `*` | comma-separated allowed origins; `allow_credentials` is disabled while it is `*` |
 | `TRUSTED_PROXY_IPS` | *(empty)* | comma-separated IPs/CIDRs of reverse proxies / load balancers whose `X-Forwarded-For` is trusted; loopback and private peers are trusted automatically |
 | `FRONTEND_URL` | `http://localhost:5173` | public admin URL, used in password-reset links |
