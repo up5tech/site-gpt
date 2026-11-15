@@ -163,6 +163,36 @@ of the `X-Widget-Version` response header (`curl -I http://localhost:8000/widget
 — it is a hash of `widget.js`, so it changes exactly when the widget changes. The
 Settings page copies a snippet that already includes it.
 
+## Widget settings (per company)
+
+Saved from **Settings** and published by `GET /api/widget-config`. That endpoint
+is public and unauthenticated, so only the keys in
+`api/setting.py::WIDGET_PUBLIC_KEYS` are ever returned; the internal rows in the
+same registry are seeded for every company but never published.
+
+| Key | Public to the widget? | Purpose |
+|---|---|---|
+| `widget_language` | yes | `auto` follows the visitor's browser language; a code such as `vi` forces a locale. Built-in labels ship for English and Vietnamese — any other language keeps the English labels until overridden. |
+| `widget_ui_strings` | yes | JSON object overriding individual widget labels, e.g. `{"startChat": "Bắt đầu", "sources": "Nguồn:"}`. Malformed JSON is ignored and the falls back to the shipped labels. |
+| `widget_logo_url` | yes | Chat header badge and bot avatar. Only `https://` URLs and raster `data:image/...;base64` URIs are used; anything else falls back to 🤖. |
+| `handoff_enabled`, `handoff_label`, `require_consent`, `privacy_policy_url` | yes | Seeded for the handoff and privacy features; off/empty by default, so nothing changes until those land. |
+| `llm_provider`, `llm_model` | **no** | Chat model pair, written from **Settings → Model**. Only pairs listed in `services/llm.py::ALLOWED_CHAT_MODELS` are honoured (`fast` = GPT-4.1 mini, `accurate` = GPT-4.1, empty = the `LLM_AI` / `LLM_MODEL` defaults); anything else silently falls back to the environment. Embeddings are not switched here. |
+
+Keys understood by `widget_ui_strings`: `clear`, `send`, `thinking`, `sources`,
+`helpful`, `notHelpful`, `thanksFeedback`, `contactIntro`, `firstName`,
+`lastName`, `email`, `contactInvalid`, `startChat`, `contactSaveFailed`,
+`noResponse`, `missingWebsiteId`, `error`, `greeting`, `placeholder`.
+
+### V2 highlights
+
+- **Replies in the visitor's language** — the chat prompt detects the question's
+  language and answers in it, translating retrieved context when needed. Works on
+  both `/api/chat` and `/api/chat/stream`.
+- **Localisable widget UI** — `widget_language` + `widget_ui_strings` above.
+- **Custom logo** — header badge and bot avatars, with a safe fallback.
+- **Runtime model switching** — Settings → Model, applied to the next message
+  with no restart; the catalogue keeps arbitrary model names out.
+
 ## Dev commands
 
 ```bash
