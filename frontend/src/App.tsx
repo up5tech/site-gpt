@@ -10,6 +10,7 @@ import { Dashboard } from './pages/Dashboard';
 import { ExtraDocuments } from './pages/ExtraDocuments';
 import { Login } from './pages/Login';
 import { Register } from './pages/Register';
+import { Handoffs } from './pages/Handoffs';
 import { Settings } from './pages/Settings';
 import { Training } from './pages/Training';
 import { Users } from './pages/Users';
@@ -77,6 +78,14 @@ function App() {
                 element={
                   <ProtectedRoute>
                     <ExtraDocuments />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path='/handoffs'
+                element={
+                  <ProtectedRoute>
+                    <Handoffs />
                   </ProtectedRoute>
                 }
               />

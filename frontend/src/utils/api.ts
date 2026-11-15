@@ -1,5 +1,5 @@
 import axios, { AxiosInstance } from 'axios';
-import type { ChatResponse, ContactList, ConversationList, ConversationMessages, DashboardStats, FeedbackItem, FeedbackList, FeedbackRequest, FeedbackReview, LoginResponse, RecentConversations, RegisterRequest, Setting, Website, WebsiteQuota, WidgetConfig } from '../types/api';
+import type { ChatResponse, ContactList, ConversationList, ConversationMessages, DashboardStats, FeedbackItem, FeedbackList, FeedbackRequest, FeedbackReview, HandoffList, HandoffUpdate, LoginResponse, RecentConversations, RegisterRequest, Setting, Website, WebsiteQuota, WidgetConfig } from '../types/api';
 
 // Base API instance with proxy /api -> backend
 const api: AxiosInstance = axios.create({
@@ -78,6 +78,19 @@ export const getFeedback = (
 
 export const reviewFeedback = (id: string, payload: FeedbackReview) =>
   api.patch<FeedbackItem>(`/feedback/${id}`, payload);
+
+// Handoff requests (F5): the widget's request shows up here for the team.
+export const getHandoffs = (
+  params: {
+    website_id?: string;
+    status?: 'pending' | 'accepted' | 'closed';
+    page?: number;
+    limit?: number;
+  } = {},
+) => api.get<HandoffList>('/handoffs', { params });
+
+export const updateHandoff = (id: string, payload: HandoffUpdate) =>
+  api.patch(`/handoffs/${id}`, payload);
 
 export const rebuildQa = (websiteId: string) =>
   api.post<{ status: string; approved: number; chunks: number }>(

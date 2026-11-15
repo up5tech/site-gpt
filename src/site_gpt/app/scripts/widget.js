@@ -143,6 +143,9 @@
       noResponse: 'Không có phản hồi',
       missingWebsiteId: 'Thiếu Website ID',
       error: 'Lỗi!',
+      talkToHuman: 'Nói chuyện với người thật',
+      handoffThanks: 'Đã gửi yêu cầu, chúng tôi sẽ liên hệ lại sớm.',
+      handoffFailed: 'Không gửi được yêu cầu. Vui lòng thử lại.',
     },
   };
 
@@ -273,6 +276,35 @@
         object-fit: contain;
         border-radius: 4px;
         flex: 0 0 auto;
+      }
+
+      .header-actions {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        flex: 0 0 auto;
+      }
+
+      .handoff-btn {
+        background: transparent;
+        color: white;
+        border: 1px solid rgba(255, 255, 255, 0.7);
+        padding: 4px 8px;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 12px;
+      }
+
+      .handoff-btn[disabled] {
+        opacity: 0.6;
+        cursor: default;
+      }
+
+      .handoff-ack {
+        flex: 1;
+        padding: 10px;
+        font-size: 12px;
+        color: #444;
       }
 
       .clear-btn {
@@ -484,7 +516,12 @@
           <img class="header-logo" id="headerLogo" alt="" referrerpolicy="no-referrer" hidden />
           <span id="chatHeaderName">${escapeHtml(config.botName)}</span>
         </span>
-        <button class="clear-btn" id="clearBtn">Clear</button>
+        <span class="header-actions">
+          <button class="handoff-btn" id="handoffBtn" hidden>
+            Talk to a human
+          </button>
+          <button class="clear-btn" id="clearBtn">Clear</button>
+        </span>
       </div>
       <div class="chat-messages" id="messages"></div>
       <div class="chat-input" id="chatInput">
@@ -502,6 +539,8 @@
   const inputEl = shadow.getElementById('input');
   const sendBtn = shadow.getElementById('sendBtn');
   const clearBtn = shadow.getElementById('clearBtn');
+  const handoffBtn = shadow.getElementById('handoffBtn');
+  const chatInputEl = shadow.getElementById('chatInput');
   const headerNameEl = shadow.getElementById('chatHeaderName');
 
   // ================= SCROLL =================
@@ -979,10 +1018,65 @@
     inputEl.focus();
   }
 
+  // ================= HANDOFF =================
+  // "Talk to a human" (F5): one click writes one row and notifies the team by
+  // email, then the composer becomes an acknowledgement. The state lives in
+  // the DOM only — no new localStorage key, so a reload starts a fresh chat.
+  let handoffRequested = false;
+
+  function clearHandoffAck() {
+    handoffRequested = false;
+    const ack = chatInputEl.querySelector('.handoff-ack');
+    if (ack) ack.remove();
+    inputEl.style.display = '';
+    sendBtn.style.display = '';
+    handoffBtn.disabled = false;
+  }
+
+  function showHandoffAck() {
+    handoffRequested = true;
+    inputEl.style.display = 'none';
+    sendBtn.style.display = 'none';
+    const ack = document.createElement('div');
+    ack.className = 'handoff-ack';
+    ack.textContent = t(
+      'handoffThanks',
+      'Thanks! Someone from our team will be in touch.',
+    );
+    chatInputEl.appendChild(ack);
+  }
+
+  async function requestHandoff() {
+    if (!hasWebsiteId || handoffRequested) return;
+    handoffBtn.disabled = true;
+    try {
+      const base = (config.apiUrl || '').replace(/\/$/, '');
+      const res = await fetch(`${base}/api/handoff`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          website_id: config.website_id,
+          session_id: sessionId,
+        }),
+      });
+      if (!res.ok) throw new Error('handoff failed: ' + res.status);
+      showHandoffAck();
+    } catch (e) {
+      handoffBtn.disabled = false;
+      addMessage(
+        t('handoffFailed', 'Could not reach the team. Please try again.'),
+        'bot',
+      );
+    }
+  }
+
+  handoffBtn.onclick = requestHandoff;
+
   // ================= CLEAR =================
   clearBtn.onclick = () => {
     sessionId = newSession();
     messagesEl.innerHTML = '';
+    clearHandoffAck();
     if (needsContact()) {
       showContactForm();
       return;
@@ -1070,11 +1164,28 @@
       }
       if (cfg.widget_language) uiLanguage = normalizeLanguage(cfg.widget_language);
       uiStrings = parseUiStrings(cfg.widget_ui_strings);
+      // Handoff (F5): the header button exists only when the owner enabled it.
+      if (cfg.handoff_enabled !== undefined) {
+        config.handoffEnabled =
+          String(cfg.handoff_enabled).trim().toLowerCase() === 'true';
+      }
+      if (typeof cfg.handoff_label === 'string') {
+        config.handoffLabel = safeText(
+          cfg.handoff_label,
+          config.handoffLabel || 'Talk to a human',
+          40,
+        );
+      }
 
       // Apply dynamic styles / labels now that config is loaded.
       headerNameEl.textContent = config.botName;
       clearBtn.textContent = t('clear', 'Clear');
       sendBtn.textContent = t('send', 'Send');
+      handoffBtn.textContent = t(
+        'talkToHuman',
+        config.handoffLabel || 'Talk to a human',
+      );
+      handoffBtn.hidden = !config.handoffEnabled;
       toggleBtn.style.background = config.theme.primaryColor;
       shadow.querySelector('.chat-header').style.background =
         config.theme.primaryColor;

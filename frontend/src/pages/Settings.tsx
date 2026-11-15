@@ -15,6 +15,7 @@ import {
   Row,
   Select,
   Space,
+  Switch,
   Tabs,
   Typography,
 } from 'antd';
@@ -46,6 +47,8 @@ const APPEARANCE_KEYS = [
   'widget_language',
   'widget_ui_strings',
   'widget_logo_url',
+  'handoff_enabled',
+  'handoff_label',
 ] as const;
 
 const DEFAULT_APPEARANCE = {
@@ -59,6 +62,8 @@ const DEFAULT_APPEARANCE = {
   widget_language: 'auto',
   widget_ui_strings: '',
   widget_logo_url: '',
+  handoff_enabled: 'false',
+  handoff_label: 'Talk to a human',
 };
 
 // UI mirror of `services/llm.py::ALLOWED_CHAT_MODELS`. The server resolves the
@@ -174,6 +179,14 @@ function buildPreview(values: Record<string, unknown>) {
       values.widget_logo_url,
       DEFAULT_APPEARANCE.widget_logo_url,
     ),
+    // The form holds a boolean (Switch); the setting itself is a string.
+    handoffEnabled:
+      values.handoff_enabled === true ||
+      String(values.handoff_enabled ?? '') === 'true',
+    handoffLabel: asText(
+      values.handoff_label,
+      DEFAULT_APPEARANCE.handoff_label,
+    ),
   };
 }
 
@@ -189,6 +202,8 @@ interface AppearanceFormValues {
   widget_language?: string;
   widget_ui_strings?: string;
   widget_logo_url?: string;
+  handoff_enabled?: boolean;
+  handoff_label?: string;
 }
 
 interface ProfileFormValues {
@@ -272,6 +287,8 @@ export function Settings() {
         widget_language: map.widget_language || 'auto',
         widget_ui_strings: map.widget_ui_strings || '',
         widget_logo_url: map.widget_logo_url || '',
+        handoff_enabled: (map.handoff_enabled || 'false') === 'true',
+        handoff_label: map.handoff_label || 'Talk to a human',
       };
       appearanceForm.setFieldsValue(values);
       setPreview(buildPreview(values));
@@ -694,6 +711,21 @@ export function Settings() {
                     rows={3}
                     placeholder={'What are your opening hours?\nHow do I get a refund?'}
                   />
+                </Form.Item>
+                <Form.Item
+                  name='handoff_enabled'
+                  label='Talk to a human'
+                  valuePropName='checked'
+                  tooltip='Shows a button in the chat header. Clicking it emails the team and records the request under Handoffs — the visitor stays in the chat.'
+                >
+                  <Switch />
+                </Form.Item>
+                <Form.Item
+                  name='handoff_label'
+                  label='Handoff Button Label'
+                  tooltip='English fallback; the label catalogue or UI string overrides take precedence.'
+                >
+                  <Input placeholder='Talk to a human' />
                 </Form.Item>
                 <Form.Item
                   name='widget_language'

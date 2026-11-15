@@ -164,6 +164,31 @@ export interface Setting {
   updated_at?: string;
 }
 
+export interface HandoffItem {
+  id: string;
+  website_id: string;
+  website_name?: string | null;
+  session_id: string;
+  contact_id?: string | null;
+  contact_name?: string | null;
+  contact_email?: string | null;
+  message?: string | null;
+  status: 'pending' | 'accepted' | 'closed';
+  channel?: string | null;
+  created_at: string;
+}
+
+export interface HandoffList {
+  total: number;
+  page: number;
+  limit: number;
+  items: HandoffItem[];
+}
+
+export interface HandoffUpdate {
+  status?: 'pending' | 'accepted' | 'closed';
+}
+
 export interface FeedbackItem {
   id: string;
   website_id: string;

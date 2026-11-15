@@ -13,6 +13,8 @@ export interface WidgetPreviewProps {
   language?: string;
   uiStrings?: string;
   logoUrl?: string;
+  handoffEnabled?: boolean;
+  handoffLabel?: string;
 }
 
 // Same rule as widget.js: only absolute https URLs and raster data URIs can
@@ -29,8 +31,11 @@ function safeLogoUrl(value: string | undefined): string {
 
 // The shipped label catalogue mirrors widget.js, which owns the full table; the
 // preview only renders these two labels, so only those are duplicated here.
-const PREVIEW_STRINGS: Record<string, { clear: string; send: string }> = {
-  vi: { clear: 'Xoá', send: 'Gửi' },
+const PREVIEW_STRINGS: Record<
+  string,
+  { clear: string; send: string; talkToHuman: string }
+> = {
+  vi: { clear: 'Xoá', send: 'Gửi', talkToHuman: 'Nói chuyện với người thật' },
 };
 
 // Same resolution order as the widget: overrides, then the language catalogue,
@@ -88,6 +93,8 @@ export function WidgetPreview({
   language,
   uiStrings,
   logoUrl,
+  handoffEnabled = false,
+  handoffLabel = 'Talk to a human',
 }: WidgetPreviewProps) {
   // A logo that fails to load must fall back to the emoji, and a new URL gets a
   // fresh chance instead of staying on the previous failure.
@@ -97,7 +104,7 @@ export function WidgetPreview({
 
   const overrides = parseUiStrings(uiStrings);
   const catalogue = PREVIEW_STRINGS[resolveLocale(language)] || {};
-  const label = (key: 'clear' | 'send', fallback: string) =>
+  const label = (key: 'clear' | 'send' | 'talkToHuman', fallback: string) =>
     overrides[key] || catalogue[key] || fallback;
   const greeting =
     overrides.greeting || greetingMessage || 'Hi! How can I help you?';
@@ -158,6 +165,17 @@ export function WidgetPreview({
     cursor: 'pointer',
     fontSize: 11,
   };
+
+  // Mirrors widget.js: an outlined button on the header colour.
+  const handoffBtnStyle = (textColor: string): CSSProperties => ({
+    background: 'transparent',
+    color: textColor,
+    border: `1px solid ${textColor}`,
+    padding: '3px 8px',
+    borderRadius: 6,
+    cursor: 'pointer',
+    fontSize: 11,
+  });
 
   const messagesStyle: CSSProperties = {
     flex: 1,
@@ -267,9 +285,16 @@ export function WidgetPreview({
               )}
               <span>{assistantName || 'Assistant'}</span>
             </span>
-            <button style={clearBtnStyle} type='button'>
-              {label('clear', 'Clear')}
-            </button>
+            <span style={{ display: 'flex', gap: 6, flex: '0 0 auto' }}>
+              {handoffEnabled && (
+                <button style={handoffBtnStyle(headerText)} type='button'>
+                  {label('talkToHuman', handoffLabel || 'Talk to a human')}
+                </button>
+              )}
+              <button style={clearBtnStyle} type='button'>
+                {label('clear', 'Clear')}
+              </button>
+            </span>
           </div>
           <div style={messagesStyle}>
             <div style={{ display: 'flex', marginBottom: 8 }}>
