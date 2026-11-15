@@ -28,6 +28,7 @@ export function LayoutComponent({ children }: Props) {
     { key: '/documents', label: 'Documents' },
     { key: '/training', label: 'Training' },
     { key: '/handoffs', label: 'Handoffs' },
+    { key: '/analytics', label: 'Analytics' },
   ];
 
   const dropdownItems: MenuProps['items'] = [

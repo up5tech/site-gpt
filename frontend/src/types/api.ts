@@ -164,6 +164,51 @@ export interface Setting {
   updated_at?: string;
 }
 
+export interface DigestTopic {
+  term: string;
+  count: number;
+}
+
+export interface UnansweredQuestion {
+  question?: string | null;
+  website_id: string;
+  website_name?: string | null;
+  session_id: string;
+  asked_at: string;
+  link: string;
+}
+
+export interface DigestSummary {
+  company_id: string;
+  period_start: string;
+  period_end: string;
+  conversation_volume: number;
+  message_count: number;
+  new_contacts: number;
+  feedback_up: number;
+  feedback_down: number;
+  top_topics: DigestTopic[];
+  unanswered_questions: UnansweredQuestion[];
+}
+
+export interface AnalyticsSummary extends DigestSummary {
+  days: number;
+}
+
+export interface DigestPreview {
+  period_start: string;
+  period_end: string;
+  html: string;
+  summary: DigestSummary;
+}
+
+export interface DigestSendResult {
+  status: string;
+  reason?: string | null;
+  recipients?: number | null;
+  period_start?: string | null;
+}
+
 export interface HandoffItem {
   id: string;
   website_id: string;

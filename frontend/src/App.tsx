@@ -10,6 +10,7 @@ import { Dashboard } from './pages/Dashboard';
 import { ExtraDocuments } from './pages/ExtraDocuments';
 import { Login } from './pages/Login';
 import { Register } from './pages/Register';
+import { Analytics } from './pages/Analytics';
 import { Handoffs } from './pages/Handoffs';
 import { Settings } from './pages/Settings';
 import { Training } from './pages/Training';
@@ -78,6 +79,14 @@ function App() {
                 element={
                   <ProtectedRoute>
                     <ExtraDocuments />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path='/analytics'
+                element={
+                  <ProtectedRoute>
+                    <Analytics />
                   </ProtectedRoute>
                 }
               />

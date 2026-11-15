@@ -1,5 +1,5 @@
 import axios, { AxiosInstance } from 'axios';
-import type { ChatResponse, ContactList, ConversationList, ConversationMessages, DashboardStats, FeedbackItem, FeedbackList, FeedbackRequest, FeedbackReview, HandoffList, HandoffUpdate, LoginResponse, RecentConversations, RegisterRequest, Setting, Website, WebsiteQuota, WidgetConfig } from '../types/api';
+import type { AnalyticsSummary, ChatResponse, ContactList, ConversationList, ConversationMessages, DashboardStats, DigestPreview, DigestSendResult, FeedbackItem, FeedbackList, FeedbackRequest, FeedbackReview, HandoffList, HandoffUpdate, LoginResponse, RecentConversations, RegisterRequest, Setting, Website, WebsiteQuota, WidgetConfig } from '../types/api';
 
 // Base API instance with proxy /api -> backend
 const api: AxiosInstance = axios.create({
@@ -91,6 +91,16 @@ export const getHandoffs = (
 
 export const updateHandoff = (id: string, payload: HandoffUpdate) =>
   api.patch(`/handoffs/${id}`, payload);
+
+// Analytics and the weekly digest (F6).
+export const getAnalyticsSummary = (days = 7) =>
+  api.get<AnalyticsSummary>('/analytics/summary', { params: { days } });
+
+export const previewDigest = () =>
+  api.post<DigestPreview>('/digest/preview');
+
+export const sendDigestNow = () =>
+  api.post<DigestSendResult>('/digest/send-now');
 
 export const rebuildQa = (websiteId: string) =>
   api.post<{ status: string; approved: number; chunks: number }>(
