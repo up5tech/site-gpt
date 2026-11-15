@@ -21,6 +21,20 @@ API_KEY_PEPPER = os.getenv("API_KEY_PEPPER", "")
 # always answers in the language of the question.
 DEFAULT_WIDGET_LANGUAGE = os.getenv("DEFAULT_WIDGET_LANGUAGE", "auto")
 
+# K4: session tokens. The widget mints one per session and sends it as
+# `X-Session-Token` when it reads its own history or contact. `compat` (the
+# default) keeps a tokenless read working for embeds that predate the token —
+# but only for a session nobody has claimed yet; `enforce` requires the token
+# everywhere. Flip to `enforce` once the embed snippet has been reloaded on the
+# customer sites, and only after reading the legacy-session note in
+# docs/security.md.
+SESSION_TOKEN_MODE = os.getenv("SESSION_TOKEN_MODE", "compat").strip().lower()
+
+# How long a minted token stays valid, in seconds (default 30 days). A session
+# that presents an expired token may rotate it: possession of the old value is
+# still proof, and the alternative is losing a returning visitor's history.
+SESSION_TOKEN_TTL_SECONDS = int(os.getenv("SESSION_TOKEN_TTL_SECONDS", "2592000"))
+
 # HMAC-SHA256 secret used to sign outbound webhook payloads
 # (`X-SiteGPT-Signature: sha256=...`). Only the webhook integration needs it; an
 # empty value means receivers cannot verify what we send.

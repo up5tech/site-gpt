@@ -345,6 +345,40 @@ class Integration(BaseModel):
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
 
+class SessionToken(BaseModel):
+    """The per-session credential the widget presents to read its own history
+    (K4).
+
+    The session id is a client-chosen identifier, so on its own it is a
+    capability: anyone who learns `website_id` + `session_id` could read the
+    transcript. The widget therefore mints a random token for a session and
+    stores it in the visitor's browser; only the hash is kept server-side, like
+    an API key. `session_id` stays the lookup key so nothing else changes.
+    """
+
+    __tablename__ = "session_tokens"
+
+    __table_args__ = (
+        UniqueConstraint("website_id", "session_id"),
+        Index("idx_session_tokens_website_id", "website_id"),
+    )
+
+    website_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("websites.id", ondelete="CASCADE"), nullable=False
+    )
+    session_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    last_seen_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
 class ApiKey(BaseModel):
     """A company key for the versioned `/api/v1` API.
 
