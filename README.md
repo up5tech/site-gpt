@@ -281,6 +281,14 @@ so `EMBEDDING_DIMENSIONS` must equal that model's native size.
   chunks before re-embedding, so re-running ingest won't duplicate vectors.
 - **`POST /api/ingest` is now protected** — requires a manager/admin token and ownership of
   the website (was fully public).
+- **Sitemap sync reports real errors.** `POST /api/websites/{id}/load-site-map` used to wrap every
+  failure in `except Exception` and re-raise it as `500` with `str(e)` in `detail`, so a missing
+  website answered 500 instead of 404 and an unsafe/unreachable sitemap leaked internal text. It now
+  re-raises `HTTPException` untouched, maps an `UnsafeUrl` or crawler fetch/parse failure to `400`
+  with a friendly message (the real reason is logged), keeps a generic logged `500` for storage
+  errors, and returns `{"status": "ok", "added": <new pages>, "total": <urls found>}`. The crawler's
+  `extract_urls_from_sitemap` gained `raise_on_error=True` for this caller; the crawl path still skips
+  a broken sitemap silently.
 - **One ingest per website at a time.** `POST /api/ingest` returns `409` while the website is
   already `processing`, so a double click can no longer queue a second crawl that re-embeds the
   same pages concurrently with the first. A finished or failed ingest can be retried normally;

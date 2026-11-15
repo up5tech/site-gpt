@@ -79,14 +79,27 @@ def crawl_page(url: str) -> tuple[str, str]:
     return title, extracted.strip()
 
 
-def extract_urls_from_sitemap(sitemap_url: str) -> list[str]:
+def extract_urls_from_sitemap(
+    sitemap_url: str, *, raise_on_error: bool = False
+) -> list[str]:
+    """Read a sitemap's URLs.
+
+    A crawl should skip a broken sitemap, so the default swallows the error and
+    returns `[]`. Callers that must tell the user *why* nothing was found (the
+    admin sync endpoint) pass `raise_on_error=True` and get the original
+    `UnsafeUrl` / fetch exception instead of a silent empty list.
+    """
     try:
         resp = _safe_get(sitemap_url)
     except UnsafeUrl as e:
         print(f"[crawler] refused to fetch sitemap {sitemap_url}: {e}")
+        if raise_on_error:
+            raise
         return []
     except Exception as e:
         print(f"[crawler] failed to fetch sitemap {sitemap_url}: {e}")
+        if raise_on_error:
+            raise
         return []
 
     soup = BeautifulSoup(resp.content, "xml")

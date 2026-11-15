@@ -15,6 +15,7 @@ from site_gpt.app.schemas.website_page import (
     WebsitePageUpdate,
 )
 from site_gpt.app.services.crawler import extract_urls_from_sitemap
+from site_gpt.app.services.net_guard import UnsafeUrl
 
 router = APIRouter()
 
@@ -355,15 +356,40 @@ def load_website_site_map(
     db: Session = Depends(get_db),
     user: models.User = Depends(get_current_user),
 ):
+    website = (
+        db.query(Website)
+        .filter(Website.id == website_id, Website.company_id == user.company_id)
+        .first()
+    )
+    if not website:
+        raise HTTPException(status_code=404, detail="Website not found")
+
+    # Fetch outside the persistence block so a bad sitemap is the user's 400,
+    # not an opaque 500.
     try:
-        website = (
-            db.query(Website)
-            .filter(Website.id == website_id, Website.company_id == user.company_id)
-            .first()
+        urls = extract_urls_from_sitemap(website.site_map_url, raise_on_error=True)
+    except UnsafeUrl as e:
+        print(f"[sitemap] refused {website.site_map_url}: {e}")
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "That sitemap address can't be fetched. Use a public http(s) "
+                "URL for the sitemap and try again."
+            ),
         )
-        if not website:
-            raise HTTPException(status_code=404, detail="Website not found")
-        urls = extract_urls_from_sitemap(website.site_map_url)
+    except Exception as e:
+        # Network, HTTP status or parse failure from the crawler.
+        print(f"[sitemap] could not read {website.site_map_url}: {e}")
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Could not download the sitemap. Check that the address is "
+                "public and reachable, then try again."
+            ),
+        )
+
+    try:
+        added = 0
         for url in urls:
             # Scoped to this website: pages of another tenant that happen to
             # share a URL must not make this sync skip them.
@@ -384,7 +410,16 @@ def load_website_site_map(
                     website_id=website_id,
                 )
             )
+            added += 1
         db.commit()
-        return {"status": "ok"}
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        db.rollback()
+        print(f"[sitemap] could not save pages for website {website_id}: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="Could not save the sitemap pages. Please try again.",
+        )
+
+    return {"status": "ok", "added": added, "total": len(urls)}
