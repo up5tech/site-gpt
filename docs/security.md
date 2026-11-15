@@ -1,0 +1,177 @@
+# Security and data handling
+
+This document is written for the person who runs Site GPT for real customers. It
+separates three things that are easy to blur together:
+
+1. **What the code enforces** — controls that hold whatever the deployment does.
+2. **What the operator must enforce** — transport, storage, secrets and backups,
+   which live in the proxy, the database and the host, not in this repository.
+3. **What is explicitly not provided** — certifications and legal agreements.
+
+Claims in this app's own copy must stay inside these boundaries. Nothing here, and
+nothing in `README.md`, should be read as a certification.
+
+## 1. Not provided
+
+Site GPT does **not** provide, and this repository does not implement:
+
+- **SOC 2 Type II** — no examination, no report, no auditor involvement.
+- **HIPAA** — no Business Associate Agreement, and the app is not built for PHI.
+- **A signed GDPR Data Processing Agreement (DPA)** — a legal document between
+  controllers and processors, not code.
+- **GDPR certification** — there is no such certification body; "GDPR compliant"
+  is a statement about a deployment's practices, not a product feature.
+
+What *is* implemented is the technical half of a data-subject request: export,
+erasure and recorded consent (§2, F9). Whether a given deployment is lawful
+depends on the operator's notices, contracts, retention decisions and breach
+processes.
+
+## 2. What the code enforces
+
+| Area | Control | Where |
+| --- | --- | --- |
+| Passwords | `argon2` hashes, never plaintext | `core/auth.py` (`pwd_context`) |
+| Password reset | Only `sha256(token)` is stored and compared with `hmac.compare_digest`; the raw token exists only in the emailed link and is cleared on use | `api/user.py` |
+| Sessions | HS256 JWT with an expiry (24h by default), verified on every request; a user must still be `status="active"` | `core/auth.py` |
+| Roles | `get_admin_user` / `get_manager_user` on every admin route; company scoping comes from the token, never from a query parameter | `core/auth.py`, `api/*` |
+| Tenant isolation | Every admin query filters on the caller's `company_id`; a foreign id answers 404, not 403, so ids cannot be probed | `api/*`, `api/privacy.py` |
+| API keys | Only `sha256(pepper + raw)` is stored; comparison uses `hmac.compare_digest`; keys carry scopes, a prefix for identification and a `revoked_at`; the raw value is returned once | `services/api_keys.py`, `api/api_key.py` |
+| Public config | `GET /api/widget-config` returns an explicit allowlist of 14 widget keys, never a table dump | `api/setting.py` (`WIDGET_PUBLIC_KEYS`), `api/routes.py` |
+| Integration secrets | Masked as `***` on every read; a PATCH echoing the mask keeps the stored value; provider errors are scrubbed of every stored secret before they reach a client | `api/integration.py` |
+| Webhooks | HMAC-SHA256 over `<timestamp>.<body>`, header `X-SiteGPT-Signature`; receivers can reject replays by checking the timestamp | `services/integrations.py` |
+| Rate limits | Fixed window per client IP on public endpoints (in-memory, see accepted risk K5) | `services/ratelimit.py` |
+| Spend ceiling | Daily message cap per website, counted in Redis, reset at UTC midnight | `api/routes.py` |
+| Uploads | Size capped while streaming (`MAX_UPLOAD_MB`, 413 without buffering the body) | `api/upload.py` |
+| Consent | When `require_consent` is on, `POST /api/contacts` refuses without `consent: true` and stamps `contacts.consent_at` | `api/routes.py` |
+| Export / erasure | Admin-only JSON export per website and hard deletes for a conversation or a contact, both company-scoped | `api/privacy.py` |
+| Logs | No raw API key, integration token or password is written to a log line; webhook bodies are not logged | `services/*` |
+
+What the code deliberately does **not** do: encrypt values at the application
+layer. Encryption at rest is a property of the database and the disk (§3).
+
+## 3. What the deployment must enforce
+
+These are listed because the code cannot enforce them and because the defaults in
+`.env.example` are development values.
+
+### Transport
+
+- Terminate **TLS 1.2 or newer** at the reverse proxy or load balancer in front of
+  the API and the frontend. The app itself speaks plain HTTP.
+- Redirect HTTP to HTTPS and send `Strict-Transport-Security` with a long
+  `max-age` once HTTPS is verified.
+- Keep the widget and the API on HTTPS: the embed fetches the API from the
+  visitor's browser, so a mixed-content page silently loses the widget.
+
+### CORS and proxies
+
+- Set `CORS_ORIGINS` to the exact frontend origin(s), comma-separated. The default
+  `*` is a development convenience and disables credentialed requests.
+- Behind a load balancer, set `TRUSTED_PROXY_IPS` to the public addresses of the
+  proxies. Otherwise every visitor shares one rate-limit bucket (the proxy's IP).
+  Loopback and private peers are trusted automatically.
+
+### Secrets
+
+| Variable | Requirement |
+| --- | --- |
+| `JWT_SECRET_KEY` | A long random value. The code falls back to a known development string when unset, which would let anyone mint tokens (accepted risk K6). Rotating it invalidates every session. |
+| `API_KEY_PEPPER` | Required in production. Rotating it invalidates every issued `/api/v1` key, which must then be re-minted. |
+| `INTEGRATION_WEBHOOK_SECRET` | Required for the webhook integration. Without it the signature is not verifiable; rotating it requires the receiver to update its copy. |
+| `MAIL_*`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `OPEN_ROUTER_API_KEY`, `GROQ_API_KEY`, `OLLAMA_PASSWORD`, `REDIS_PASSWORD` | Provider credentials. Keep them out of the repository, out of the frontend bundle and out of chat transcripts; use the platform's secret store or a root-owned `.env`. |
+
+`.env` must not be committed, and `load_dotenv()` reads it from the process's
+working directory at startup only.
+
+### Data at rest
+
+- Enable **Postgres encryption at rest** — either the managed database's
+  transparent encryption or full-disk encryption on the host. Chat transcripts,
+  contact details and integration credentials all live in one database.
+- Encrypt the **`uploads/`** volume as well; uploaded documents are the knowledge
+  base source material.
+- Restrict network access to Postgres and Redis to the application hosts, and set
+  `REDIS_PASSWORD` if Redis is reachable from anywhere else.
+- Take and test **backups** of the database and `uploads/`. A backup is a copy of
+  the personal data too: it must be encrypted, access-controlled and covered by
+  the same retention decisions. Erasing a conversation in the app does not reach
+  an older backup.
+
+### Operating
+
+- Rotate `JWT_SECRET_KEY`, `API_KEY_PEPPER` and `INTEGRATION_WEBHOOK_SECRET` when
+  anyone with access leaves, and after any suspected exposure.
+- Revoke a single leaked `/api/v1` key from **Settings → API keys**; revocation is
+  immediate (`revoked_at`) and the row stays for the audit trail.
+- Answer an erasure request with `GET /api/privacy/export`, then
+  `DELETE /api/privacy/conversations/{session_id}` and
+  `DELETE /api/privacy/contacts/{session_id}`; then handle the backups as above.
+- Keep `SQL_ECHO=false` — verbose SQL logging can put row values in the logs.
+
+## 4. Data inventory
+
+| Table | Contents | Personal data |
+| --- | --- | --- |
+| `chat_messages` | Every question and answer, with `session_id` | Yes — free text, may contain anything |
+| `contacts` | Name, email, `session_id`, `consent_at` | Yes |
+| `chat_feedback` | 👍/👎, optional comment, reviewed answer | Yes — the comment is free text |
+| `handoff_requests` | Request message, status, channel | Yes — free text |
+| `documents`, `extra_documents`, `embeddings` | Owner's knowledge base | Usually no; may quote the owner's pages |
+| `users` | Name, email, argon2 password hash, reset tokens | Yes |
+| `api_keys` | Prefix, peppered hash, scopes, timestamps | No raw secret |
+| `integrations` | Provider config **including credentials** | Credentials, not personal data |
+| `digest_log` | Which weekly period was sent to whom | Recipient personal data |
+| `uploads/` | Imported source files | Depends on the file |
+
+There is **no automatic retention purge** in V2 (out of scope): transcripts stay
+until someone deletes them. If a retention period is required, implement it as a
+scheduled job on top of the deletion endpoints above.
+
+## 5. Accepted risks
+
+These are known, documented and deliberately deferred. They are not oversights.
+
+- **K4 — public reads keyed by `session_id`.** `GET /api/conversations/{sid}` and
+  `GET /api/contacts/{sid}` are unauthenticated by design, because the widget
+  needs them. Anyone who knows a `website_id` (public, in the embed) *and* a
+  session id can read that session. Session ids are long random values generated
+  by the widget, but they are client-supplied, so this is a capability, not an
+  authentication. **Fix deferred**: signed session tokens would break every
+  existing embed and all stored sessions, so it is planned as a breaking change
+  rather than a silent one.
+- **K5 — the rate limiter is per process.** The fixed window lives in memory, so
+  N workers allow N times the configured rate, and a restart resets the counters.
+  It stops accidents, not a determined attacker. Redis-based limiting is a V3
+  item; the Redis daily message cap is the hard spend ceiling today.
+- **K6 — development defaults.** `JWT_SECRET_KEY` has a known fallback and
+  `CORS_ORIGINS` defaults to `*` if unset. The app does not refuse to boot with
+  them. Treat §3 as the deployment checklist; a production boot that logs no
+  configuration is indistinguishable from a misconfigured one.
+- **K8 — feedback is stored, not learned from automatically.** Ratings and
+  reviewed answers feed the Q&A training document only after an admin approves
+  them; nothing changes silently.
+- **No application-level encryption**, no field-level tokenisation and no HSM.
+  Secrets are protected by the file permissions, the secret store and the
+  database's own encryption — all deployment concerns.
+- **Uploads are not virus-scanned.** Only the owner's own files and admin-triggered
+  imports reach `uploads/`, but a compromised admin account can import anything.
+- **No admin audit log.** API keys keep a `revoked_at` and a last-used timestamp;
+  other admin actions are not recorded.
+
+## 6. Deployment checklist
+
+Copy this into the runbook for each environment:
+
+- [ ] `JWT_SECRET_KEY` set to a random value; `API_KEY_PEPPER` set.
+- [ ] `INTEGRATION_WEBHOOK_SECRET` set before enabling any webhook.
+- [ ] `CORS_ORIGINS` lists the exact frontend origin(s).
+- [ ] `TRUSTED_PROXY_IPS` set if behind a load balancer.
+- [ ] TLS 1.2+ terminated, HTTP redirected, HSTS enabled.
+- [ ] Postgres and `uploads/` encrypted at rest; network access restricted.
+- [ ] Backups of Postgres and `uploads/` encrypted and restore-tested.
+- [ ] `SQL_ECHO=false`; logs do not receive `.env` values.
+- [ ] Provider credentials stored in the platform's secret store.
+- [ ] `GET /api/widget-config` checked to return only widget keys.
+- [ ] An `/api/v1` key minted and revoked once, to confirm the flow works.
+- [ ] Erasure rehearsed on a test session (export → delete → export is empty).

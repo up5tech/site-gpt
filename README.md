@@ -239,6 +239,11 @@ cd frontend && npm run build && npm run lint
 
 V1 is self-hosted. None of the dev defaults below should survive into production.
 
+> **Full checklist:** [`docs/security.md`](docs/security.md) lists every control
+the code enforces, every control it cannot (TLS, encryption at rest, backups,
+secret rotation) and the accepted risks. It also states plainly what is **not**
+provided: SOC 2 Type II, a HIPAA BAA, a signed DPA, or any GDPR certification.
+
 ### 1. Secrets and config
 
 | Key | Dev default | Production |
