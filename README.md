@@ -205,6 +205,21 @@ Keys understood by `widget_ui_strings`: `clear`, `send`, `thinking`, `sources`,
 - **Human handoff** — `POST /api/handoff` (public, rate-limited) resolves the
   contact, upserts one request per session, emails the team the last ten messages
   and emits an integration event. `/handoffs` is the team's queue.
+- **Integrations (webhook, Slack, Zendesk, Crisp)** — `/integrations` configures
+  one per provider, each subscribed to `lead.captured`, `feedback.received`,
+  `handoff.requested` and `digest.generated`. Webhooks are signed
+  (`X-SiteGPT-Signature: sha256=…` over `<timestamp>.<body>`, keyed with
+  `INTEGRATION_WEBHOOK_SECRET`); a failing endpoint is logged and never breaks the
+  action that emitted it. Reads never return a stored credential — secrets come
+  back as `***` and a PATCH echoing the mask keeps the stored value.
+- **API keys and `/api/v1`** — Settings → API keys mints scoped keys (`read`,
+  `ingest:write`, `settings:write`, `chat:write`), stored only as a peppered
+  SHA-256 hash and shown once. `POST /ingest`, `GET|PUT /settings`,
+  `GET /conversations`, `GET /contacts`, `POST /chat` and
+  `GET /analytics/summary` reuse the same services as the console, and
+  `/api/v1/settings` is limited to the public widget keys plus the chat-model
+  pair so a leaked key cannot redirect handoff mail or raise a quota. Contract:
+  [`docs/api-v1.md`](docs/api-v1.md), also served under `/docs`.
 - **Weekly digest and analytics** — `GET /api/analytics/summary`,
   `POST /api/digest/preview` and `POST /api/digest/send-now`, plus the `/analytics`
   page. `build_digest` reports conversation volume, messages, new contacts,
