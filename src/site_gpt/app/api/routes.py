@@ -1,10 +1,11 @@
 import asyncio
 import hashlib
+import json
 import os
 from uuid import UUID as _UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -380,7 +381,22 @@ def widget_config(
         )
         .all()
     )
-    return {s.key: s.value for s in settings if s.key in WIDGET_PUBLIC_KEYS}
+    payload = {s.key: s.value for s in settings if s.key in WIDGET_PUBLIC_KEYS}
+
+    # Every visitor's browser asks for this before the widget paints. A short
+    # public TTL lets it be reused, and the ETag on the payload lets that reuse
+    # be revalidated instead of paying a DB round trip each page load.
+    body = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    etag = '"' + hashlib.sha256(body.encode("utf-8")).hexdigest()[:16] + '"'
+    headers = {
+        "Cache-Control": (
+            f"public, max-age={WIDGET_CONFIG_MAX_AGE}, must-revalidate"
+        ),
+        "ETag": etag,
+    }
+    if (request.headers.get("if-none-match") or "").strip() == etag:
+        return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers=headers)
+    return Response(content=body, media_type="application/json", headers=headers)
 
 
 @router.post("/api/chat/stream")
@@ -654,6 +670,10 @@ def get_token(
 # that a deployed fix reaches them on its own, while the ?v=<version> query in
 # the install snippet busts it immediately.
 WIDGET_JS_PATH = "./src/site_gpt/app/scripts/widget.js"
+# Short enough that a settings change reaches embedded sites quickly, long
+# enough that a page view does not repeat the widget-config DB query.
+WIDGET_CONFIG_MAX_AGE = 60
+
 WIDGET_JS_MAX_AGE = 300
 _widget_version_cache: tuple[float, int, str] | None = None
 

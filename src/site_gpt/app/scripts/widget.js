@@ -870,23 +870,29 @@
   // ================= INIT =================
   // Restore a returning visitor's history from the server (source of truth).
   // Falls back to the local copy if the server has nothing / is unreachable.
-  async function loadServerHistory() {
-    if (!config.enableHistory || !hasWebsiteId || !config.apiUrl) return false;
+  // Fetch only, no DOM writes: the caller paints once it knows the contact
+  // gate is satisfied, so this request can run in parallel with the others.
+  async function fetchServerHistory() {
+    if (!config.enableHistory || !hasWebsiteId || !config.apiUrl) return null;
     try {
       const base = config.apiUrl.replace(/\/$/, '');
       const res = await fetch(
         `${base}/api/conversations/${encodeURIComponent(sessionId)}` +
           `?website_id=${encodeURIComponent(config.website_id)}`,
       );
-      if (!res.ok) return false;
+      if (!res.ok) return null;
       const data = await res.json();
       const items = data.items || [];
-      if (!items.length) return false;
-      items.forEach((m) => addMessage(m.message, m.role, false, true));
-      return true;
+      return items.length ? items : null;
     } catch (e) {
-      return false;
+      return null;
     }
+  }
+
+  function renderServerHistory(items) {
+    if (!Array.isArray(items) || !items.length) return false;
+    items.forEach((m) => addMessage(m.message, m.role, false, true));
+    return true;
   }
 
   async function init() {
@@ -895,18 +901,24 @@
       return;
     }
 
-    await loadServerConfig();
+    // Config, contact and history do not depend on each other. They used to be
+    // awaited one after another, so the first paint waited for three round
+    // trips; issue them together and decide once they all settle.
+    const contactRequired = needsContact();
+    const [, restoredContact, historyItems] = await Promise.all([
+      loadServerConfig(),
+      contactRequired ? loadServerContact() : Promise.resolve(false),
+      fetchServerHistory(),
+    ]);
 
-    if (needsContact()) {
-      const restored = await loadServerContact();
-      if (!restored) {
-        showContactForm();
-        return;
-      }
+    if (contactRequired && !restoredContact) {
+      showContactForm();
+      return;
     }
     setChatInputVisible(true);
 
-    const loadedFromServer = await loadServerHistory();
+    // Painted only now: the contact form above clears the message list.
+    const loadedFromServer = renderServerHistory(historyItems);
     if (!loadedFromServer) loadHistory();
 
     if (

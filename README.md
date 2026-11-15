@@ -328,6 +328,14 @@ so `EMBEDDING_DIMENSIONS` must equal that model's native size.
   `CRAWL_REFRESH_HOURS` (default 24, set `0` to disable), re-enqueues ingest for websites
   whose `ingest_status == 'completed'` and last update is older than the interval — keeping
   the knowledge base fresh with no extra infra.
+- **`GET /api/widget-config` is cacheable and the widget bootstraps in parallel.** The response now
+  carries `Cache-Control: public, max-age=60, must-revalidate` plus an `ETag` over the payload, and
+  answers `304` when the browser revalidates with a matching `If-None-Match` — so a returning visitor
+  no longer costs a DB round trip before the widget can paint (a settings change still reaches sites
+  within the minute, and the ETag changes immediately). On the widget side, config, restored contact
+  and history are now requested together with one `Promise.all` instead of being awaited one after
+  another; history is fetched early but painted only after the contact gate, so a visitor who still
+  has to fill in the form sees exactly what they saw before.
 - **Daily per-website message cap.** Per-IP rate limiting caps a single visitor and nothing else, so one
   viral embed could spend a customer's whole LLM budget in a day. `POST /api/chat` and
   `POST /api/chat/stream` now count each message in Redis (`quota:messages:<website_id>:<UTC date>`,
