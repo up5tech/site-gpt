@@ -146,6 +146,17 @@ npm install && npm run dev   # :5173
 - `GET /api/widget-config?website_id=` — public widget appearance/config (assistant name, colors, greeting, placeholder, position, suggested questions)
 - `POST /api/v1/ingest?website_id=` — API-key ingest for scripts/CI (`X-API-Key`); admins mint and revoke keys at `/api/api-keys` (the raw key is returned once)
 - `GET /health`
+- `GET /api/conversations` (+`/{sid}`, `DELETE /{sid}`) — history, admin-scoped
+- `/api/feedback` (`GET`, `POST /rebuild`, `PATCH /{id}`) — rating review and Q&A rebuild
+- `/api/handoff` (public POST) and `/api/handoffs` (`GET`, `PATCH /{id}`)
+- `/api/integrations` (`GET`, `POST`, `PATCH /{id}`, `DELETE /{id}`, `POST /{id}/test`)
+- `GET /api/analytics/summary`, `POST /api/digest/preview`, `POST /api/digest/send-now`
+- `/api/privacy/export`, `/api/privacy/conversations/{sid}`, `/api/privacy/contacts/{sid}`
+  — admin-only export and erasure (see [`docs/security.md`](docs/security.md))
+- `/api/api-keys` (`GET`, `POST`, `DELETE /{id}`) — admin key management; the
+  key-authenticated surface is `/api/v1` (`ingest`, `settings`, `conversations`,
+  `contacts`, `chat`, `analytics/summary`), documented in
+  [`docs/api-v1.md`](docs/api-v1.md) and in `/docs`
 - `/api/companies`, `/api/users` (+`/me`, `/forgot-password`, `/reset-password`), `/api/websites` (+`/{id}/pages`, `/{id}/load-site-map`), `/api/documents`, `/api/extra_documents`, `/api/settings`, `/api/uploads`
 
 ## Embed widget
@@ -177,7 +188,7 @@ same registry are seeded for every company but never published.
 | `widget_logo_url` | yes | Chat header badge and bot avatar. Only `https://` URLs and raster `data:image/...;base64` URIs are used; anything else falls back to 🤖. |
 | `handoff_enabled` | yes | Shows a "talk to a human" button in the chat header. A click records one request (upserted per session), emails the team and emits `handoff.requested`; the visitor stays in the chat. Off by default. |
 | `handoff_label` | yes | Button label, an English fallback the language catalogue and `widget_ui_strings` can override. |
-| `require_consent`, `privacy_policy_url` | yes | Seeded for the privacy feature; off/empty by default, so nothing changes until it lands. |
+| `require_consent`, `privacy_policy_url` | yes | When consent is on, the contact form shows a required checkbox linked to the policy URL and `POST /api/contacts` answers 400 without `consent: true`, stamping `contacts.consent_at`. Only absolute `http(s)` URLs are used; off/empty by default, so an untouched widget keeps the V1 form. |
 | `handoff_email` | **no** | Where handoff requests are emailed; empty means every active admin/manager. |
 | `digest_enabled`, `digest_hour`, `digest_day` | **no** | Weekly digest switch, UTC send hour and week start (default `false` / `9` / `monday`). The worker also needs the global `DIGEST_ENABLED`. |
 | `digest_recipients` | **no** | Comma-separated digest recipients; empty means every active admin/manager. |
@@ -186,7 +197,9 @@ same registry are seeded for every company but never published.
 Keys understood by `widget_ui_strings`: `clear`, `send`, `thinking`, `sources`,
 `helpful`, `notHelpful`, `thanksFeedback`, `contactIntro`, `firstName`,
 `lastName`, `email`, `contactInvalid`, `startChat`, `contactSaveFailed`,
-`noResponse`, `missingWebsiteId`, `error`, `greeting`, `placeholder`.
+`noResponse`, `missingWebsiteId`, `error`, `greeting`, `placeholder`,
+`talkToHuman`, `handoffThanks`, `handoffFailed`, `consentAgree`,
+`privacyPolicy`, `consentRequired`.
 
 ### V2 highlights
 
@@ -220,6 +233,17 @@ Keys understood by `widget_ui_strings`: `clear`, `send`, `thinking`, `sources`,
   `/api/v1/settings` is limited to the public widget keys plus the chat-model
   pair so a leaked key cannot redirect handoff mail or raise a quota. Contract:
   [`docs/api-v1.md`](docs/api-v1.md), also served under `/docs`.
+- **Privacy export, erasure and consent** — admins can download everything the app
+  stores for one website (`GET /api/privacy/export`) and erase a session for real:
+  `DELETE /api/privacy/conversations/{sid}` removes its messages, ratings and
+  handoffs, `DELETE /api/privacy/contacts/{sid}` removes the lead and its handoffs.
+  Both are company-scoped and 404 on a foreign website. Consent is recorded per
+  contact (`consent_at`) when `require_consent` is on. What is **not** provided is
+  stated plainly in [`docs/security.md`](docs/security.md): no SOC 2 Type II, no
+  HIPAA BAA, no signed DPA, no GDPR certification.
+- **Admin pages** — `/websites`, `/documents`, `/contacts`, `/handoffs`,
+  `/feedback`, `/analytics`, `/integrations`, `/users` and `/settings` (with the
+  API keys tab). The widget itself has no separate build step: `GET /widget.js`.
 - **Weekly digest and analytics** — `GET /api/analytics/summary`,
   `POST /api/digest/preview` and `POST /api/digest/send-now`, plus the `/analytics`
   page. `build_digest` reports conversation volume, messages, new contacts,
@@ -310,6 +334,21 @@ These are known, documented and deliberately not fixed in V1 (see `plans/PLAN_V1
 
 Also note `/docs` and `/openapi.json` are enabled and unauthenticated (FastAPI default) —
 restrict them at the proxy if that matters to you.
+
+## Upgrading from V1 to V2
+
+1. `uv run alembic upgrade head` — five migrations, chain
+   `07f83918a289 → c41d7e8a9f20 (api_keys) → 2f95a35b9d5d → 5fe07e597f12 → bebd929605ed → 94ca756068a7`.
+   They only add tables, columns and indexes; no data migration and **no re-ingest**
+   (the embedded `EMBEDDING_DIMENSIONS` is unchanged).
+2. Set `API_KEY_PEPPER` before minting any key, `INTEGRATION_WEBHOOK_SECRET`
+   before enabling a webhook, and `JWT_SECRET_KEY` + `CORS_ORIGINS` as before —
+   see [`docs/security.md`](docs/security.md).
+3. Every V2 feature is off by default (a `settings` row or an env flag), so an
+   untouched deployment behaves like V1. The one deliberate exception is the
+   prompt's reply-in-the-question's-language rule.
+4. Existing companies get the new settings rows when an admin saves the widget
+   tab once; until then the server-side defaults apply (consent off, no logo).
 
 ## Embedding dimension caveat
 

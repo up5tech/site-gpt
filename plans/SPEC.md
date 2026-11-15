@@ -39,22 +39,22 @@ Legend: ✅ full · ⚠️ partial · ❌ missing · ➖ N/A (not code)
 | # | SiteGPT feature | Status | Evidence |
 |---|---|---|---|
 | 1 | Import training content | ✅ | sitemap + `trafilatura` crawl, `services/parse.py`, `services/sources.py` (URL / Google Drive), `ExtraDocument.content` raw text |
-| 2 | Q&A training | ⚠️ | `chat_feedback` table exists but is **write-only**; nothing reads it |
-| 3 | GPT-4.1-mini & GPT-4.1 | ⚠️ | `LLM_AI` / `LLM_MODEL` in `core/config.py`, 6 providers in `services/llm.py`; env-only, no runtime switch |
+| 2 | Q&A training | ✅ | approved corrections rebuild one `__qa_training__` extra document (`services/qa_training.py`, `POST /api/feedback/rebuild`) and are retrieved like any other chunk |
+| 3 | GPT-4.1-mini & GPT-4.1 | ✅ | env defaults plus a runtime pair from Settings → Model, resolved only through `services/llm.py::ALLOWED_CHAT_MODELS` (`services/model_settings.py`) |
 | 4 | Embed on sites | ✅ | `GET /widget.js`, `window.ChatWidgetConfig`, per-site `/api/widget-config` |
-| 5 | Customize appearance | ⚠️ | 7 settings keys; no logo (hardcoded 🤖 in `addMessage`, `widget.js:452`) |
+| 5 | Customize appearance | ✅ | 14 public widget keys, including `widget_logo_url` (https/raster only) with the 🤖 fallback preserved |
 | 6 | Quick prompts | ✅ | `suggested_questions` → `renderSuggestions()` (`widget.js:574`) |
 | 7 | Chat history | ✅ | `services/conversations.py`, `/api/conversations`, widget `loadServerHistory()` |
-| 8 | Escalate to a human | ❌ | no `escalate` / `handoff` / `live agent` code in backend or frontend |
-| 9 | Language support (95+) | ⚠️ | no i18n; `SYSTEM_PROMPT` (`rag.py:168`) has no language rule; English-only UI |
+| 8 | Escalate to a human | ✅ | notify-and-callback: `POST /api/handoff` + `/handoffs` queue + `handoff.requested` event |
+| 9 | Language support (95+) | ✅ | `SYSTEM_PROMPT` answers in the question's language; widget ships English + Vietnamese labels with `widget_ui_strings` overrides for any other language |
 | 10 | Lead generation | ✅ | `showContactForm` → `POST /api/contacts` → `contacts` table → `/contacts` page |
-| 11 | Weekly email digest | ❌ | `services/mail.py::send_email` only used by `forgot_password`; only 6 `DashboardStats` counters |
-| 12 | API | ⚠️ | FastAPI auto OpenAPI + JWT REST; no API keys, versioning, webhooks or docs |
-| 13 | Integrations | ❌ | no Crisp / Slack / Zendesk / webhook code |
+| 11 | Weekly email digest | ✅ | `services/digest.py` + `/api/digest/preview`/`send-now` + `/analytics`, at-most-once through a claim row in `digest_log` |
+| 12 | API | ✅ | scoped `X-API-Key` keys (`/api/api-keys`) + versioned `/api/v1` + `docs/api-v1.md`, published in `/docs` with the `ApiKeyAuth` scheme |
+| 13 | Integrations | ✅ | webhook (HMAC-signed), Slack, Zendesk and Crisp in `services/integrations.py`, configured at `/integrations` |
 | 14 | SOC 2 Type II | ➖ | certification |
-| 15 | GDPR compliant | ➖ | certification / legal; no export/deletion/consent flows |
+| 15 | GDPR compliant | ⚠️ | technical half only: export, erasure and recorded consent (F9). Certification and legal documents remain out of scope — `docs/security.md` says so explicitly |
 | 16 | HIPAA compliant | ➖ | certification / BAA |
-| 17 | Data encryption | ⚠️ | argon2 + JWT + CORS + rate limits; no at-rest encryption, TLS is deployment-level |
+| 17 | Data encryption | ✅ | argon2, hashed API keys and reset tokens, signed webhooks, secret masking; TLS 1.2+ and at-rest encryption are documented deployment controls (`docs/security.md`) |
 | 18 | Role-based access | ✅ | `get_admin_user` / `get_manager_user` (`core/auth.py:80-99`) across ~39 endpoints |
 | 19 | Data processing agreement | ➖ | legal |
 
@@ -776,17 +776,18 @@ old rows).
 
 ## 13. Verification
 
-`tests/` is **not** empty: it holds 29 `unittest` modules (settings registry,
-RAG search, ingest, quotas, rate limits, widget config/asset/snippet, worker, …)
-plus 4 widget tests. `AGENTS.md` documents the unittest command; the widget tests
-run on `node:test` and there is no npm `test` script.
+`tests/` is **not** empty: it holds 31 `unittest` modules (settings registry,
+RAG search, ingest, quotas, rate limits, widget config/asset/snippet, worker,
+and the V2 services: digest, Q&A training, integrations, API keys) running 277
+tests, plus 5 widget `.mjs` files with 18 `node:test` checks. `AGENTS.md`
+documents both commands; there is no npm `test` script.
 
 ```bash
 source .venv/bin/activate
 uv run python -c "import site_gpt.app.main"
 uv run alembic upgrade head
-uv run python -m unittest discover -s tests -v     # 29 modules / 221 tests today
-node --test tests/*.mjs                            # 4 widget tests
+uv run python -m unittest discover -s tests -v     # 31 modules / 277 tests today
+node --test tests/*.mjs                            # 5 widget files / 18 checks
 uv run uvicorn site_gpt.app.main:app --reload      # :8000
 uv run python -m site_gpt.app.worker               # ingest + digest loops
 cd frontend && npm run build && npm run lint

@@ -593,9 +593,14 @@ Recorded so nobody "backports" these into V1 by accident.
 | SOC 2 / HIPAA / DPA / GDPR certification | **Not code** — out of scope for both versions |
 | Trial, pricing, onboarding | **Not code** — SaaS packaging, out of scope |
 
+**Status:** every code item in this table was promoted and delivered in V2
+(branch `feat/v2`, tag `v2`): F1–F10 in `plans/SPEC.md` §2, tasks V2-01…46 in
+`plans/PLAN_V2.md`. The two "Not code" rows stayed out of both versions:
+certifications/DPA and SaaS packaging (trial, pricing, onboarding).
+
 **V1 coverage vs the 19 SiteGPT features:** 6 full · 6 partial · 3 missing ·
 4 not-applicable. Detail in `.workbuddy-ai/memory/2026-11-14.md` and
-`plans/SPEC.md` §2.
+`plans/SPEC.md` §2 — which now carries the post-V2 status per feature.
 
 ---
 
