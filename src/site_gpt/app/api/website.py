@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -9,7 +10,13 @@ from site_gpt.app.core.config import SITEMAP_SYNC_MAX_URLS
 from site_gpt.app.db.session import get_db
 from site_gpt.app.models import Website
 from site_gpt.app.schemas.app import DashboardStats, PaginatedResponse
-from site_gpt.app.schemas.website import WebsiteCreate, WebsiteRes, WebsiteUpdate
+from site_gpt.app.api.setting import company_daily_message_limit
+from site_gpt.app.schemas.website import (
+    WebsiteCreate,
+    WebsiteQuotaRes,
+    WebsiteRes,
+    WebsiteUpdate,
+)
 from site_gpt.app.schemas.website_page import (
     WebsitePageCreate,
     WebsitePageRes,
@@ -17,6 +24,7 @@ from site_gpt.app.schemas.website_page import (
 )
 from site_gpt.app.services.crawler import extract_urls_from_sitemap
 from site_gpt.app.services.net_guard import UnsafeUrl
+from site_gpt.app.services.quota import usage as quota_usage
 
 router = APIRouter()
 
@@ -49,6 +57,45 @@ def get_websites(
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{website_id}/quota", response_model=WebsiteQuotaRes)
+async def get_website_quota(
+    website_id: UUID,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """Today's message count against this website's daily cap.
+
+    Lets an owner see the ceiling coming and raise `daily_message_limit` before
+    visitors start getting the friendly refusal.
+    """
+    website = (
+        db.query(Website)
+        .filter(Website.id == website_id, Website.company_id == user.company_id)
+        .first()
+    )
+    if not website:
+        raise HTTPException(status_code=404, detail="Website not found")
+
+    limit = company_daily_message_limit(db, website.company_id)
+    used = await quota_usage(website.id)
+    unlimited = limit <= 0
+    remaining = None if unlimited or used is None else max(0, limit - used)
+    # 80% of the cap (integer math: used/limit >= 4/5).
+    near_limit = (
+        not unlimited and used is not None and used * 5 >= limit * 4
+    )
+    return WebsiteQuotaRes(
+        website_id=website.id,
+        date=datetime.now(UTC).strftime("%Y-%m-%d"),
+        used=used,
+        limit=limit,
+        unlimited=unlimited,
+        remaining=remaining,
+        near_limit=near_limit,
+        available=used is not None,
+    )
 
 
 @router.get("/stats", response_model=DashboardStats)

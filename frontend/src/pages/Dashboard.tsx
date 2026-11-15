@@ -8,13 +8,23 @@ import {
   SyncOutlined,
   TeamOutlined,
 } from '@ant-design/icons';
-import { Layout as AntLayout, Button, Card, Col, Empty, List, Row, Statistic, Tag, Typography } from 'antd';
+import { Layout as AntLayout, Button, Card, Col, Empty, List, Progress, Row, Statistic, Tag, Typography } from 'antd';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { UserTable } from '@/components/UserTable';
 import { WebsiteTable } from '@/components/WebsiteTable';
-import { getDashboardStats, getRecentConversations } from '@/utils/api';
-import type { DashboardStats, RecentConversation } from '@/types/api';
+import {
+  getDashboardStats,
+  getRecentConversations,
+  getWebsites,
+  getWebsiteQuota,
+} from '@/utils/api';
+import type {
+  DashboardStats,
+  RecentConversation,
+  Website,
+  WebsiteQuota,
+} from '@/types/api';
 import { useEffect, useState } from 'react';
 
 const { Title, Text } = Typography;
@@ -112,6 +122,9 @@ export function Dashboard() {
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [loadingStats, setLoadingStats] = useState(true);
   const [recent, setRecent] = useState<RecentConversation[]>([]);
+  const [usage, setUsage] = useState<
+    Array<{ website: Website; quota: WebsiteQuota }>
+  >([]);
 
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -127,6 +140,24 @@ export function Dashboard() {
     getRecentConversations(5)
       .then((res) => setRecent(res.data.items || []))
       .catch((err) => console.error('Recent conversations error', err));
+  }, [isAuthenticated]);
+
+  // Today's message usage per website, so a cap can be raised before visitors
+  // start getting the friendly refusal.
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    getWebsites({ limit: 100 })
+      .then(async (res) => {
+        const sites = res.data.items || [];
+        const pairs = await Promise.all(
+          sites.map(async (website) => ({
+            website,
+            quota: (await getWebsiteQuota(website.id)).data,
+          })),
+        );
+        setUsage(pairs);
+      })
+      .catch((err) => console.error('Daily usage error', err));
   }, [isAuthenticated]);
 
   const today = new Date().toLocaleDateString('en-US', {
@@ -248,6 +279,91 @@ export function Dashboard() {
           />
         </div>
       </div>
+
+      {/* Daily message usage */}
+      {usage.length > 0 && (
+        <Row gutter={[24, 24]} style={{ marginBottom: 8 }}>
+          <Col span={24}>
+            <Card
+              title={
+                <span style={{ fontWeight: 600 }}>
+                  <MessageOutlined style={{ marginRight: 8, color: '#6b7280' }} />
+                  Messages today
+                </span>
+              }
+              extra={
+                <Text type='secondary' style={{ fontSize: 14 }}>
+                  Daily cap per website
+                </Text>
+              }
+              className='premium-card'
+            >
+              <List
+                dataSource={usage}
+                renderItem={({ website, quota }) => {
+                  const used = quota.used ?? 0;
+                  const percent = !quota.available || quota.unlimited
+                    ? 0
+                    : Math.min(100, Math.round((used * 100) / quota.limit));
+                  const status = !quota.available
+                    ? 'normal'
+                    : quota.used !== null && quota.used >= quota.limit
+                      ? 'exception'
+                      : quota.near_limit
+                        ? 'active'
+                        : 'normal';
+                  return (
+                    <List.Item style={{ padding: '10px 4px' }}>
+                      <div style={{ width: '100%' }}>
+                        <div
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            gap: 8,
+                            marginBottom: 4,
+                          }}
+                        >
+                          <Text strong ellipsis style={{ maxWidth: '55%' }}>
+                            {website.name}
+                          </Text>
+                          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                            <Text style={{ fontSize: 13 }}>
+                              {quota.unlimited
+                                ? `${used} used · no cap`
+                                : !quota.available
+                                  ? 'usage unavailable'
+                                  : `${used} / ${quota.limit} messages`}
+                            </Text>
+                            {quota.available && quota.near_limit && (
+                              <Tag color={status === 'exception' ? 'red' : 'orange'}>
+                                {status === 'exception' ? 'Cap reached' : 'Near cap'}
+                              </Tag>
+                            )}
+                          </div>
+                        </div>
+                        {!quota.unlimited &&
+                          (quota.available ? (
+                            <Progress
+                              percent={percent}
+                              status={status}
+                              size='small'
+                              showInfo={false}
+                            />
+                          ) : (
+                            <Text type='secondary' style={{ fontSize: 12 }}>
+                              Could not read today&apos;s count
+                            </Text>
+                          ))}
+                      </div>
+                    </List.Item>
+                  );
+                }}
+              />
+            </Card>
+          </Col>
+        </Row>
+      )}
 
       {/* Recent conversations */}
       <Row gutter={[24, 24]} style={{ marginBottom: 8 }}>

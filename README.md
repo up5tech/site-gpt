@@ -350,6 +350,12 @@ so `EMBEDDING_DIMENSIONS` must equal that model's native size.
   and history are now requested together with one `Promise.all` instead of being awaited one after
   another; history is fetched early but painted only after the contact gate, so a visitor who still
   has to fill in the form sees exactly what they saw before.
+- **The dashboard shows today's usage against the cap.** `GET /api/websites/{id}/quota`
+  (authenticated, company-scoped) returns `{used, limit, remaining, unlimited, near_limit, available, date}`
+  for the website: the Redis counter for the current UTC day, the company's `daily_message_limit`, and
+  `near_limit` once 80% is used. `available=false` with `used=null` means Redis could not be read — the
+  count is unknown, not zero. The dashboard renders these per website with a progress bar and a
+  "Near cap" / "Cap reached" tag, so the limit can be raised before visitors get the friendly refusal.
 - **The daily cap is tunable per company.** `daily_message_limit` now lives in the settings registry
   (`INTERNAL_SETTINGS`), is seeded from `DAILY_MESSAGE_LIMIT` for new companies, and is **not**
   published by `GET /api/widget-config`. `POST /api/chat` and `/api/chat/stream` read the company's

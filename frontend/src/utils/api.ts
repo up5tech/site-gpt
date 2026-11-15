@@ -1,5 +1,5 @@
 import axios, { AxiosInstance } from 'axios';
-import type { ChatResponse, ContactList, ConversationList, ConversationMessages, DashboardStats, FeedbackRequest, LoginResponse, RecentConversations, WidgetConfig } from '../types/api';
+import type { ChatResponse, ContactList, ConversationList, ConversationMessages, DashboardStats, FeedbackRequest, LoginResponse, RecentConversations, Website, WebsiteQuota, WidgetConfig } from '../types/api';
 
 // Base API instance with proxy /api -> backend
 const api: AxiosInstance = axios.create({
@@ -101,5 +101,15 @@ export const getCompanyUsers = (params: {
 
 export const getDashboardStats = () =>
   api.get<DashboardStats>('/websites/stats');
+
+export const getWebsites = (params: { page?: number; limit?: number } = {}) =>
+  api.get<{ total: number; page: number; limit: number; items: Website[] }>(
+    '/websites',
+    { params: { page: 1, limit: 100, ...params } },
+  );
+
+// Today's chat usage against the website's daily cap (owner-facing).
+export const getWebsiteQuota = (websiteId: string) =>
+  api.get<WebsiteQuota>(`/websites/${websiteId}/quota`);
 
 export type { LoginResponse } from '../types/api';

@@ -59,6 +59,17 @@ export interface ChatResponse {
   sources?: ChatSource[];
 }
 
+export interface WebsiteQuota {
+  website_id: string;
+  date: string;
+  used: number | null;
+  limit: number;
+  unlimited: boolean;
+  remaining: number | null;
+  near_limit: boolean;
+  available: boolean;
+}
+
 export interface DashboardStats {
   total_websites: number;
   indexed_websites: number;

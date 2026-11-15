@@ -60,6 +60,26 @@ def seconds_until_reset(now: datetime) -> int:
     return max(1, int((tomorrow - now).total_seconds()))
 
 
+async def usage(
+    website_id: UUID | str, *, now: datetime | None = None
+) -> int | None:
+    """Messages answered for this website today.
+
+    Returns None when Redis cannot be read: the owner's dashboard then shows the
+    count as unknown instead of a wrong zero.
+    """
+    moment = now or datetime.now(UTC)
+    try:
+        value = await redis_client.get(quota_key(website_id, moment))  # type: ignore[attr-defined]
+    except Exception as e:  # noqa: BLE001 - reporting must not break the request
+        print(f"[quota] could not read usage for website {website_id}: {e}")
+        return None
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return None
+
+
 async def consume_message(
     website_id: UUID | str,
     *,
