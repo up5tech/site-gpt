@@ -11,7 +11,7 @@ import json
 import unittest
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 from site_gpt.app import models
@@ -283,6 +283,116 @@ class QueueTests(unittest.TestCase):
         self.assertIsNotNone(first)
         self.assertIsNone(second)
         self.assertEqual(len(db.deliveries), 1)
+
+
+class _DueSession:
+    """The query chain `process_due_deliveries` builds, scripted per call.
+
+    `first()` returning None is exactly what `SKIP LOCKED` returns when another
+    worker holds the only due row.
+    """
+
+    def __init__(self, rows):
+        self.rows = list(rows)
+        self.skip_locked = None
+        self.commits = 0
+        self.rollbacks = 0
+
+    def query(self, model, *args):
+        return self
+
+    def filter(self, *args, **kwargs):
+        return self
+
+    def order_by(self, *args, **kwargs):
+        return self
+
+    def with_for_update(self, skip_locked=False):
+        self.skip_locked = skip_locked
+        return self
+
+    def first(self):
+        return self.rows.pop(0) if self.rows else None
+
+    def commit(self):
+        self.commits += 1
+
+    def rollback(self):
+        self.rollbacks += 1
+
+
+class DueDeliveryClaimTests(unittest.TestCase):
+    """Two workers must never send the same delivery twice."""
+
+    def _run(self, db, limit=50, attempt=None):
+        attempt = attempt or AsyncMock(return_value=True)
+        with patch.object(integrations, "attempt_delivery", attempt):
+            result = asyncio.run(integrations.process_due_deliveries(db, limit=limit))
+        return result, attempt
+
+    def test_the_due_query_claims_the_row_and_skips_locked_ones(self):
+        # Compiles the real query with the Postgres dialect: if the clause is ever
+        # dropped, two workers start sending the same row again.
+        from sqlalchemy import create_engine
+        from sqlalchemy.dialects import postgresql
+        from sqlalchemy.orm import sessionmaker
+
+        engine = create_engine("sqlite+pysqlite:///:memory:")
+        session = sessionmaker(bind=engine)()
+        try:
+            query = integrations.due_deliveries_query(session, datetime.now(UTC))
+            sql = str(query.statement.compile(dialect=postgresql.dialect()))
+        finally:
+            session.close()
+            engine.dispose()
+
+        self.assertIn("FOR UPDATE SKIP LOCKED", sql)
+        self.assertIn("integration_deliveries", sql)
+
+    def test_a_row_locked_by_another_worker_is_not_attempted(self):
+        db = _DueSession([])  # the only due row is locked elsewhere
+        result, attempt = self._run(db)
+
+        self.assertEqual(result, {"attempted": 0, "delivered": 0})
+        attempt.assert_not_called()
+        # The claim is asked for on every tick, not just when rows are returned.
+        self.assertTrue(db.skip_locked)
+
+    def test_claimed_rows_are_attempted_one_at_a_time(self):
+        integration = _integration()
+        first, second = _delivery(integration), _delivery(integration)
+        db = _DueSession([first, second])
+
+        result, attempt = self._run(db)
+
+        self.assertEqual(result, {"attempted": 2, "delivered": 2})
+        self.assertEqual([call.args[1] for call in attempt.await_args_list], [first, second])
+
+    def test_a_failed_attempt_does_not_stop_the_next_row(self):
+        integration = _integration()
+        first, second = _delivery(integration), _delivery(integration)
+        db = _DueSession([first, second])
+
+        result, attempt = self._run(db, attempt=AsyncMock(side_effect=[RuntimeError("boom"), True]))
+
+        self.assertEqual(result, {"attempted": 2, "delivered": 1})
+        self.assertEqual(db.rollbacks, 1)
+
+    def test_the_limit_bounds_the_batch(self):
+        integration = _integration()
+        db = _DueSession([_delivery(integration) for _ in range(5)])
+
+        result, _ = self._run(db, limit=2)
+
+        self.assertEqual(result["attempted"], 2)
+        self.assertEqual(len(db.rows), 3)
+
+    def test_a_zero_limit_scans_nothing(self):
+        db = _DueSession([_delivery(_integration())])
+        result, attempt = self._run(db, limit=0)
+
+        self.assertEqual(result["attempted"], 0)
+        attempt.assert_not_called()
 
 
 class ResendTests(unittest.TestCase):

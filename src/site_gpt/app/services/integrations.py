@@ -479,10 +479,16 @@ async def emit_event_async(
     return delivered
 
 
-async def process_due_deliveries(db: Session, limit: int = 50) -> dict[str, int]:
-    """Retry pending deliveries whose backoff has elapsed (worker entry point)."""
-    now = datetime.now(UTC)
-    due = (
+def due_deliveries_query(db: Session, now: datetime):
+    """The due-row select, with the row claimed for the caller.
+
+    `FOR UPDATE SKIP LOCKED` is what makes two workers safe: a row another worker
+    is already sending is skipped instead of being sent twice. It must stay on
+    this query — a plain select leaves the same row visible to both workers.
+    SQLite ignores the clause (and has no `SKIP LOCKED`), which is why the
+    concurrency behaviour is verified against Postgres.
+    """
+    return (
         db.query(models.IntegrationDelivery)
         .filter(
             models.IntegrationDelivery.status == "pending",
@@ -492,18 +498,35 @@ async def process_due_deliveries(db: Session, limit: int = 50) -> dict[str, int]
             ),
         )
         .order_by(models.IntegrationDelivery.next_attempt_at.asc())
-        .limit(limit)
-        .all()
+        .with_for_update(skip_locked=True)
     )
+
+
+async def process_due_deliveries(db: Session, limit: int = 50) -> dict[str, int]:
+    """Retry pending deliveries whose backoff has elapsed (worker entry point).
+
+    One row per transaction, not a batch: `attempt_delivery` commits, which
+    releases every lock the transaction held. Selecting a batch up front would
+    therefore leave rows 2..N claimable while row 1 is still being sent. Claiming
+    the next row *after* that commit, in the same session, keeps each delivery
+    under one lock from selection to outcome.
+    """
+    attempted = 0
     delivered = 0
-    for delivery in due:
+    for _ in range(max(limit, 0)):
+        # A fresh `now` per row: a row whose backoff elapsed during the batch is
+        # not starved until the next tick.
+        delivery = due_deliveries_query(db, datetime.now(UTC)).first()
+        if delivery is None:
+            break
+        attempted += 1
         try:
             if await attempt_delivery(db, delivery):
                 delivered += 1
         except Exception:
             logger.exception("integration delivery %s could not be attempted", delivery.id)
             db.rollback()
-    return {"attempted": len(due), "delivered": delivered}
+    return {"attempted": attempted, "delivered": delivered}
 
 
 async def resend_delivery(db: Session, delivery: models.IntegrationDelivery) -> bool:
