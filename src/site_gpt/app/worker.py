@@ -3,13 +3,20 @@ import json
 import os
 import traceback
 from datetime import datetime, timedelta, UTC
+from uuid import UUID
 
 from site_gpt.app.services.crawler import crawl_website
 from site_gpt.app.services.ingest import ingest_document, ingest_extra_document
 from site_gpt.app.services.ingest_claim import STUCK_INGEST_AFTER
 from site_gpt.app.services.parse import extract_text_from_file
 from site_gpt.app.services.redis import redis_client, enqueue_job
-from site_gpt.app.core.config import CRAWL_REFRESH_HOURS
+from site_gpt.app.core.config import (
+    CRAWL_REFRESH_HOURS,
+    DIGEST_CHECK_SECONDS,
+    DIGEST_ENABLED,
+    DIGEST_HOUR,
+)
+from site_gpt.app.services import company_settings, digest
 from site_gpt.app.db.session import SessionLocal
 from site_gpt.app import models
 
@@ -105,6 +112,10 @@ async def worker():
         print(f"[worker] stuck-ingest recovery failed: {e}")
     # Periodic re-crawl scheduler (keeps knowledge fresh).
     asyncio.create_task(scheduler_loop())
+    # Weekly digest scheduler. Off unless DIGEST_ENABLED is set, so a deployment
+    # that never opted in runs exactly the V1 loops.
+    if DIGEST_ENABLED:
+        asyncio.create_task(digest_loop())
     while True:
         try:
             _, job = await redis_client.brpop("queue:jobs")  # type: ignore
@@ -121,6 +132,12 @@ async def worker():
                 await handle_ingest(data)
             except Exception as e:
                 print(f"[worker] ingest failed: {e}")
+                traceback.print_exc()
+        elif data.get("type") == "digest":
+            try:
+                await handle_digest(data)
+            except Exception as e:
+                print(f"[worker] digest failed: {e}")
                 traceback.print_exc()
 
 
@@ -262,6 +279,100 @@ async def handle_ingest(data):
         raise
     finally:
         db.close()
+
+
+async def handle_digest(data):
+    """Send one digest period. The claim inside `send_period` makes repeats safe.
+
+    Claiming happens before the email goes out, so a duplicate job, a retry, a
+    worker restart or two workers on the same period all end with at most one
+    email; only the winner stamps `sent_at`.
+    """
+    company_id = data.get("company_id")
+    period_start_raw = data.get("period_start")
+    period_end_raw = data.get("period_end")
+    if not company_id or not period_start_raw or not period_end_raw:
+        print(f"[digest] incomplete job: {data}")
+        return
+
+    db = SessionLocal()
+    try:
+        period_start = datetime.fromisoformat(str(period_start_raw))
+        period_end = datetime.fromisoformat(str(period_end_raw))
+        stale_before = datetime.now(UTC) - timedelta(seconds=DIGEST_CHECK_SECONDS)
+        result = await digest.send_period(
+            db, UUID(str(company_id)), period_start, period_end, stale_before
+        )
+        print(f"[digest] company {company_id}: {result}")
+    finally:
+        db.close()
+
+
+async def enqueue_due_digests(now: datetime | None = None) -> list[str]:
+    """Enqueue a digest job for every company whose send hour has come.
+
+    Only enqueues: the job itself claims the period, so two workers finding the
+    same company still send one email. A period that was already sent, or is
+    claimed by a live worker, is skipped; a claim from a dead worker is retried.
+    """
+    now = now or datetime.now(UTC)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=UTC)
+    stale_before = now - timedelta(seconds=DIGEST_CHECK_SECONDS)
+
+    db = SessionLocal()
+    queued: list[str] = []
+    try:
+        for company in db.query(models.Company).all():
+            settings = company_settings.values(
+                db, company.id, ("digest_enabled", "digest_hour", "digest_day")
+            )
+            enabled = (
+                (settings.get("digest_enabled") or "").strip().lower()
+                in company_settings.TRUE_VALUES
+            )
+            if not enabled:
+                continue
+
+            try:
+                hour = int(str(settings.get("digest_hour") or DIGEST_HOUR).strip())
+            except (TypeError, ValueError):
+                hour = DIGEST_HOUR
+            if now.hour != hour:
+                continue
+
+            period_start, period_end = digest.normalize_period(
+                now, settings.get("digest_day") or "monday"
+            )
+            if digest.period_settled(
+                db, company.id, period_start, stale_before
+            ):
+                continue
+
+            await enqueue_job(
+                {
+                    "type": "digest",
+                    "company_id": str(company.id),
+                    "period_start": period_start.isoformat(),
+                    "period_end": period_end.isoformat(),
+                }
+            )
+            queued.append(str(company.id))
+            print(f"[digest] queued company {company.id} for {period_start}")
+    finally:
+        db.close()
+    return queued
+
+
+async def digest_loop():
+    """Wake every DIGEST_CHECK_SECONDS and enqueue the companies that are due."""
+    while True:
+        await asyncio.sleep(DIGEST_CHECK_SECONDS)
+        try:
+            await enqueue_due_digests()
+        except Exception as e:
+            print(f"[digest] loop error: {e}")
+            traceback.print_exc()
 
 
 async def scheduler_loop():

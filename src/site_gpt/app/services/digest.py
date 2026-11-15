@@ -255,6 +255,32 @@ def recipients_for(db: Session, company_id: UUID) -> list[str]:
     ) or company_settings.team_emails(db, company_id)
 
 
+def period_settled(
+    db: Session, company_id: UUID, period_start: datetime, stale_before: datetime
+) -> bool:
+    """True when this period was sent, or is claimed by a live worker.
+
+    The scheduler asks before enqueueing: a settled period needs no job, while a
+    claim from a dead worker (no heartbeat since `stale_before`) does.
+    """
+    existing = (
+        db.query(models.DigestLog)
+        .filter(
+            models.DigestLog.company_id == company_id,
+            models.DigestLog.period_start == period_start,
+        )
+        .first()
+    )
+    if existing is None:
+        return False
+    if existing.sent_at is not None:
+        return True
+    heartbeat = existing.updated_at or existing.created_at
+    if heartbeat is not None and heartbeat.tzinfo is None:
+        heartbeat = heartbeat.replace(tzinfo=UTC)
+    return heartbeat is not None and heartbeat >= stale_before
+
+
 def claim_period(
     db: Session,
     company_id: UUID,
