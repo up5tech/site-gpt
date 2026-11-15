@@ -39,6 +39,8 @@ const APPEARANCE_KEYS = [
   'greeting_message',
   'placeholder_text',
   'suggested_questions',
+  'widget_language',
+  'widget_ui_strings',
 ] as const;
 
 const DEFAULT_APPEARANCE = {
@@ -49,6 +51,35 @@ const DEFAULT_APPEARANCE = {
   greeting_message: 'Hi 👋 How can I help you?',
   placeholder_text: 'Type a message...',
   suggested_questions: '',
+  widget_language: 'auto',
+  widget_ui_strings: '',
+};
+
+// Languages the widget ships labels for. Anything else follows the English
+// fallback until the owner supplies `widget_ui_strings` overrides.
+const WIDGET_LANGUAGES = [
+  { label: 'Auto (visitor browser)', value: 'auto' },
+  { label: 'English (en)', value: 'en' },
+  { label: 'Tiếng Việt (vi)', value: 'vi' },
+];
+
+// `widget_ui_strings` is a JSON object of label overrides. The widget ignores
+// malformed JSON, but saving it silently would hide the mistake, so the form
+// rejects it up front.
+const validateUiStrings = (_rule: unknown, value: unknown) => {
+  const raw = typeof value === 'string' ? value.trim() : '';
+  if (!raw) return Promise.resolve();
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('not an object');
+    }
+    return Promise.resolve();
+  } catch {
+    return Promise.reject(
+      new Error('Use a JSON object, e.g. {"startChat": "Bắt đầu"}'),
+    );
+  }
 };
 
 type ColorLike = {
@@ -101,6 +132,14 @@ function buildPreview(values: Record<string, unknown>) {
       values.suggested_questions,
       DEFAULT_APPEARANCE.suggested_questions,
     ),
+    language: asText(
+      values.widget_language,
+      DEFAULT_APPEARANCE.widget_language,
+    ),
+    uiStrings: asText(
+      values.widget_ui_strings,
+      DEFAULT_APPEARANCE.widget_ui_strings,
+    ),
   };
 }
 
@@ -113,6 +152,8 @@ interface AppearanceFormValues {
   greeting_message?: string;
   placeholder_text?: string;
   suggested_questions?: string;
+  widget_language?: string;
+  widget_ui_strings?: string;
 }
 
 interface ProfileFormValues {
@@ -187,6 +228,8 @@ export function Settings() {
           map.greeting_message || 'Hi 👋 How can I help you?',
         placeholder_text: map.placeholder_text || 'Type a message...',
         suggested_questions: map.suggested_questions || '',
+        widget_language: map.widget_language || 'auto',
+        widget_ui_strings: map.widget_ui_strings || '',
       };
       appearanceForm.setFieldsValue(values);
       setPreview(buildPreview(values));
@@ -508,6 +551,26 @@ export function Settings() {
                   <Input.TextArea
                     rows={3}
                     placeholder={'What are your opening hours?\nHow do I get a refund?'}
+                  />
+                </Form.Item>
+                <Form.Item
+                  name='widget_language'
+                  label='Widget Language'
+                  tooltip='Auto follows the visitor browser language. Built-in labels ship for English and Vietnamese; other languages keep the English labels until you add UI string overrides below.'
+                >
+                  <Select options={WIDGET_LANGUAGES} />
+                </Form.Item>
+                <Form.Item
+                  name='widget_ui_strings'
+                  label='UI String Overrides (JSON)'
+                  tooltip='Optional. Keys the widget understands: clear, send, thinking, sources, helpful, notHelpful, thanksFeedback, contactIntro, firstName, lastName, email, contactInvalid, startChat, contactSaveFailed, noResponse, missingWebsiteId, error, greeting, placeholder.'
+                  rules={[{ validator: validateUiStrings }]}
+                >
+                  <Input.TextArea
+                    rows={4}
+                    placeholder={
+                      '{"startChat": "Bắt đầu", "sources": "Nguồn:"}'
+                    }
                   />
                 </Form.Item>
                 <Form.Item>
