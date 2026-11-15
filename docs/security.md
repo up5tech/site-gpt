@@ -45,7 +45,7 @@ processes.
 | Spend ceiling | Daily message cap per website, counted in Redis, reset at UTC midnight | `api/routes.py` |
 | Uploads | Size capped while streaming (`MAX_UPLOAD_MB`, 413 without buffering the body) | `api/upload.py` |
 | Consent | When `require_consent` is on, `POST /api/contacts` refuses without `consent: true` and stamps `contacts.consent_at` | `api/routes.py` |
-| Session reads (K4) | The widget mints a per-session token and sends it as `X-Session-Token` to read its history or contact. Only `sha256(token)` is stored; it expires after `SESSION_TOKEN_TTL_SECONDS` and can be rotated only by a caller that already holds it | `services/session_tokens.py`, `POST /api/session-token` |
+| Session reads (K4) | The widget mints a per-session token and sends it as `X-Session-Token` to read its history or contact. Only `sha256(token)` is stored; a token value expires after `SESSION_TOKEN_TTL_SECONDS`, the whole chain dies after `SESSION_TOKEN_MAX_LIFETIME_SECONDS`, and rotation requires holding the current value | `services/session_tokens.py`, `POST /api/session-token` |
 | Export / erasure | Admin-only JSON export per website and hard deletes for a conversation or a contact, both company-scoped | `api/privacy.py` |
 | Retention | `retention_days` per company: the worker's daily job hard-deletes `chat_messages`, `chat_feedback`, `handoff_requests`, `contacts` and `digest_log` rows older than the policy, scoped to that company's websites. `POST /api/privacy/retention` previews it (`dry_run`) or runs it on demand | `services/retention.py`, `api/privacy.py`, `worker.py` |
 | Logs | No raw API key, integration token or password is written to a log line; webhook bodies are not logged | `services/*` |
@@ -127,9 +127,29 @@ How the widget authenticates a session:
 4. A session that already has data but no token row cannot be minted for at all —
    otherwise knowing an id would be enough to obtain the credential.
 
-`SESSION_TOKEN_TTL_SECONDS` (default 30 days) bounds how long a stolen token
-stays useful. `SESSION_TOKEN_MODE` (`compat` | `enforce`) controls whether a
-tokenless read of an *unclaimed* session is allowed; see §5 for the trade-off.
+Two clocks bound a token, and neither one alone is enough:
+
+| Knob | Default | What it bounds |
+| --- | --- | --- |
+| `SESSION_TOKEN_TTL_SECONDS` | 30 days | how long one token **value** is accepted for a read |
+| `SESSION_TOKEN_MAX_LIFETIME_SECONDS` | 180 days | the **whole chain** — `created_at` to the last possible rotation |
+
+The TTL alone would bound nothing, because rotation renews it: whoever held a
+stolen token could rotate every 29 days for ever and keep reading. The absolute
+lifetime closes that: it is counted from the row's `created_at`, which rotation
+never moves, so a chain cannot be extended past it. After it, `verify()` rejects
+the token and `mint()` refuses to rotate it (`403` *"reached its maximum
+lifetime"*, not the "already has a token" message, which would invite a pointless
+retry), and the visitor's widget carries on **without history** — the messages
+stay under the old session id for admins until retention deletes them, and a
+returning visitor needs a new session to get history again.
+
+So, stated plainly: a stolen token is useful until its TTL expires, and can be
+renewed only inside the session's absolute lifetime; after that it is dead. There
+is still no server-side revocation UI (see §5).
+
+`SESSION_TOKEN_MODE` (`compat` | `enforce`) controls whether a tokenless read of
+an *unclaimed* session is allowed; see §5 for the trade-off.
 
 ## 4. Data inventory
 
@@ -180,8 +200,12 @@ These are known, documented and deliberately deferred. They are not oversights.
   - The token lives in the visitor's `localStorage`, so script injected into the
     *customer's* site could read it — the same exposure as any bearer credential
     in a browser. Only an XSS-free embed can prevent that.
-  - A token that is stolen is usable until it expires or the visitor's widget
-    rotates it; there is no server-side revocation UI yet.
+  - A stolen token is usable until its TTL expires and can be renewed only
+    inside `SESSION_TOKEN_MAX_LIFETIME_SECONDS` (default 180 days) of the session's
+    creation, so the exposure is bounded but not short: an attacker who keeps
+    rotating reads for up to that lifetime. There is no server-side revocation UI
+    yet, which is the real gap — deleting the `session_tokens` row is the only
+    immediate way to cut a token off.
 
   **Flip to `enforce`** once the embed snippet with token support is live on the
   customer sites you care about: set `SESSION_TOKEN_MODE=enforce` and reload.

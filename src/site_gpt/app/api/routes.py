@@ -423,13 +423,8 @@ def mint_session_token(
 
     row = session_token_queries.row_for(db, website.id, session_id)
     if row is not None:
-        if row.revoked_at is not None or not session_token_queries.matches(
-            row, x_session_token
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=session_token_queries.ALREADY_CLAIMED_DETAIL,
-            )
+        # `mint` owns the rotation rules (presented token, revocation, absolute
+        # lifetime) so the route cannot drift from them: it raises the 403 itself.
         token, row = session_token_queries.mint(
             db, website.id, session_id, presented_token=x_session_token
         )

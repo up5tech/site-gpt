@@ -30,10 +30,20 @@ DEFAULT_WIDGET_LANGUAGE = os.getenv("DEFAULT_WIDGET_LANGUAGE", "auto")
 # docs/security.md.
 SESSION_TOKEN_MODE = os.getenv("SESSION_TOKEN_MODE", "compat").strip().lower()
 
-# How long a minted token stays valid, in seconds (default 30 days). A session
-# that presents an expired token may rotate it: possession of the old value is
-# still proof, and the alternative is losing a returning visitor's history.
+# How long one minted token value stays valid for a read, in seconds (default
+# 30 days). A session that presents an expired token may still rotate it:
+# possession of the old value is proof, and the alternative is losing a returning
+# visitor's history.
 SESSION_TOKEN_TTL_SECONDS = int(os.getenv("SESSION_TOKEN_TTL_SECONDS", "2592000"))
+
+# Absolute ceiling for one session's token, measured from the row's `created_at`
+# (which rotation never moves), in seconds (default 180 days). Without this the
+# TTL would bound nothing: whoever holds a token — including someone who stole
+# it — can keep rotating it for ever, and each rotation grants a fresh TTL. Past
+# this point reads and rotations both fail, so a stolen token has a hard end.
+SESSION_TOKEN_MAX_LIFETIME_SECONDS = int(
+    os.getenv("SESSION_TOKEN_MAX_LIFETIME_SECONDS", "15552000")
+)
 
 # HMAC-SHA256 secret used to sign outbound webhook payloads
 # (`X-SiteGPT-Signature: sha256=...`). Only the webhook integration needs it; an

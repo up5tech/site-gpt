@@ -249,6 +249,83 @@ class MintRaceTests(unittest.TestCase):
         self.assertGreater(row.expires_at, datetime.now(UTC))
 
 
+class ChainLifetimeTests(unittest.TestCase):
+    """The TTL bounds an idle token; `created_at` bounds the credential itself.
+
+    Rotation renews the TTL, so without the absolute ceiling a stolen token could
+    be kept alive for ever. These tests pin that ceiling, in both directions.
+    """
+
+    def setUp(self):
+        self.raw = session_tokens.generate_token()
+        self.row = _row(self.raw)
+
+    def _age(self, seconds):
+        self.row.created_at = datetime.now(UTC) - timedelta(seconds=seconds)
+
+    def test_a_fresh_chain_verifies(self):
+        self._age(60)
+        self.assertFalse(session_tokens.chain_expired(self.row))
+        self.assertTrue(session_tokens.verify(self.row, self.raw))
+
+    def test_reads_stop_at_the_absolute_ceiling_even_if_the_token_has_not_expired(self):
+        self._age(session_tokens.SESSION_TOKEN_MAX_LIFETIME_SECONDS + 1)
+        self.row.expires_at = datetime.now(UTC) + timedelta(days=30)
+
+        self.assertTrue(session_tokens.chain_expired(self.row))
+        self.assertFalse(session_tokens.verify(self.row, self.raw))
+
+    def test_rotation_inside_the_ceiling_still_renews_an_expired_token(self):
+        self._age(session_tokens.SESSION_TOKEN_MAX_LIFETIME_SECONDS - 3600)
+        self.row.expires_at = datetime.now(UTC) - timedelta(days=1)
+        db = _db(self.row)
+
+        raw, returned = session_tokens.mint(
+            db, self.row.website_id, self.row.session_id, presented_token=self.raw
+        )
+
+        self.assertIs(returned, self.row)
+        self.assertEqual(self.row.token_hash, session_tokens.hash_token(raw))
+        self.assertGreater(self.row.expires_at, datetime.now(UTC))
+
+    def test_rotation_past_the_ceiling_is_refused(self):
+        self._age(session_tokens.SESSION_TOKEN_MAX_LIFETIME_SECONDS + 60)
+        self.row.expires_at = datetime.now(UTC) - timedelta(days=1)
+        db = _db(self.row)
+
+        with self.assertRaises(HTTPException) as caught:
+            session_tokens.mint(
+                db, self.row.website_id, self.row.session_id, presented_token=self.raw
+            )
+
+        self.assertEqual(caught.exception.status_code, 403)
+        # Not the "send it to rotate" message: rotation is the thing refused.
+        self.assertEqual(caught.exception.detail, session_tokens.SESSION_EXPIRED_DETAIL)
+        self.assertNotEqual(
+            caught.exception.detail, session_tokens.ALREADY_CLAIMED_DETAIL
+        )
+        db.commit.assert_not_called()
+
+    def test_naive_timestamps_are_read_as_utc(self):
+        self.row.created_at = (
+            datetime.now(UTC) - timedelta(seconds=session_tokens.SESSION_TOKEN_MAX_LIFETIME_SECONDS + 5)
+        ).replace(tzinfo=None)
+        self.assertTrue(session_tokens.chain_expired(self.row))
+
+    def test_missing_row_or_timestamp_is_not_expired(self):
+        self.assertFalse(session_tokens.chain_expired(None))
+        self.assertFalse(session_tokens.chain_expired(_row(self.raw)))
+
+    def test_the_ceiling_is_longer_than_one_ttl(self):
+        # Otherwise rotation would be pointless: the chain would die before the
+        # token it was meant to renew could ever be used again.
+        from site_gpt.app.core.config import SESSION_TOKEN_TTL_SECONDS
+
+        self.assertGreater(
+            session_tokens.SESSION_TOKEN_MAX_LIFETIME_SECONDS, SESSION_TOKEN_TTL_SECONDS
+        )
+
+
 class SessionHasDataTests(unittest.TestCase):
     def test_message_presence_counts_as_data(self):
         db = _db(None)

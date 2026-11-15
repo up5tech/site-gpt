@@ -24,6 +24,14 @@ Two rules keep this from becoming theatre:
 Tokens expire (`SESSION_TOKEN_TTL_SECONDS`, default 30 days). Expiry is not a
 lockout: `matches()` deliberately ignores it so the holder of an old token can
 rotate it, and the widget re-mints on a 403.
+
+That renewal is what makes a TTL alone meaningless — a stolen token could be
+rotated every 29 days for ever — so a session's token chain has an **absolute
+ceiling**: `SESSION_TOKEN_MAX_LIFETIME_SECONDS` (default 180 days) counted from
+the row's `created_at`, which rotation never touches. Inside it, rotation of an
+expired token is allowed; past it, reads fail (`verify`) and rotation is refused
+(`mint`), and the visitor has to start a new session. The TTL therefore bounds an
+idle token, and the ceiling bounds the credential as a whole.
 """
 
 import hashlib
@@ -37,7 +45,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from site_gpt.app import models
-from site_gpt.app.core.config import SESSION_TOKEN_MODE, SESSION_TOKEN_TTL_SECONDS
+from site_gpt.app.core.config import (
+    SESSION_TOKEN_MAX_LIFETIME_SECONDS,
+    SESSION_TOKEN_MODE,
+    SESSION_TOKEN_TTL_SECONDS,
+)
 
 # Raw tokens look like `sst_<43 url-safe chars>`; the prefix makes one
 # identifiable in a log without revealing anything.
@@ -48,6 +60,13 @@ TOKEN_PREFIX = "sst_"
 # caller must not be able to tell the two apart.
 ALREADY_CLAIMED_DETAIL = (
     "This session already has a token; send it as X-Session-Token to rotate it"
+)
+
+# Distinct from the message above on purpose: telling a caller to "send the
+# token to rotate it" when rotation is exactly what is refused would be a lie.
+SESSION_EXPIRED_DETAIL = (
+    "This session's token has reached its maximum lifetime and cannot be renewed; "
+    "start a new session"
 )
 
 
@@ -89,20 +108,45 @@ def matches(row: models.SessionToken | None, raw_token: str | None) -> bool:
     return hmac.compare_digest(row.token_hash, hash_token(raw_token))
 
 
+def _as_utc(value: datetime | None) -> datetime | None:
+    if value is not None and value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value
+
+
+def chain_expired(
+    row: models.SessionToken | None, now: datetime | None = None
+) -> bool:
+    """Whether this session's token chain has passed its absolute lifetime.
+
+    Measured from `created_at`, which rotation never moves, so renewing the token
+    cannot extend it. A row without a timestamp (only mocks have that) is treated
+    as fresh rather than dead.
+    """
+    if row is None:
+        return False
+    started = _as_utc(row.created_at)
+    if started is None:
+        return False
+    now = _as_utc(now) or datetime.now(UTC)
+    return now >= started + timedelta(seconds=SESSION_TOKEN_MAX_LIFETIME_SECONDS)
+
+
 def verify(
     row: models.SessionToken | None,
     raw_token: str | None,
     now: datetime | None = None,
 ) -> bool:
-    """Whether `raw_token` is valid right now: matching, unrevoked, unexpired."""
+    """Whether `raw_token` is valid right now: matching, unrevoked, unexpired,
+    and inside the session's absolute lifetime."""
     if not matches(row, raw_token):
         return False
     if row.revoked_at is not None:
         return False
-    now = now or datetime.now(UTC)
-    expires_at = row.expires_at
-    if expires_at is not None and expires_at.tzinfo is None:
-        expires_at = expires_at.replace(tzinfo=UTC)
+    if chain_expired(row, now):
+        return False
+    now = _as_utc(now) or datetime.now(UTC)
+    expires_at = _as_utc(row.expires_at)
     return expires_at is None or expires_at > now
 
 
@@ -132,6 +176,10 @@ def mint(
         # someone who merely knows the id, so the rule is enforced here too.
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail=ALREADY_CLAIMED_DETAIL
+        )
+    if row is not None and chain_expired(row):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail=SESSION_EXPIRED_DETAIL
         )
     if row is not None:
         row.token_hash = hash_token(raw_token)
