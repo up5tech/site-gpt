@@ -120,6 +120,8 @@ npm install && npm run dev   # :5173
 | `DIGEST_HOUR` | `9` | default UTC send hour for a company without its own `digest_hour` setting |
 | `INTEGRATION_WEBHOOK_SECRET` | — | HMAC-SHA256 secret that signs outbound webhook payloads (`X-SiteGPT-Signature: sha256=...`) |
 | `DEFAULT_WIDGET_LANGUAGE` | `auto` | fallback widget UI language when the visitor's browser language cannot be detected (`auto` follows the browser) |
+| `SESSION_TOKEN_MODE` | `compat` | K4: whether reading a session needs its token. `compat` keeps a tokenless read of an *unclaimed* session working for older embeds; `enforce` requires the token everywhere. See [`docs/security.md`](docs/security.md) §5 |
+| `SESSION_TOKEN_TTL_SECONDS` | `2592000` | lifetime of a widget session token (30 days); an expired token can still be rotated by its holder |
 | `CORS_ORIGINS` | `*` | comma-separated allowed origins; `allow_credentials` is disabled while it is `*` |
 | `TRUSTED_PROXY_IPS` | *(empty)* | comma-separated IPs/CIDRs of reverse proxies / load balancers whose `X-Forwarded-For` is trusted; loopback and private peers are trusted automatically |
 | `FRONTEND_URL` | `http://localhost:5173` | public admin URL, used in password-reset links |
@@ -146,7 +148,9 @@ npm install && npm run dev   # :5173
 - `GET /api/widget-config?website_id=` — public widget appearance/config (assistant name, colors, greeting, placeholder, position, suggested questions)
 - `POST /api/v1/ingest?website_id=` — API-key ingest for scripts/CI (`X-API-Key`); admins mint and revoke keys at `/api/api-keys` (the raw key is returned once)
 - `GET /health`
-- `GET /api/conversations` (+`/{sid}`, `DELETE /{sid}`) — history, admin-scoped
+- `POST /api/session-token` — public; mints (or rotates) the widget's per-session read token
+- `GET /api/conversations` (+`/{sid}`, `DELETE /{sid}`) — history, admin-scoped; the `/{sid}` read
+  needs the widget's `X-Session-Token`
 - `/api/feedback` (`GET`, `POST /rebuild`, `PATCH /{id}`) — rating review and Q&A rebuild
 - `/api/handoff` (public POST) and `/api/handoffs` (`GET`, `PATCH /{id}`)
 - `/api/integrations` (`GET`, `POST`, `PATCH /{id}`, `DELETE /{id}`, `POST /{id}/test`)

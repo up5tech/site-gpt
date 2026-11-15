@@ -44,6 +44,7 @@ processes.
 | Spend ceiling | Daily message cap per website, counted in Redis, reset at UTC midnight | `api/routes.py` |
 | Uploads | Size capped while streaming (`MAX_UPLOAD_MB`, 413 without buffering the body) | `api/upload.py` |
 | Consent | When `require_consent` is on, `POST /api/contacts` refuses without `consent: true` and stamps `contacts.consent_at` | `api/routes.py` |
+| Session reads (K4) | The widget mints a per-session token and sends it as `X-Session-Token` to read its history or contact. Only `sha256(token)` is stored; it expires after `SESSION_TOKEN_TTL_SECONDS` and can be rotated only by a caller that already holds it | `services/session_tokens.py`, `POST /api/session-token` |
 | Export / erasure | Admin-only JSON export per website and hard deletes for a conversation or a contact, both company-scoped | `api/privacy.py` |
 | Logs | No raw API key, integration token or password is written to a log line; webhook bodies are not logged | `services/*` |
 
@@ -109,6 +110,25 @@ working directory at startup only.
   `DELETE /api/privacy/contacts/{session_id}`; then handle the backups as above.
 - Keep `SQL_ECHO=false` — verbose SQL logging can put row values in the logs.
 
+### 5.1 Session tokens (K4)
+
+How the widget authenticates a session:
+
+1. On first load it calls `POST /api/session-token` with its `website_id` and the
+   session id it generated. The server mints a random `sst_…` token, stores only
+   its SHA-256, and returns the raw value once.
+2. The widget keeps it in `localStorage` (`chat_widget_session_token`) and sends
+   `X-Session-Token` on `GET /api/conversations/{sid}` and `GET /api/contacts/{sid}`.
+3. An expired token still allows **rotation** with `X-Session-Token` on the mint
+   endpoint, so a returning visitor does not lose history; the token is not
+   renewed by ordinary reads.
+4. A session that already has data but no token row cannot be minted for at all —
+   otherwise knowing an id would be enough to obtain the credential.
+
+`SESSION_TOKEN_TTL_SECONDS` (default 30 days) bounds how long a stolen token
+stays useful. `SESSION_TOKEN_MODE` (`compat` | `enforce`) controls whether a
+tokenless read of an *unclaimed* session is allowed; see §5 for the trade-off.
+
 ## 4. Data inventory
 
 | Table | Contents | Personal data |
@@ -120,6 +140,7 @@ working directory at startup only.
 | `documents`, `extra_documents`, `embeddings` | Owner's knowledge base | Usually no; may quote the owner's pages |
 | `users` | Name, email, argon2 password hash, reset tokens | Yes |
 | `api_keys` | Prefix, peppered hash, scopes, timestamps | No raw secret |
+| `session_tokens` | Per-session token **hash**, expiry, last use | A credential once removed; not personal data |
 | `integrations` | Provider config **including credentials** | Credentials, not personal data |
 | `digest_log` | Which weekly period was sent to whom | Recipient personal data |
 | `uploads/` | Imported source files | Depends on the file |
@@ -132,14 +153,28 @@ scheduled job on top of the deletion endpoints above.
 
 These are known, documented and deliberately deferred. They are not oversights.
 
-- **K4 — public reads keyed by `session_id`.** `GET /api/conversations/{sid}` and
-  `GET /api/contacts/{sid}` are unauthenticated by design, because the widget
-  needs them. Anyone who knows a `website_id` (public, in the embed) *and* a
-  session id can read that session. Session ids are long random values generated
-  by the widget, but they are client-supplied, so this is a capability, not an
-  authentication. **Fix deferred**: signed session tokens would break every
-  existing embed and all stored sessions, so it is planned as a breaking change
-  rather than a silent one.
+- **K4 — session reads: mitigated, with a residual compatibility window.**
+  `GET /api/conversations/{sid}` and `GET /api/contacts/{sid}` still exist for the
+  widget, but they now check a per-session token (see §5.1). A leaked session id
+  alone no longer reads anything *once the session has a token*. What remains:
+  - `SESSION_TOKEN_MODE=compat` (the default) still allows a **tokenless** read of
+    a session that has no token row — that is what keeps embeds served from an
+    older snippet working. A session that has been claimed is protected even in
+    `compat`.
+  - Sessions created **before** this change have data and no token row, so they
+    can never be claimed (issuing a token for them would be an oracle). They stay
+    readable while `compat` is on and stop being readable to the widget when you
+    switch to `enforce`; admins keep full access.
+  - The token lives in the visitor's `localStorage`, so script injected into the
+    *customer's* site could read it — the same exposure as any bearer credential
+    in a browser. Only an XSS-free embed can prevent that.
+  - A token that is stolen is usable until it expires or the visitor's widget
+    rotates it; there is no server-side revocation UI yet.
+
+  **Flip to `enforce`** once the embed snippet with token support is live on the
+  customer sites you care about: set `SESSION_TOKEN_MODE=enforce` and reload.
+  Nothing else changes; legacy sessions lose widget history and are still
+  visible to admins.
 - **K5 — the rate limiter is per process.** The fixed window lives in memory, so
   N workers allow N times the configured rate, and a restart resets the counters.
   It stops accidents, not a determined attacker. Redis-based limiting is a V3
@@ -174,4 +209,6 @@ Copy this into the runbook for each environment:
 - [ ] Provider credentials stored in the platform's secret store.
 - [ ] `GET /api/widget-config` checked to return only widget keys.
 - [ ] An `/api/v1` key minted and revoked once, to confirm the flow works.
+- [ ] `SESSION_TOKEN_MODE` decided: `compat` only while an old embed must keep
+      working, `enforce` once the token-aware snippet is live.
 - [ ] Erasure rehearsed on a test session (export → delete → export is empty).
