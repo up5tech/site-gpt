@@ -22,7 +22,11 @@ import useApp from 'antd/es/app/useApp';
 import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { Website } from '../types/api';
-import api, { getSettings, updateSettings } from '../utils/api';
+import api, {
+  getApiErrorMessage,
+  getSettings,
+  updateSettings,
+} from '../utils/api';
 import { WidgetPreview } from '../components/WidgetPreview';
 import {
   WIDGET_VERSION_PLACEHOLDER,
@@ -56,6 +60,30 @@ const DEFAULT_APPEARANCE = {
   widget_ui_strings: '',
   widget_logo_url: '',
 };
+
+// UI mirror of `services/llm.py::ALLOWED_CHAT_MODELS`. The server resolves the
+// label itself and ignores any pair outside its catalogue, so this list only
+// decides what the admin can pick, never what the model may be.
+const MODEL_OPTIONS = [
+  {
+    label: 'Default (server configuration)',
+    value: 'default',
+    provider: '',
+    model: '',
+  },
+  {
+    label: 'Fast — GPT-4.1 mini (OpenAI)',
+    value: 'fast',
+    provider: 'openai',
+    model: 'gpt-4.1-mini',
+  },
+  {
+    label: 'Accurate — GPT-4.1 (OpenAI)',
+    value: 'accurate',
+    provider: 'openai',
+    model: 'gpt-4.1',
+  },
+] as const;
 
 // Languages the widget ships labels for. Anything else follows the English
 // fallback until the owner supplies `widget_ui_strings` overrides.
@@ -170,13 +198,19 @@ interface ProfileFormValues {
   phone?: string;
 }
 
+interface ModelFormValues {
+  model?: string;
+}
+
 export function Settings() {
   const { user, fetchUser } = useAuth();
   const { message } = useApp();
   const [profileForm] = Form.useForm();
   const [appearanceForm] = Form.useForm();
+  const [modelForm] = Form.useForm();
   const [loading, setLoading] = useState(false);
   const [appearanceLoading, setAppearanceLoading] = useState(false);
+  const [modelSaving, setModelSaving] = useState(false);
   const [websites, setWebsites] = useState<Website[]>([]);
   const [selectedWebsiteId, setSelectedWebsiteId] = useState<string>('');
   const [preview, setPreview] = useState(buildPreview(DEFAULT_APPEARANCE));
@@ -271,6 +305,45 @@ export function Settings() {
     }
   };
 
+  // The stored pair is what identifies the choice, so a company whose env pair
+  // happens to be in the catalogue still lands on its matching label.
+  const fetchModel = useCallback(async () => {
+    try {
+      const response = await getSettings();
+      const map: Record<string, string> = {};
+      (response.data || []).forEach((s) => {
+        map[s.key] = s.value;
+      });
+      const current = MODEL_OPTIONS.find(
+        (o) =>
+          o.provider === (map.llm_provider || '') &&
+          o.model === (map.llm_model || ''),
+      );
+      modelForm.setFieldsValue({ model: current ? current.value : 'default' });
+    } catch (error) {
+      console.error('Fetch model error', error);
+    }
+  }, [modelForm]);
+
+  const handleModelSubmit = async (values: ModelFormValues) => {
+    const option =
+      MODEL_OPTIONS.find((o) => o.value === values.model) || MODEL_OPTIONS[0];
+    setModelSaving(true);
+    try {
+      await updateSettings([
+        { key: 'llm_provider', value: option.provider },
+        { key: 'llm_model', value: option.model },
+      ]);
+      message.success('Chat model updated');
+    } catch (error) {
+      message.error(
+        getApiErrorMessage(error, 'Failed to update the chat model'),
+      );
+    } finally {
+      setModelSaving(false);
+    }
+  };
+
   const fetchWebsites = useCallback(async () => {
     try {
       const response = await api.get('/websites');
@@ -295,7 +368,8 @@ export function Settings() {
     }
     fetchWebsites();
     fetchAppearance();
-  }, [user, profileForm, fetchWebsites, fetchAppearance]);
+    fetchModel();
+  }, [user, profileForm, fetchWebsites, fetchAppearance, fetchModel]);
 
   // Ask the API for the current widget.js hash so the install snippet carries a
   // ?v= token that busts its cache as soon as a new widget is deployed.
@@ -398,6 +472,59 @@ export function Settings() {
               </Button>
             </Form.Item>
           </Form>
+        </Card>
+      ),
+    },
+    {
+      key: 'model',
+      label: (
+        <span>
+          <SettingOutlined />
+          Model
+        </span>
+      ),
+      children: (
+        <Card variant='borderless' className='premium-card'>
+          <Title level={4}>Chat Model</Title>
+          <Paragraph type='secondary'>
+            Which model answers chat messages. A change applies to the next
+            message — no restart and no re-index needed.
+          </Paragraph>
+          <Form
+            form={modelForm}
+            layout='vertical'
+            onFinish={handleModelSubmit}
+            style={{ maxWidth: 480, marginTop: 24 }}
+          >
+            <Form.Item
+              name='model'
+              label='Model'
+              tooltip='The server resolves the label to a provider and model. Anything outside its catalogue falls back to the server default.'
+            >
+              <Select
+                options={MODEL_OPTIONS.map(({ label, value }) => ({
+                  label,
+                  value,
+                }))}
+              />
+            </Form.Item>
+            <Form.Item>
+              <Button
+                type='primary'
+                htmlType='submit'
+                icon={<SaveOutlined />}
+                loading={modelSaving}
+              >
+                Save Model
+              </Button>
+            </Form.Item>
+          </Form>
+          <Alert
+            type='info'
+            showIcon
+            message='Provider API keys'
+            description='Fast and Accurate run on OpenAI, so OPENAI_API_KEY must be set on the server. Default keeps whatever LLM_AI / LLM_MODEL are configured for. Embeddings still come from EMBEDDING_AI and are not switched here.'
+          />
         </Card>
       ),
     },
