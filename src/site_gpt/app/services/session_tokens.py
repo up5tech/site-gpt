@@ -33,6 +33,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from fastapi import HTTPException, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from site_gpt.app import models
@@ -41,6 +42,13 @@ from site_gpt.app.core.config import SESSION_TOKEN_MODE, SESSION_TOKEN_TTL_SECON
 # Raw tokens look like `sst_<43 url-safe chars>`; the prefix makes one
 # identifiable in a log without revealing anything.
 TOKEN_PREFIX = "sst_"
+
+# One message for both ways of arriving at "this session is already claimed":
+# finding the row before inserting, and losing the race to another request. A
+# caller must not be able to tell the two apart.
+ALREADY_CLAIMED_DETAIL = (
+    "This session already has a token; send it as X-Session-Token to rotate it"
+)
 
 
 def generate_token() -> str:
@@ -103,24 +111,57 @@ def mint(
     website_id: UUID,
     session_id: str,
     ttl_seconds: int | None = None,
+    presented_token: str | None = None,
 ) -> tuple[str, models.SessionToken]:
-    """Create or rotate the token of one session. Returns `(raw_token, row)`."""
+    """Create or rotate the token of one session. Returns `(raw_token, row)`.
+
+    Concurrent first loads of the same brand-new session are a real pattern (two
+    tabs, a prefetch and a page load), and both can pass the "no row yet" check
+    before either inserts. The unique constraint on `(website_id, session_id)` is
+    what actually decides the winner; the loser gets the same 403 a caller would
+    get from finding the row, instead of a 500.
+    """
     ttl = SESSION_TOKEN_TTL_SECONDS if ttl_seconds is None else ttl_seconds
     raw_token = generate_token()
     row = row_for(db, website_id, session_id)
-    if row is None:
-        row = models.SessionToken(
-            website_id=website_id,
-            session_id=session_id,
-            token_hash=hash_token(raw_token),
-            expires_at=datetime.now(UTC) + timedelta(seconds=ttl),
+    if row is not None and (
+        row.revoked_at is not None or not matches(row, presented_token)
+    ):
+        # The route checked before calling, but a concurrent request may have
+        # claimed the session in between. Rotating then would hand a token to
+        # someone who merely knows the id, so the rule is enforced here too.
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail=ALREADY_CLAIMED_DETAIL
         )
-        db.add(row)
-    else:
+    if row is not None:
         row.token_hash = hash_token(raw_token)
         row.expires_at = datetime.now(UTC) + timedelta(seconds=ttl)
         row.last_seen_at = datetime.now(UTC)
-    db.commit()
+        db.commit()
+        db.refresh(row)
+        return raw_token, row
+
+    row = models.SessionToken(
+        website_id=website_id,
+        session_id=session_id,
+        token_hash=hash_token(raw_token),
+        expires_at=datetime.now(UTC) + timedelta(seconds=ttl),
+    )
+    db.add(row)
+    try:
+        db.commit()
+    except IntegrityError:
+        # Lost the race (or, far less likely, the website vanished mid-request).
+        # Only a now-existing token row means "another request claimed it";
+        # anything else is a genuine failure and is re-raised rather than
+        # disguised as a 403.
+        db.rollback()
+        if row_for(db, website_id, session_id) is not None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=ALREADY_CLAIMED_DETAIL,
+            )
+        raise
     db.refresh(row)
     return raw_token, row
 

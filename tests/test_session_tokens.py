@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 from fastapi import HTTPException
+from sqlalchemy.exc import IntegrityError
 
 from site_gpt.app import models
 from site_gpt.app.services import session_tokens
@@ -111,11 +112,15 @@ class MintTests(unittest.TestCase):
 
     def test_rotation_replaces_the_hash_and_extends_expiry(self):
         db = _db(None)
-        row = _row()
+        current = session_tokens.generate_token()
+        row = _row(current)
         row.expires_at = datetime.now(UTC) - timedelta(days=1)
         db.query.return_value.first.return_value = row
 
-        raw, returned = session_tokens.mint(db, row.website_id, row.session_id)
+        # Rotation is the holder's move: no token, no rotation.
+        raw, returned = session_tokens.mint(
+            db, row.website_id, row.session_id, presented_token=current
+        )
 
         self.assertIs(returned, row)
         self.assertEqual(row.token_hash, session_tokens.hash_token(raw))
@@ -126,6 +131,122 @@ class MintTests(unittest.TestCase):
         db = _db(None)
         _, row = session_tokens.mint(db, uuid4(), "sid", ttl_seconds=0)
         self.assertLessEqual(row.expires_at, datetime.now(UTC) + timedelta(seconds=1))
+
+
+class _RaceSession:
+    """A session whose INSERT loses the race: commit raises, then the winner
+    row is visible. `first()` returns None until the rollback, which is exactly
+    the window the bug lived in."""
+
+    def __init__(self, winner_row):
+        self.winner_row = winner_row
+        self.rolled_back = False
+        self.commits = 0
+        self.rollbacks = 0
+        self.added = []
+
+    def query(self, *args, **kwargs):
+        return self
+
+    def filter(self, *args, **kwargs):
+        return self
+
+    def first(self):
+        return self.winner_row if self.rolled_back else None
+
+    def add(self, row):
+        self.added.append(row)
+
+    def commit(self):
+        self.commits += 1
+        raise IntegrityError("INSERT INTO session_tokens", {}, Exception("duplicate key"))
+
+    def rollback(self):
+        self.rollbacks += 1
+        self.rolled_back = True
+
+    def refresh(self, row):  # pragma: no cover - never reached on this path
+        raise AssertionError("refresh must not run after a failed insert")
+
+
+class _OkSession:
+    """No race: the insert succeeds."""
+
+    def __init__(self):
+        self.added = []
+        self.commits = 0
+
+    def query(self, *args, **kwargs):
+        return self
+
+    def filter(self, *args, **kwargs):
+        return self
+
+    def first(self):
+        return None
+
+    def add(self, row):
+        self.added.append(row)
+
+    def commit(self):
+        self.commits += 1
+
+    def rollback(self):
+        raise AssertionError("rollback must not run on a clean insert")
+
+    def refresh(self, row):
+        return None
+
+
+class MintRaceTests(unittest.TestCase):
+    """Two first loads of the same new session must not 500 the loser."""
+
+    def test_lost_insert_race_answers_the_already_claimed_403(self):
+        winner = _row(session_tokens.generate_token())
+        winner.session_id = "sid-race"
+        db = _RaceSession(winner)
+
+        with self.assertRaises(HTTPException) as caught:
+            session_tokens.mint(db, winner.website_id, "sid-race")
+
+        self.assertEqual(caught.exception.status_code, 403)
+        # The same message the "row already existed" path returns, so the caller
+        # cannot tell the race from the ordinary case.
+        self.assertEqual(caught.exception.detail, session_tokens.ALREADY_CLAIMED_DETAIL)
+        self.assertEqual(db.rollbacks, 1)
+        self.assertEqual(db.commits, 1)
+
+    def test_an_integrity_error_that_is_not_a_race_is_not_disguised(self):
+        # A deleted website raises an FK violation too; answering 403 "already has
+        # a token" there would be a lie, so the original error propagates.
+        db = _RaceSession(winner_row=None)
+
+        with self.assertRaises(IntegrityError):
+            session_tokens.mint(db, uuid4(), "sid-race")
+        self.assertEqual(db.rollbacks, 1)
+
+    def test_a_row_that_appears_after_the_route_check_is_not_rotated(self):
+        # The route saw no row and called mint; another request claimed the
+        # session first. Without presenting the token this must not become a
+        # rotation, or winning the race would be a way to get the credential.
+        winner = _row(session_tokens.generate_token())
+        db = _db(None)
+        db.query.return_value.first.return_value = winner
+
+        with self.assertRaises(HTTPException) as caught:
+            session_tokens.mint(db, winner.website_id, winner.session_id)
+
+        self.assertEqual(caught.exception.status_code, 403)
+        self.assertEqual(caught.exception.detail, session_tokens.ALREADY_CLAIMED_DETAIL)
+
+    def test_a_clean_insert_still_mints(self):
+        db = _OkSession()
+        raw, row = session_tokens.mint(db, uuid4(), "sid-new", ttl_seconds=60)
+
+        self.assertEqual(len(db.added), 1)
+        self.assertEqual(db.commits, 1)
+        self.assertEqual(row.token_hash, session_tokens.hash_token(raw))
+        self.assertGreater(row.expires_at, datetime.now(UTC))
 
 
 class SessionHasDataTests(unittest.TestCase):

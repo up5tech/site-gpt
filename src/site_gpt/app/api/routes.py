@@ -428,10 +428,11 @@ def mint_session_token(
         ):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="This session already has a token; send it as X-Session-Token "
-                "to rotate it",
+                detail=session_token_queries.ALREADY_CLAIMED_DETAIL,
             )
-        token, row = session_token_queries.mint(db, website.id, session_id)
+        token, row = session_token_queries.mint(
+            db, website.id, session_id, presented_token=x_session_token
+        )
         return SessionTokenResponse(token=token, expires_at=row.expires_at)
 
     if session_token_queries.session_has_data(db, website.id, session_id):
@@ -440,7 +441,9 @@ def mint_session_token(
             detail="This session predates session tokens and cannot be claimed",
         )
 
-    token, row = session_token_queries.mint(db, website.id, session_id)
+    token, row = session_token_queries.mint(
+        db, website.id, session_id, presented_token=x_session_token
+    )
     return SessionTokenResponse(token=token, expires_at=row.expires_at)
 
 
