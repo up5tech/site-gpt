@@ -34,6 +34,9 @@ class Company(BaseModel):
     extra_documents = relationship(
         "ExtraDocument", cascade="all, delete-orphan", passive_deletes=True
     )
+    api_keys = relationship(
+        "ApiKey", cascade="all, delete-orphan", passive_deletes=True
+    )
 
 
 class User(BaseModel):
@@ -232,6 +235,33 @@ class ChatFeedback(BaseModel):
     session_id: Mapped[str] = mapped_column(String(255), nullable=False)
     rating: Mapped[str] = mapped_column(String(20), nullable=False)  # "up" | "down"
     comment: Mapped[str] = mapped_column(Text, nullable=True)
+
+
+class ApiKey(BaseModel):
+    """A company key for the versioned `/api/v1` API.
+
+    Only the SHA-256 hash (plus the pepper from the environment) is stored; the
+    raw key is returned once on creation and never persisted or logged.
+    """
+
+    __tablename__ = "api_keys"
+
+    __table_args__ = (
+        Index("idx_api_keys_company_id", "company_id"),
+        Index("idx_api_keys_key_prefix", "key_prefix"),
+        UniqueConstraint("key_hash"),
+    )
+
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    key_prefix: Mapped[str] = mapped_column(String(12), nullable=False)
+    key_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    # JSON array of granted scopes, e.g. '["read", "ingest:write"]'.
+    scopes: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    last_used_at: Mapped[datetime] = mapped_column(nullable=True)
+    revoked_at: Mapped[datetime] = mapped_column(nullable=True)
 
 
 class Contact(BaseModel):

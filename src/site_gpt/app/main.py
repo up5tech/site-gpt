@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from site_gpt.app.api.api_key import router as api_key_router
 from site_gpt.app.api.company import router as company_router
 from site_gpt.app.api.document import router as document_router
 from site_gpt.app.api.extra_document import router as extra_document_router
@@ -8,6 +9,7 @@ from site_gpt.app.api.routes import router
 from site_gpt.app.api.setting import router as setting_router
 from site_gpt.app.api.upload import router as upload_router
 from site_gpt.app.api.user import router as user_router
+from site_gpt.app.api.v1 import router as v1_router
 from site_gpt.app.api.website import router as website_router
 from site_gpt.app.core.config import CORS_ORIGINS
 
@@ -38,3 +40,5 @@ app.include_router(upload_router, prefix="/api/uploads")
 app.include_router(user_router, prefix="/api/users")
 app.include_router(website_router, prefix="/api/websites")
 app.include_router(extra_document_router, prefix="/api/extra_documents")
+app.include_router(api_key_router, prefix="/api/api-keys")
+app.include_router(v1_router, prefix="/api/v1")

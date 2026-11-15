@@ -10,6 +10,11 @@ JWT_SECRET_KEY = os.getenv(
 )
 JWT_ALGORITHM = "HS256"
 
+# Pepper mixed into the SHA-256 of company API keys before they are stored
+# (ADR-6). Required in production; changing it invalidates every issued key.
+# Left empty in development so local runs and the test suite need no setup.
+API_KEY_PEPPER = os.getenv("API_KEY_PEPPER", "")
+
 LLM_AI = os.getenv("LLM_AI", "openai")
 LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4o-mini")
 LLM_EMBEDDING_MODEL = os.getenv("LLM_EMBEDDING_MODEL", "text-embedding-3-small")

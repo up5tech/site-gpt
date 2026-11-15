@@ -114,6 +114,7 @@ npm install && npm run dev   # :5173
 | `REDIS_HOST` / `REDIS_PORT` / `REDIS_PASSWORD` / `REDIS_DB` | `localhost/6379` | job queue |
 | `MAIL_*` | — | forgot/reset password via fastapi-mail (`MAIL_SERVER`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD`, `MAIL_FROM`, `MAIL_FROM_NAME`, `MAIL_TLS`, `MAIL_SSL`) |
 | `JWT_SECRET_KEY` | dev default | **change in prod** |
+| `API_KEY_PEPPER` | — | pepper mixed into the SHA-256 of company API keys (`/api/api-keys`, `/api/v1`); required in production, changing it invalidates every issued key |
 | `CORS_ORIGINS` | `*` | comma-separated allowed origins; `allow_credentials` is disabled while it is `*` |
 | `TRUSTED_PROXY_IPS` | *(empty)* | comma-separated IPs/CIDRs of reverse proxies / load balancers whose `X-Forwarded-For` is trusted; loopback and private peers are trusted automatically |
 | `FRONTEND_URL` | `http://localhost:5173` | public admin URL, used in password-reset links |
@@ -138,6 +139,7 @@ npm install && npm run dev   # :5173
   snippet can bust the cache immediately after a deploy
 - `POST /api/chat/feedback` — public 👍/👎 rating `{website_id, session_id, rating, comment?}`
 - `GET /api/widget-config?website_id=` — public widget appearance/config (assistant name, colors, greeting, placeholder, position, suggested questions)
+- `POST /api/v1/ingest?website_id=` — API-key ingest for scripts/CI (`X-API-Key`); admins mint and revoke keys at `/api/api-keys` (the raw key is returned once)
 - `GET /health`
 - `/api/companies`, `/api/users` (+`/me`, `/forgot-password`, `/reset-password`), `/api/websites` (+`/{id}/pages`, `/{id}/load-site-map`), `/api/documents`, `/api/extra_documents`, `/api/settings`, `/api/uploads`
 

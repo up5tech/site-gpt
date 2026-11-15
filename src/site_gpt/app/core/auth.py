@@ -1,4 +1,4 @@
-from fastapi import HTTPException, status, Depends
+from fastapi import HTTPException, Header, status, Depends
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from datetime import datetime, timedelta, UTC
 from jose import jwt
@@ -8,6 +8,7 @@ from requests import Session
 import site_gpt.app.models as models
 from site_gpt.app.core.config import JWT_ALGORITHM, JWT_SECRET_KEY
 from site_gpt.app.db.session import get_db
+from site_gpt.app.services.api_keys import find_api_key, scopes_of
 
 
 pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
@@ -97,3 +98,40 @@ def get_admin_user(
             detail="Not enough permissions",
         )
     return user
+
+
+def get_api_key(
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+    db: Session = Depends(get_db),
+):
+    """Authenticate a company API key for the versioned `/api/v1` routes.
+
+    Returns the `ApiKey` row: its `company_id` scopes every query and its scopes
+    gate each route, so callers never pass a company id. JWT auth is untouched —
+    this is an *additional* path for server-to-server callers.
+    """
+    if not x_api_key or not x_api_key.strip():
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing API key",
+            headers={"WWW-Authenticate": "ApiKey"},
+        )
+    key = find_api_key(db, x_api_key.strip())
+    if key is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid API key",
+            headers={"WWW-Authenticate": "ApiKey"},
+        )
+    key.last_used_at = datetime.now(UTC)
+    db.commit()
+    return key
+
+
+def require_scope(key, scope: str) -> None:
+    """Raise 403 unless `key` was granted `scope`."""
+    if scope not in scopes_of(key):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"API key is missing the '{scope}' scope",
+        )
