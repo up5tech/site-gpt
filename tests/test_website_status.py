@@ -37,6 +37,10 @@ class FakeQuery:
     def all(self):
         return self._result if isinstance(self._result, list) else []
 
+    def update(self, *args, **kwargs):
+        # The ingest claim succeeded (one row matched).
+        return 1
+
 
 def make_website(status):
     """A real Website row (no session needed) so `status` behaves like the DB."""

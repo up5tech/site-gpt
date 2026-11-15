@@ -295,9 +295,11 @@ so `EMBEDDING_DIMENSIONS` must equal that model's native size.
   errors, and returns `{"status": "ok", "added": <new pages>, "total": <urls found>}`. The crawler's
   `extract_urls_from_sitemap` gained `raise_on_error=True` for this caller; the crawl path still skips
   a broken sitemap silently.
-- **One ingest per website at a time.** `POST /api/ingest` returns `409` while the website is
-  already `processing`, so a double click can no longer queue a second crawl that re-embeds the
-  same pages concurrently with the first. A finished or failed ingest can be retried normally, and
+- **One ingest per website at a time, claimed atomically.** `POST /api/ingest` claims the website with
+  `UPDATE websites SET ingest_status='processing', updated_at=now() WHERE id=… AND company_id=… AND
+  (ingest_status IS DISTINCT FROM 'processing' OR updated_at < now() - STUCK_INGEST_AFTER)`; only one
+  concurrent request can match that row, and the loser gets `409` with nothing queued, so a double
+  click can no longer queue a second crawl that re-embeds the same pages concurrently with the first. A finished or failed ingest can be retried normally, and
   a website left `processing` by a dead worker can be re-indexed manually once
   `websites.updated_at` is older than `STUCK_INGEST_AFTER` (6h, the same window
   `requeue_stuck_ingests` uses) — the take-over resets the timestamp so an immediate second click

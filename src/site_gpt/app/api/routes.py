@@ -7,7 +7,7 @@ from uuid import UUID as _UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import FileResponse, Response, StreamingResponse
-from sqlalchemy import text
+from sqlalchemy import or_, text
 from sqlalchemy.orm import Session
 
 from site_gpt.app import models
@@ -56,7 +56,7 @@ from site_gpt.app.services.quota import (
 from site_gpt.app.services.rag import ask, ask_stream
 from site_gpt.app.services.ratelimit import rate_limit
 from site_gpt.app.services.redis import enqueue_job, redis_client
-from site_gpt.app.worker import _is_stuck as _ingest_is_stuck
+from site_gpt.app.worker import STUCK_INGEST_AFTER
 
 router = APIRouter()
 
@@ -127,7 +127,7 @@ def _ensure_embed_allowed(
 
 @router.post("/api/ingest")
 async def ingest(
-    website_id: str,
+    website_id: _UUID,
     request: Request,
     db: Session = Depends(get_db),
     user: models.User = Depends(get_manager_user),
@@ -146,24 +146,42 @@ async def ingest(
             status_code=status.HTTP_404_NOT_FOUND, detail="Website not found"
         )
     _ensure_website_active(website)
-    # One ingest per website at a time: a double click used to enqueue a second
-    # crawl that re-embedded the same pages concurrently with the first. A
-    # `processing` row older than STUCK_INGEST_AFTER belongs to a worker that
+
+    # One ingest per website at a time, claimed atomically: two concurrent clicks
+    # both read a non-processing status, so the check has to live in the UPDATE
+    # itself. Exactly one UPDATE can match the row; the loser sees rowcount 0 and
+    # must not enqueue a second crawl.
+    #
+    # A `processing` row older than STUCK_INGEST_AFTER belongs to a worker that
     # died (the scheduler only re-crawls `completed` sites), so a manual retry
-    # must still be possible.
-    if (website.ingest_status or "") == "processing" and not _ingest_is_stuck(
-        website
-    ):
+    # stays possible; taking it over also refreshes the timestamp so the row does
+    # not look stale again on the next request.
+    stale_before = datetime.now(UTC) - STUCK_INGEST_AFTER
+    claimed = (
+        db.query(models.Website)
+        .filter(
+            models.Website.id == website.id,
+            models.Website.company_id == user.company_id,
+            or_(
+                models.Website.ingest_status.is_(None),
+                models.Website.ingest_status != "processing",
+                models.Website.updated_at.is_(None),
+                models.Website.updated_at < stale_before,
+            ),
+        )
+        .update(
+            {"ingest_status": "processing", "updated_at": datetime.now(UTC)},
+            synchronize_session=False,
+        )
+    )
+    db.commit()
+    if not claimed:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="An ingest is already running for this website.",
         )
-    website.ingest_status = "processing"
-    # Reset the start timestamp, even when the status is already `processing`:
-    # a stale take-over must not look stale again on the next request.
-    website.updated_at = datetime.now(UTC)
-    db.commit()
-    await enqueue_job({"type": "ingest", "website_id": website_id})
+
+    await enqueue_job({"type": "ingest", "website_id": str(website_id)})
     return {"status": "ok"}
 
 
