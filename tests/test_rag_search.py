@@ -165,8 +165,8 @@ class NoContextShortcutTests(unittest.TestCase):
 
         with patch.object(rag, "embed_texts", return_value=[[0.1]]), patch.object(
             rag, "search", return_value=results
-        ), patch.object(rag, "get_chat_history", return_value=[]), patch.object(
-            rag, "save_message"
+        ), patch.object(rag, "get_chat_history", return_value=[]        ), patch.object(rag, "save_message"
+        ), patch.object(rag.model_settings, "resolve", return_value=(None, None)
         ), patch.object(rag, "get_llm", return_value=llm):
             events = asyncio.run(collect())
 

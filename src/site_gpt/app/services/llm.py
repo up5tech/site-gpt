@@ -67,40 +67,64 @@ def _embedding_dimensions(model: str):
     return None
 
 
-def get_llm():
-    temperature = 0.5
-    if LLM_AI == "ollama":
+# Runtime model switching (F3). An admin picks one of these labels and the
+# server resolves it to a (provider, model) pair, so a request can never name an
+# arbitrary model. `default` means "whatever LLM_AI / LLM_MODEL are set to"; the
+# other labels are the models the product advertises and need that provider's
+# own API key.
+ALLOWED_CHAT_MODELS: dict[str, tuple[str | None, str | None]] = {
+    "default": (None, None),
+    "fast": ("openai", "gpt-4.1-mini"),
+    "accurate": ("openai", "gpt-4.1"),
+}
+
+
+def get_llm(
+    provider: str | None = None,
+    model: str | None = None,
+    temperature: float = 0.5,
+):
+    """Build the chat client.
+
+    `provider` and `model` fall back to the environment (`LLM_AI` / `LLM_MODEL`),
+    which is exactly what every pre-V2 caller gets. Only the *chat* model is
+    switchable at runtime: the embedding provider stays fixed, because changing
+    it needs a column migration and a re-ingest.
+    """
+    provider = provider or LLM_AI
+    model = model or LLM_MODEL
+    if provider == "ollama":
         if OLLAMA_USERNAME and OLLAMA_PASSWORD:
             auth_str = f"{OLLAMA_USERNAME}:{OLLAMA_PASSWORD}"
             b64_auth = base64.b64encode(auth_str.encode()).decode()
             return ChatOllama(
-                model=LLM_MODEL,
-                temperature=0.5,
+                model=model,
+                temperature=temperature,
                 base_url=OLLAMA_HOST,
                 headers={"Authorization": f"Basic {b64_auth}"},  # type: ignore
             )
         else:
-            return ChatOllama(model=LLM_MODEL, temperature=0.5)
-    elif LLM_AI == "openrouter":
+            return ChatOllama(model=model, temperature=temperature)
+    elif provider == "openrouter":
         return ChatOpenRouter(
-            model=LLM_MODEL, temperature=temperature, api_key=OPEN_ROUTER_API_KEY  # type: ignore
+            model=model, temperature=temperature, api_key=OPEN_ROUTER_API_KEY  # type: ignore
         )
-    elif LLM_AI == "groq":
-        return ChatGroq(model=LLM_MODEL, temperature=temperature, api_key=GROQ_API_KEY)  # type: ignore
-    elif LLM_AI == "gemini":
+    elif provider == "groq":
+        return ChatGroq(model=model, temperature=temperature, api_key=GROQ_API_KEY)  # type: ignore
+    elif provider == "gemini":
         return ChatGoogleGenerativeAI(
-            model=LLM_MODEL, temperature=temperature, api_key=GEMINI_API_KEY
+            model=model, temperature=temperature, api_key=GEMINI_API_KEY
         )
-    elif LLM_AI == "custom_openai":
+    elif provider == "custom_openai":
         return ChatOpenAI(
-            model=LLM_MODEL,
+            model=model,
             temperature=temperature,
             api_key=OPENAI_API_KEY,  # type: ignore
             base_url=OPENAI_API_BASE_URL,
         )
     else:
         return ChatOpenAI(
-            model=LLM_MODEL, temperature=temperature, api_key=OPENAI_API_KEY  # type: ignore
+            model=model, temperature=temperature, api_key=OPENAI_API_KEY  # type: ignore
         )
 
 

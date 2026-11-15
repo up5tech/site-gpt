@@ -11,6 +11,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from site_gpt.app import models
 from site_gpt.app.core.config import RAG_MAX_DISTANCE
+from site_gpt.app.services import model_settings
 from site_gpt.app.services.ingest import embed_texts
 from site_gpt.app.services.llm import get_llm
 
@@ -193,8 +194,9 @@ def ask(db: Session, website_id: UUID, session_id: str, question: str):
     # load memory
     messages = get_chat_history(db, website_id, session_id)
     history = format_history(messages)
-    # ask llm
-    llm = get_llm()
+    # ask llm, honouring the company's model choice when it is allowlisted
+    provider, model = model_settings.resolve(db, website_id)
+    llm = get_llm(provider=provider, model=model)
     answer = llm.invoke(
         [
             SystemMessage(content=SYSTEM_PROMPT),
@@ -267,7 +269,12 @@ async def ask_stream(db: Session, website_id: UUID, session_id: str, question: s
         messages = await asyncio.to_thread(get_chat_history, db, website_id, session_id)
         history = format_history(messages)
 
-        llm = get_llm()
+        # One extra query per answer. An unknown or half-written pair resolves
+        # to (None, None), which is the environment default.
+        provider, model = await asyncio.to_thread(
+            model_settings.resolve, db, website_id
+        )
+        llm = get_llm(provider=provider, model=model)
         await asyncio.to_thread(
             save_message, db, website_id, session_id, "user", question
         )
