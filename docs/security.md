@@ -47,6 +47,7 @@ processes.
 | Consent | When `require_consent` is on, `POST /api/contacts` refuses without `consent: true` and stamps `contacts.consent_at` | `api/routes.py` |
 | Session reads (K4) | The widget mints a per-session token and sends it as `X-Session-Token` to read its history or contact. Only `sha256(token)` is stored; it expires after `SESSION_TOKEN_TTL_SECONDS` and can be rotated only by a caller that already holds it | `services/session_tokens.py`, `POST /api/session-token` |
 | Export / erasure | Admin-only JSON export per website and hard deletes for a conversation or a contact, both company-scoped | `api/privacy.py` |
+| Retention | `retention_days` per company: the worker's daily job hard-deletes `chat_messages`, `chat_feedback`, `handoff_requests`, `contacts` and `digest_log` rows older than the policy, scoped to that company's websites. `POST /api/privacy/retention` previews it (`dry_run`) or runs it on demand | `services/retention.py`, `api/privacy.py`, `worker.py` |
 | Logs | No raw API key, integration token or password is written to a log line; webhook bodies are not logged | `services/*` |
 
 What the code deliberately does **not** do: encrypt values at the application
@@ -143,13 +144,22 @@ tokenless read of an *unclaimed* session is allowed; see §5 for the trade-off.
 | `api_keys` | Prefix, peppered hash, scopes, timestamps | No raw secret |
 | `session_tokens` | Per-session token **hash**, expiry, last use | A credential once removed; not personal data |
 | `integrations` | Provider config **including credentials** | Credentials, not personal data |
-| `integration_deliveries` | Event payload (may contain a lead's name/email), status, attempts, scrubbed error | Personal data copied out of `contacts` for retry; no pruning yet |
+| `integration_deliveries` | Event payload (may contain a lead's name/email), status, attempts, scrubbed error | Personal data copied out of `contacts` for retry; **not** covered by `retention_days`, no pruning yet |
 | `digest_log` | Which weekly period was sent to whom | Recipient personal data |
 | `uploads/` | Imported source files | Depends on the file |
 
-There is **no automatic retention purge** in V2 (out of scope): transcripts stay
-until someone deletes them. If a retention period is required, implement it as a
-scheduled job on top of the deletion endpoints above.
+**Retention.** A company can set `retention_days` (0 or unset = keep for ever,
+the default for every company created before the setting existed). The worker
+queues one purge per such company daily (`RETENTION_CHECK_SECONDS`), and the purge
+deletes rows **strictly older than** `now - retention_days` from `chat_messages`,
+`chat_feedback`, `handoff_requests`, `contacts` and `digest_log`, always through
+that company's websites. Deletion is hard, like the erasure endpoints.
+
+What a policy does *not* cover yet: `integration_deliveries` payloads (they keep
+contact details until an admin deletes the row) and uploaded files under
+`uploads/`. `POST /api/privacy/retention` with `dry_run: true` (the default)
+counts what would go without deleting anything, and accepts `retention_days` as an
+override for a what-if preview.
 
 ## 5. Accepted risks
 

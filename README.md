@@ -118,6 +118,7 @@ npm install && npm run dev   # :5173
 | `DIGEST_ENABLED` | `false` | global switch for the worker's weekly-digest loop (each company also needs its `digest_enabled` setting) |
 | `DIGEST_CHECK_SECONDS` | `3600` | how often the digest loop looks for companies whose send hour has come |
 | `DELIVERY_CHECK_SECONDS` | `60` | how often the worker retries integration deliveries whose backoff has elapsed |
+| `RETENTION_CHECK_SECONDS` | `86400` | how often the worker queues the retention purge for companies that set `retention_days` |
 | `DIGEST_HOUR` | `9` | default UTC send hour for a company without its own `digest_hour` setting |
 | `INTEGRATION_WEBHOOK_SECRET` | — | HMAC-SHA256 secret that signs outbound webhook payloads (`X-SiteGPT-Signature: sha256=...`) |
 | `DEFAULT_WIDGET_LANGUAGE` | `auto` | fallback widget UI language when the visitor's browser language cannot be detected (`auto` follows the browser) |
@@ -197,6 +198,7 @@ same registry are seeded for every company but never published.
 | `handoff_email` | **no** | Where handoff requests are emailed; empty means every active admin/manager. |
 | `digest_enabled`, `digest_hour`, `digest_day` | **no** | Weekly digest switch, UTC send hour and week start (default `false` / `9` / `monday`). The worker also needs the global `DIGEST_ENABLED`. |
 | `digest_recipients` | **no** | Comma-separated digest recipients; empty means every active admin/manager. |
+| `retention_days` | **no** | How long visitor data is kept (default `0` = for ever). The worker's daily retention job deletes `chat_messages`, `chat_feedback`, `handoff_requests`, `contacts` and `digest_log` rows older than this, per company. `POST /api/privacy/retention` previews it (`dry_run` defaults to `true`) or applies it on demand. |
 | `llm_provider`, `llm_model` | **no** | Chat model pair, written from **Settings → Model**. Only pairs listed in `services/llm.py::ALLOWED_CHAT_MODELS` are honoured (`fast` = GPT-4.1 mini, `accurate` = GPT-4.1, empty = the `LLM_AI` / `LLM_MODEL` defaults); anything else silently falls back to the environment. Embeddings are not switched here. |
 
 Keys understood by `widget_ui_strings`: `clear`, `send`, `thinking`, `sources`,
@@ -246,7 +248,10 @@ Keys understood by `widget_ui_strings`: `clear`, `send`, `thinking`, `sources`,
 - **Privacy export, erasure and consent** — admins can download everything the app
   stores for one website (`GET /api/privacy/export`) and erase a session for real:
   `DELETE /api/privacy/conversations/{sid}` removes its messages, ratings and
-  handoffs, `DELETE /api/privacy/contacts/{sid}` removes the lead and its handoffs.
+  handoffs,   `DELETE /api/privacy/contacts/{sid}` removes the lead and its handoffs.
+  A retention policy (`retention_days`) makes the worker delete expired rows
+  daily; `POST /api/privacy/retention` previews the same purge with `dry_run`
+  before anything is removed.
   Both are company-scoped and 404 on a foreign website. Consent is recorded per
   contact (`consent_at`) when `require_consent` is on. What is **not** provided is
   stated plainly in [`docs/security.md`](docs/security.md): no SOC 2 Type II, no
