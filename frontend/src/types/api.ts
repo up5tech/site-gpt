@@ -90,6 +90,8 @@ export interface FeedbackRequest {
   session_id: string;
   rating: 'up' | 'down';
   comment?: string;
+  /** The assistant message being rated, so the pair can be reviewed (F4). */
+  message_id?: string;
 }
 
 export interface ConversationMessage {
@@ -160,6 +162,32 @@ export interface Setting {
   value: string;
   created_at?: string;
   updated_at?: string;
+}
+
+export interface FeedbackItem {
+  id: string;
+  website_id: string;
+  session_id: string;
+  rating: 'up' | 'down';
+  comment?: string | null;
+  message_id?: string | null;
+  status: 'pending' | 'approved' | 'rejected';
+  reviewed_answer?: string | null;
+  question?: string | null;
+  answer?: string | null;
+  created_at: string;
+}
+
+export interface FeedbackList {
+  total: number;
+  page: number;
+  limit: number;
+  items: FeedbackItem[];
+}
+
+export interface FeedbackReview {
+  status?: 'pending' | 'approved' | 'rejected';
+  reviewed_answer?: string;
 }
 
 /** Public widget config fetched by the embeddable widget (key/value map). */

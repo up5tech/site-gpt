@@ -632,7 +632,9 @@
   }
 
   // Append cited sources + feedback buttons under a bot message row.
-  function attachExtras(row, sources) {
+  // `messageId` is the stored assistant row, sent back with a rating so the
+  // admin review can show (and train) exactly this answer (F4).
+  function attachExtras(row, sources, messageId) {
     // Sources
     if (sources && sources.length > 0) {
       const src = document.createElement('div');
@@ -683,14 +685,17 @@
       down.disabled = true;
       thanks.style.display = 'inline';
       const base = (config.apiUrl || '').replace(/\/$/, '');
+      const body = {
+        website_id: config.website_id,
+        session_id: sessionId,
+        rating,
+      };
+      // Older messages/history may not carry an id; the rating still records.
+      if (messageId) body.message_id = messageId;
       fetch(`${base}/api/chat/feedback`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          website_id: config.website_id,
-          session_id: sessionId,
-          rating,
-        }),
+        body: JSON.stringify(body),
       }).catch(() => {});
     };
 
@@ -926,6 +931,7 @@
       let buffer = '';
       let reply = '';
       let pendingSources = [];
+      let pendingMessageId = null;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -945,8 +951,11 @@
             if (typeof data.chunk === 'string') reply += data.chunk;
             else if (typeof data.error === 'string')
               reply += (reply ? '\n\n' : '') + '⚠️ ' + data.error;
-            else if (data.done === true && Array.isArray(data.sources))
-              pendingSources = data.sources;
+            else if (data.done === true) {
+              if (Array.isArray(data.sources)) pendingSources = data.sources;
+              if (typeof data.message_id === 'string')
+                pendingMessageId = data.message_id;
+            }
           } catch (e) {
             // ignore malformed SSE line
           }
@@ -957,7 +966,7 @@
         reply || t('noResponse', 'No response'),
       );
       thinkingMsg.classList.remove('thinking');
-      attachExtras(thinkingRow, pendingSources);
+      attachExtras(thinkingRow, pendingSources, pendingMessageId);
 
       scrollToBottom();
       saveHistory('bot', reply);

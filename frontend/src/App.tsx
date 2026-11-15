@@ -11,6 +11,7 @@ import { ExtraDocuments } from './pages/ExtraDocuments';
 import { Login } from './pages/Login';
 import { Register } from './pages/Register';
 import { Settings } from './pages/Settings';
+import { Training } from './pages/Training';
 import { Users } from './pages/Users';
 import { WebsiteDetail } from './pages/WebsiteDetail';
 import { Websites } from './pages/Websites';
@@ -76,6 +77,14 @@ function App() {
                 element={
                   <ProtectedRoute>
                     <ExtraDocuments />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path='/training'
+                element={
+                  <ProtectedRoute>
+                    <Training />
                   </ProtectedRoute>
                 }
               />

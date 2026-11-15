@@ -3,12 +3,17 @@ import { createContext, ReactNode, useContext, useState } from 'react';
 import api from '../utils/api';
 import type { ChatSource, ConversationMessage } from '../types/api';
 
+interface ChatMessageItem {
+  role: 'user' | 'assistant';
+  content: string;
+  sources?: ChatSource[];
+  // The stored assistant row: a rating sends it back so the admin review can
+  // show the exact question/answer pair (F4).
+  message_id?: string;
+}
+
 interface ChatContextType {
-  messages: Array<{
-    role: 'user' | 'assistant';
-    content: string;
-    sources?: ChatSource[];
-  }>;
+  messages: ChatMessageItem[];
   sendMessage: (
     query: string,
     websiteId?: string,
@@ -36,9 +41,7 @@ interface Props {
 }
 
 export const ChatProvider = ({ children }: Props) => {
-  const [messages, setMessages] = useState<
-    Array<{ role: 'user' | 'assistant'; content: string; sources?: ChatSource[] }>
-  >([]);
+  const [messages, setMessages] = useState<ChatMessageItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [selectedWebsiteId, setSelectedWebsiteId] = useState<string | null>(
     null,
@@ -87,13 +90,17 @@ export const ChatProvider = ({ children }: Props) => {
     });
   };
 
-  const setAssistantSources = (sources: ChatSource[]) => {
-    if (!sources || sources.length === 0) return;
+  const setAssistantMeta = (sources?: ChatSource[], messageId?: string) => {
+    if ((!sources || sources.length === 0) && !messageId) return;
     setMessages((prev) => {
       const copy = [...prev];
       const last = copy[copy.length - 1];
       if (last && last.role === 'assistant') {
-        copy[copy.length - 1] = { ...last, sources };
+        copy[copy.length - 1] = {
+          ...last,
+          ...(sources && sources.length > 0 ? { sources } : {}),
+          ...(messageId ? { message_id: messageId } : {}),
+        };
       }
       return copy;
     });
@@ -103,7 +110,7 @@ export const ChatProvider = ({ children }: Props) => {
     setMessages(
       items
         .filter((m) => m.role === 'user' || m.role === 'assistant')
-        .map((m) => ({ role: m.role, content: m.message })),
+        .map((m) => ({ role: m.role, content: m.message, message_id: m.id })),
     );
   };
 
@@ -163,11 +170,14 @@ export const ChatProvider = ({ children }: Props) => {
               appendAssistantChunk(data.chunk);
             } else if (typeof data.error === 'string') {
               appendAssistantError(data.error);
-            } else if (data.done === true && Array.isArray(data.sources)) {
-              // Stream finished; attach cited sources to the last answer.
-              setAssistantSources(data.sources);
+            } else if (data.done === true) {
+              // Stream finished: attach citations and the stored row id.
+              setAssistantMeta(
+                Array.isArray(data.sources) ? data.sources : undefined,
+                typeof data.message_id === 'string' ? data.message_id : undefined,
+              );
             }
-            // `done: true` (without sources) is the normal stream terminator.
+            // `done: true` with neither field is the normal terminator.
           } catch {
             // ignore malformed SSE line
           }

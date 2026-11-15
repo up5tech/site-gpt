@@ -71,6 +71,7 @@ export function Chat() {
     rating: 'up' | 'down',
     websiteId: string,
     sid: string,
+    messageId?: string,
   ) => {
     if (ratings[index]) return;
     setRatings((prev) => ({ ...prev, [index]: rating }));
@@ -79,6 +80,8 @@ export function Chat() {
         website_id: websiteId,
         session_id: sid,
         rating,
+        // Links the rating to this answer so /training can show the pair.
+        message_id: messageId,
       });
     } catch {
       // keep optimistic state even if the server call fails
@@ -429,7 +432,12 @@ export function Chat() {
           }}
           dataSource={messages}
           renderItem={(
-            item: { role: 'user' | 'assistant'; content: string; sources?: ChatSource[] },
+            item: {
+              role: 'user' | 'assistant';
+              content: string;
+              sources?: ChatSource[];
+              message_id?: string;
+            },
             index: number,
           ) => (
             <List.Item
@@ -506,6 +514,7 @@ export function Chat() {
                                 'up',
                                 selectedWebsiteId,
                                 sessionId,
+                                item.message_id,
                               )
                             }
                           />
@@ -524,6 +533,7 @@ export function Chat() {
                                 'down',
                                 selectedWebsiteId,
                                 sessionId,
+                                item.message_id,
                               )
                             }
                           />

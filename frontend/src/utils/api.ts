@@ -1,5 +1,5 @@
 import axios, { AxiosInstance } from 'axios';
-import type { ChatResponse, ContactList, ConversationList, ConversationMessages, DashboardStats, FeedbackRequest, LoginResponse, RecentConversations, RegisterRequest, Setting, Website, WebsiteQuota, WidgetConfig } from '../types/api';
+import type { ChatResponse, ContactList, ConversationList, ConversationMessages, DashboardStats, FeedbackItem, FeedbackList, FeedbackRequest, FeedbackReview, LoginResponse, RecentConversations, RegisterRequest, Setting, Website, WebsiteQuota, WidgetConfig } from '../types/api';
 
 // Base API instance with proxy /api -> backend
 const api: AxiosInstance = axios.create({
@@ -64,6 +64,27 @@ export const chat = (
 
 export const sendFeedback = (payload: FeedbackRequest) =>
   api.post('/chat/feedback', payload);
+
+// Feedback review (admin): the 👎 queue, the decision, and the Q&A rebuild.
+export const getFeedback = (
+  params: {
+    website_id?: string;
+    status?: 'pending' | 'approved' | 'rejected';
+    rating?: 'up' | 'down';
+    page?: number;
+    limit?: number;
+  } = {},
+) => api.get<FeedbackList>('/feedback', { params });
+
+export const reviewFeedback = (id: string, payload: FeedbackReview) =>
+  api.patch<FeedbackItem>(`/feedback/${id}`, payload);
+
+export const rebuildQa = (websiteId: string) =>
+  api.post<{ status: string; approved: number; chunks: number }>(
+    '/feedback/rebuild',
+    null,
+    { params: { website_id: websiteId } },
+  );
 
 export const getWidgetConfig = (websiteId: string) =>
   api.get<WidgetConfig>('/widget-config', {
