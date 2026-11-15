@@ -21,6 +21,15 @@ DEFAULT_SETTINGS: dict[str, str] = {
     "greeting_message": "Hi 👋 How can I help you?",
     "placeholder_text": "Type a message...",
     "suggested_questions": "",
+    # V2 widget-facing keys (plans/SPEC.md §9). Public by decision: they describe
+    # how the visitor's own widget looks and behaves, never internal state.
+    "widget_language": "auto",
+    "widget_ui_strings": "",
+    "widget_logo_url": "",
+    "handoff_enabled": "false",
+    "handoff_label": "Talk to a human",
+    "require_consent": "false",
+    "privacy_policy_url": "",
 }
 
 # Internal per-company settings. They describe backend behaviour rather than the
@@ -31,6 +40,20 @@ INTERNAL_SETTINGS: dict[str, str] = {
     # env default; clearing the row (or an old company without it) also falls
     # back to that env value.
     "daily_message_limit": str(DAILY_MESSAGE_LIMIT),
+    # V2 server-side keys (plans/SPEC.md §9). They stay here permanently: none of
+    # them may be readable by an unauthenticated visitor.
+    #
+    # Chat model override: a short catalogue label resolved to a
+    # (provider, model) pair server-side, never a raw model name from a client.
+    "llm_provider": "",
+    "llm_model": "",
+    # Where handoff requests are emailed (F5).
+    "handoff_email": "",
+    # Weekly digest (F6). Booleans are stored as strings, like the env flags.
+    "digest_enabled": "false",
+    "digest_hour": "9",
+    "digest_day": "monday",
+    "digest_recipients": "",
 }
 
 # Every setting a company can have: seeded on register, accepted by
@@ -38,9 +61,28 @@ INTERNAL_SETTINGS: dict[str, str] = {
 ALL_SETTINGS: dict[str, str] = {**DEFAULT_SETTINGS, **INTERNAL_SETTINGS}
 
 # Only these keys are exposed by the public, unauthenticated
-# `GET /api/widget-config`. Any internal setting added later stays private
-# unless it is explicitly listed here.
-WIDGET_PUBLIC_KEYS: tuple[str, ...] = tuple(DEFAULT_SETTINGS.keys())
+# `GET /api/widget-config`. Deliberately an explicit literal tuple instead of
+# `tuple(DEFAULT_SETTINGS)`: registering a settings row must never make it
+# public by accident. Extend this only as a deliberate product decision, adding
+# the key to `DEFAULT_SETTINGS` in the same commit.
+WIDGET_PUBLIC_KEYS: tuple[str, ...] = (
+    # 7 V1 appearance keys
+    "assistant_name",
+    "widget_header_color",
+    "widget_footer_color",
+    "widget_position",
+    "greeting_message",
+    "placeholder_text",
+    "suggested_questions",
+    # 7 V2 widget-facing keys (SPEC.md §9)
+    "widget_language",
+    "widget_ui_strings",
+    "widget_logo_url",
+    "handoff_enabled",
+    "handoff_label",
+    "require_consent",
+    "privacy_policy_url",
+)
 
 
 def _default_setting_rows(company_id):

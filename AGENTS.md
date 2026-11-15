@@ -33,7 +33,7 @@ Run the suite (or a single file: `uv run python -m unittest tests.test_settings 
 - Embeddings are `Vector(EMBEDDING_DIMENSIONS)` (default 1536) — the embedding model's output dimension must match `EMBEDDING_DIMENSIONS`; changing it requires an Alembic migration + re-ingest. `EMBEDDING_AI` selects the embedding provider independently of the chat provider `LLM_AI`.
 - Chunking: `RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)` — keep consistent between `ingest.py` and new code.
 - RAG search SQL lives in `rag.py::search` (single query over `embeddings` joined to `documents` **and** `extra_documents`, top 5, website-scoped with company-wide extra documents). Extend there, don't duplicate.
-- Settings keys: add defaults to `DEFAULT_SETTINGS` in `api/setting.py` (single source of truth for registration and `POST /api/settings`). A key is only readable by the public widget if it is also in `WIDGET_PUBLIC_KEYS`.
+- Settings keys: appearance/widget keys go in `DEFAULT_SETTINGS`, server-side keys (models, emails, digest, quotas) in `INTERNAL_SETTINGS`; both seed registration and `POST /api/settings` through `ALL_SETTINGS`. `WIDGET_PUBLIC_KEYS` is an explicit literal tuple — a key is public only if you add it there deliberately, so never derive it from a registry dict.
 - Mail is async: use `send_email_async(...)` (await it) in async code or worker jobs; `send_email(...)` is only a sync wrapper for sync endpoints and never blocks a running loop.
 - Worker jobs are `{"type": "ingest", "website_id": ...}` on Redis list `queue:jobs`; `handle_ingest` in `worker.py` sets `websites.ingest_status` (`none → processing → completed`).
 - Frontend: axios through `utils/api.ts`, Ant Design for UI, `VITE_BACKEND_URL` for base URL. No new UI framework.

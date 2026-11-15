@@ -433,8 +433,11 @@ so `EMBEDDING_DIMENSIONS` must equal that model's native size.
   editable from the new **Appearance** tab in Settings. The embed script no longer
   hardcodes colors/name — it only needs `website_id` + `apiUrl`.
 - **Public config is allowlisted.** `GET /api/widget-config` returns only the keys in
-  `WIDGET_PUBLIC_KEYS` (`api/setting.py`) — exactly those 7 appearance keys. Any internal
-  setting added later stays private unless it is explicitly added to that tuple.
+  `WIDGET_PUBLIC_KEYS` (`api/setting.py`) — an explicit 14-key literal: those 7 appearance
+  keys plus the 7 V2 widget keys (`widget_language`, `widget_ui_strings`, `widget_logo_url`,
+  `handoff_enabled`, `handoff_label`, `require_consent`, `privacy_policy_url`). Server-side
+  settings live in `INTERNAL_SETTINGS` and can never reach it: the tuple is not derived
+  from either registry dict, so a key is public only if it is added there deliberately.
 
 ## Chat streaming fix (SSE error)
 

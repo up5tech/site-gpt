@@ -62,9 +62,15 @@ class RegistryTests(unittest.TestCase):
 
     def test_it_is_never_published_by_the_public_widget_config(self):
         self.assertNotIn("daily_message_limit", setting_api.WIDGET_PUBLIC_KEYS)
-        # The public list is the appearance registry, unchanged by this key.
-        self.assertEqual(
-            set(setting_api.WIDGET_PUBLIC_KEYS), set(setting_api.DEFAULT_SETTINGS)
+        # The public allowlist is an explicit literal (7 appearance + 7 V2 widget
+        # keys), every entry is a registered appearance setting, and no internal
+        # key can reach it.
+        self.assertEqual(len(setting_api.WIDGET_PUBLIC_KEYS), 14)
+        self.assertTrue(
+            set(setting_api.WIDGET_PUBLIC_KEYS) <= set(setting_api.DEFAULT_SETTINGS)
+        )
+        self.assertFalse(
+            set(setting_api.WIDGET_PUBLIC_KEYS) & set(setting_api.INTERNAL_SETTINGS)
         )
 
     def test_new_companies_are_seeded_with_the_env_default(self):
