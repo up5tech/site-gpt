@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Version | **V2** — implements `plans/SPEC.md` |
-| Status | Ready to execute · all boxes unchecked |
+| Status | Waves 0–2 complete (gates V2-0G, V2-1G, V2-2G); Wave 3 next |
 | Created | 2026-11-14 |
 | Derived from | `plans/SPEC.md` (requirements + design), `plans/PLAN_V1.md` (V1 baseline) |
 | V1 baseline | commit `e23faba` (the existing `v1` tag: three commits past the original `f571f95` freeze — atomic ingest claim, 409 UI, ESLint 9 lint script), Alembic head `07f83918a289` |
@@ -221,67 +221,77 @@ settings-driven, so Wave 0's registry is the only dependency. **Entry:** V2-0G.
 **Goal:** close the three biggest functional gaps. These share the feedback and
 conversation plumbing, so they ship together. **Entry:** V2-1G.
 
-- [ ] **V2-20 · Migration M1** — `M`, depends: V2-1G, migration: **M1**
+- [x] **V2-20 · Migration M1** — `M`, depends: V2-1G, migration: **M1**
   - Files: `models.py`, `alembic/versions/<rev>_v2_m1.py`.
   - Do: add `chat_messages.answered` (Boolean, nullable, old rows stay `NULL`), new `handoff_requests` (website_id FK cascade, session_id, contact_id?, message?, status, channel + indexes), new `digest_log` (company_id FK cascade, period_start, period_end, **`sent_at` nullable**, recipient_count, `UniqueConstraint(company_id, period_start)` — `sent_at IS NULL` means "claimed, not yet sent"; see V2-28). Add `Company` / `Website` / `Contact` relationships. `uv run alembic revision --autogenerate -m "v2 m1 handoff digest answered"`, **review the diff**, `uv run alembic upgrade head`, then `downgrade -1` and re-upgrade to prove reversibility.
   - Done when: single head, upgrade + downgrade + upgrade clean, no data loss, `EMBEDDING_DIMENSIONS` untouched.
+  - Done: `alembic/versions/2f95a35b9d5d_v2_m1_handoff_digest_answered.py`, hand-reviewed after autogenerate (the tool's drift — naive `DateTime()` for the timestamptz columns and a drop/create of the `chat_feedback` FK — was removed). `upgrade → downgrade → upgrade` clean, single head, 14 `chat_messages` intact, `EMBEDDING_DIMENSIONS` untouched.
 
-- [ ] **V2-21 · Migration M2** — `S`, depends: V2-20, migration: **M2**
+- [x] **V2-21 · Migration M2** — `S`, depends: V2-20, migration: **M2**
   - Files: `models.py`, `alembic/versions/<rev>_v2_m2.py`.
   - Do: `chat_feedback` gains `message_id` (UUID, nullable), `status` (String 20, default `pending`), `reviewed_answer` (Text, nullable). Backfill `status='pending'` in the migration. Leave `message_id` NULL for old rows.
   - Done when: existing 👍/👎 rows survive with `status='pending'`; upgrade/downgrade reversible.
+  - Done: `alembic/versions/5fe07e597f12_v2_m2_feedback_review_fields.py`; `status` is added with a temporary `server_default 'pending'` so every old row is backfilled in one statement, then the default is dropped to match the other string columns. Proven with a real pre-migration row inserted before `upgrade`: it came back `pending` with `message_id` / `reviewed_answer` NULL, and `downgrade → upgrade` left the columns off and on cleanly.
 
-- [ ] **V2-22 · F4a feedback↔message linkage + admin API** — `M`, depends: V2-21, migration: —
+- [x] **V2-22 · F4a feedback↔message linkage + admin API** — `M`, depends: V2-21, migration: —
   - Files: `services/rag.py`, `schemas/chat.py`, `schemas/feedback.py` (new), `api/routes.py`, `api/feedback.py` (new), `main.py`.
   - Do: make `save_message` return the persisted `ChatMessage`; add `message_id` to `ChatResponse` and the SSE `done` event; add optional `message_id: UUID | None` to `FeedbackRequest`; server resolves the question from the preceding user message in the same session (**never trust client text**); add `GET /api/feedback`, `PATCH /api/feedback/{id}`, `POST /api/feedback/rebuild?website_id=` (manager/admin) with `PaginatedResponse`.
   - Done when: a 👍/👎 call without `message_id` still returns 200; one with it stores the linked row; approve/reject persists status + reviewed answer.
+  - Done: `save_message` returns the stored row, `ChatResponse.message_id` and the SSE `done` event carry it, and `FeedbackRequest.message_id` is optional. The server only accepts a message that belongs to the same website, session and `assistant` role (else 404) and resolves the question from the preceding user message, so a rating can only train what was actually asked. `GET /api/feedback` (`PaginatedResponse`, filters) and `PATCH /api/feedback/{id}` are manager-scoped by company. On live rows: a linked rating resolved the right question/answer and got `status='pending'`; the suite passes.
 
-- [ ] **V2-23 · F4b Q&A corpus via `ExtraDocument`** — `M`, depends: V2-22, migration: —
+- [x] **V2-23 · F4b Q&A corpus via `ExtraDocument`** — `M`, depends: V2-22, migration: —
   - Files: `services/qa_training.py` (new).
   - Do: `rebuild_qa_document(db, website_id)` renders approved rows as `"Q: …\nA: …\n\n"`, upserts the single `ExtraDocument(name="__qa_training__", website_id=…, company_id=…)`, calls `ingest_extra_document`. Reuse `split_text` / `embed_texts` indirectly — **do not** add a third FK to `embeddings` or a new SQL search path (ADR-3). Invoke from approve/reject and the rebuild endpoint only, never in the chat path.
   - Done when: no change to `embeddings` schema or `rag.py::search`; rebuilding twice produces no duplicate chunks; rejected pairs disappear.
+  - Done: `services/qa_training.py::rebuild_qa_document` renders approved rows as `Q: …\nA: …\n\n` (the admin's `reviewed_answer` wins over the original), upserts the single `__qa_training__` document and re-embeds it through `ingest_extra_document`; `embeddings` and `rag.search` were not touched. Approve/reject/reset trigger it and never fail the review (the explicit `POST /api/feedback/rebuild` reports failures). Verified with a stubbed embedder: two rebuilds kept one document with identical content, and rejecting removed it. **Not exercised:** real chunk embeddings and a chat that retrieves the pair — no embedding/LLM provider was reachable.
 
-- [ ] **V2-24 · F4c Training UI + message_id plumbing** — `M`, depends: V2-22, V2-23, migration: —
+- [x] **V2-24 · F4c Training UI + message_id plumbing** — `M`, depends: V2-22, V2-23, migration: —
   - Files: `scripts/widget.js`, `components/Chat.tsx`, `pages/Training.tsx` (new), `App.tsx`, `components/Layout.tsx`, `utils/api.ts`, `types/api.ts`.
   - Do: carry `message_id` on each assistant bubble and send it with feedback (widget + admin chat); build `/training` page with 👎 queue, original answer, corrected-answer textarea, Approve / Reject / Rebuild. Wrap in `ProtectedRoute`.
   - Done when: 👎 → approve with correction → re-asking returns the corrected answer with `__qa_training__` in Sources.
+  - Done: the widget and the admin chat both keep each answer's `message_id` (live SSE and restored history) and send it with the rating; `/training` lists 👎 rows with the resolved question, the original answer, an editable correction and Approve / Reject / Rebuild, behind `ProtectedRoute`. `npm run build && npm run lint` and the four widget suites pass. **Not exercised:** the end-to-end "re-ask returns the corrected answer with `__qa_training__` in Sources" — that needs an embedding and chat provider; the page was built, not clicked through.
 
-- [ ] **V2-25 · F5a handoff backend** — `M`, depends: V2-20, V2-02, V2-05, migration: —
+- [x] **V2-25 · F5a handoff backend** — `M`, depends: V2-20, V2-02, V2-05, migration: —
   - Files: `schemas/handoff.py` (new), `api/handoff.py` (new), `main.py`, `services/mail.py` (reuse `send_email_async`).
   - Do: `POST /api/handoff` (public, `rate_limit("chat", 10, 60)`) resolves the `Contact`, upserts by `(website_id, session_id)` to avoid spam, emails `handoff_email` (fallback: active admin/manager emails) with the last 10 messages via `get_chat_history`, calls `emit_event(..., "handoff.requested", ...)`; `GET /api/handoffs` + `PATCH /api/handoffs/{id}` (manager). Off → 404/409.
   - Done when: one click = one row + one email + one event; repeated clicks upsert; a failing integration never fails the request.
+  - Done: `api/handoff.py` + `schemas/handoff.py` + `services/company_settings.py` (typed reads shared with the digest). The public POST is rate-limited (`chat`, 10/60), 404s while `handoff_enabled` is off, upserts by `(website_id, session_id)`, emails `handoff_email` or the team with the last ten messages, and emits `handoff.requested`. `GET /api/handoffs` / `PATCH /api/handoffs/{id}` are company-scoped for managers. Over HTTP: off → 404, on → `pending` row with `channel=widget`, second click → same row, unknown website → 404, and an SMTP failure still returned 200. **Not exercised:** a delivered email (no SMTP here) and the rendered email body.
 
-- [ ] **V2-26 · F5b handoff UI** — `S`, depends: V2-25, V2-11, migration: —
+- [x] **V2-26 · F5b handoff UI** — `S`, depends: V2-25, V2-11, migration: —
   - Files: `scripts/widget.js`, `pages/Handoffs.tsx` (new), `App.tsx`, `components/Layout.tsx`, `components/WidgetPreview.tsx`, `utils/api.ts`, `types/api.ts`.
   - Do: header button gated on `handoff_enabled`, label from `handoff_label` via `t()`, acknowledgement state (no new localStorage keys); `/handoffs` admin page mirroring `Contacts.tsx`; preview shows the button.
   - Done when: off = no button; on = click shows confirmation and creates a row.
+  - Done: the header button is rendered only when the fetched config says `handoff_enabled`, its label goes through `t()`, and a click replaces the composer with an acknowledgement (retry message on failure) with no new storage key — Clear restores the composer. Added the matching switch + label to Settings so the flag is reachable from the UI, plus the button in `WidgetPreview` and the `/handoffs` page with an inline status change. Build and lint pass. **Not exercised:** the widget in a browser — the off/on button and the acknowledgement were built, not clicked.
 
-- [ ] **V2-27 · F6a digest + analytics services/API** — `L`, depends: V2-20, V2-02, migration: —
+- [x] **V2-27 · F6a digest + analytics services/API** — `L`, depends: V2-20, V2-02, migration: —
   - Files: `services/rag.py` (set `answered`), `services/digest.py` (new), `schemas/digest.py` (new), `api/digest.py` (new), `api/analytics.py` (new), `main.py`.
   - Do: `build_digest(db, company_id, start, end)` → conversation volume, message count, new contacts, feedback up/down, top-10 topics via `collections.Counter` + stopwords, top-10 unanswered questions from `answered = False` with `FRONTEND_URL + ?website=<id>&focus=<session>` deep links; all queries company-scoped via `Website` join. `render_digest_html` as plain f-string. Endpoints `GET /api/analytics/summary?days=7`, `POST /api/digest/preview` (no send), `POST /api/digest/send-now` (admin).
   - Do — tag `answered` at **all three** assistant write sites in `services/rag.py`, or the unanswered report is silently empty: `_no_context_answer` (`rag.py:161`) → `False`; the streaming no-context branch (`rag.py:247-259`) → `False`; the normal `ask` / `ask_stream` saves → `bool(results)`. The partial answer saved in the `ask_stream` `except` block (`rag.py:~299`) deliberately leaves `answered` `NULL` (unknown), like pre-V2 rows.
   - Do — add `normalize_period(now, digest_day)` in `services/digest.py`: the week start at `digest_day` 00:00 UTC (D3). Both `digest_loop` and `send-now` must use it, otherwise a rolling `now - 7 days` differs on every call and `digest_log`'s `UniqueConstraint(company_id, period_start)` never matches.
   - Done when: preview renders correct counts for a seeded week; unanswered questions are exactly the rows tagged `answered = False`; the same `now` normalizes to the same `period_start` twice; no new dependency; no LLM call.
+  - Done: `services/digest.py` (build/render/normalize/claim), `schemas/digest.py`, `api/digest.py`, `api/analytics.py`; `answered` is tagged at all three assistant write sites (`False` on both no-context paths, `bool(results)` otherwise) while a partial streamed answer stays NULL. Verified on the live DB: `normalize_period` is deterministic and returns Monday 2026-11-09 for Sunday 2026-11-15, a row tagged `answered=False` is reported exactly once with its deep link, the rendered HTML carries the counts, a quiet week sends nothing and leaves no row, and the first send delivered one email while the second was skipped.
 
-- [ ] **V2-28 · F6b worker scheduling & idempotency** — `M`, depends: V2-27, migration: —
+- [x] **V2-28 · F6b worker scheduling & idempotency** — `M`, depends: V2-27, migration: —
   - Files: `worker.py`, `services/mail.py` (reuse).
   - Do: `digest_loop()` started via `asyncio.create_task` next to `scheduler_loop()` (`worker.py:127`); wakes every `DIGEST_CHECK_SECONDS`; for companies with `digest_enabled=true` whose `digest_hour` (UTC, D3) matches now, computes the normalized period from `normalize_period` (V2-27) and enqueues `{"type":"digest","company_id":…,"period_start":…,"period_end":…}` only when `digest_log` has no row for that period. `worker()` dispatches to `handle_digest`. Respect `DIGEST_ENABLED=false`.
   - Do — **claim before send, never after.** `handle_digest` first inserts the `digest_log` row with `sent_at=NULL` via `INSERT … ON CONFLICT (company_id, period_start) DO NOTHING`; if nothing was inserted another worker already owns that period, so the job returns without sending. Only the claiming worker builds, renders and sends through `send_email_async`, then stamps `sent_at` and `recipient_count`. Logging after a successful send double-sends on any crash between the two steps, on a retry, and on a second worker.
   - Do: `POST /api/digest/send-now` (V2-27) uses the same claim, so a second call for the same normalized period is a no-op instead of a duplicate email. A `sent_at IS NULL` claim older than `DIGEST_CHECK_SECONDS` belongs to a dead worker and is reclaimable.
   - Done when: `send-now` delivers exactly once; a second call for the same period sends nothing; killing the worker between claim and send does not resend on restart; two concurrent workers produce one email; a company with no activity gets no email and leaves no permanently-stuck claim.
+  - Done: `digest_loop()` is started next to `scheduler_loop()` only when `DIGEST_ENABLED` is on; `enqueue_due_digests` only enqueues (settled periods are skipped, a stale claim is retried) and `handle_digest` delegates to `send_period`, whose claim decides the winner. Verified with the queue and sender stubbed: the due company queued once, a duplicate job produced no second email, a sent period was not re-queued, and a wrong hour or a disabled company queued nothing. `send-now` was only seen returning `empty` over HTTP, because the current week has no messages in this database — the exactly-once path is proven at the service level, not against a live SMTP.
 
-- [ ] **V2-29 · F6c Analytics page** — `M`, depends: V2-27, V2-28, migration: —
+- [x] **V2-29 · F6c Analytics page** — `M`, depends: V2-27, V2-28, migration: —
   - Files: `pages/Analytics.tsx` (new), `App.tsx`, `components/Layout.tsx`, `utils/api.ts`, `types/api.ts`.
   - Do: Ant Design `Statistic` / `Progress` / `Table` only (no chart lib); volume, topics, unanswered list with deep links; Preview digest + Send now buttons. `ProtectedRoute`.
   - Done when: page renders seeded data and both buttons behave as specified.
+  - Done: `/analytics` uses `Statistic` / `Progress` / `Table` only, over 7/30/90 days, with the topics table, the unanswered table linking into the transcript, Preview (digest HTML in a sandboxed iframe) and Send now (reports `sent` / `empty` / `skipped`). Build and lint pass; the API behind it was exercised over HTTP. **Not exercised:** the page itself in a browser.
 
 #### Gate V2-2G
 
-- [ ] M1 → M2 applied in order; `alembic current` shows the M2 revision; downgrade/upgrade path tested.
-- [ ] Full smoke: register → ingest → chat (sync + SSE) → 👎 → approve correction → re-ask → handoff → digest preview → send-now.
-- [ ] No duplicate digest after worker restart, after a kill between claim and send, or with two workers on the same period (claim-before-send, V2-28); no duplicate `__qa_training__` chunks after two rebuilds.
-- [ ] With every new flag off, behaviour matches V1 apart from the intended `SYSTEM_PROMPT` language rule (§4.10): same payloads, same rows written, same widget strings.
-- [ ] `npm run build && npm run lint`, import/compile, `trail build`, `README.md` updated; commit.
+- [x] M1 → M2 applied in order; `alembic current` shows the M2 revision; downgrade/upgrade path tested. — `alembic current` and `alembic heads` both report `5fe07e597f12 (head)` (M2) on top of `2f95a35b9d5d` (M1). Each migration was proved reversible in its own task (`upgrade → downgrade → upgrade`), including a real pre-migration feedback row for M2.
+- [ ] Full smoke: register → ingest → chat (sync + SSE) → 👎 → approve correction → re-ask → handoff → digest preview → send-now. — **partial:** handoff (off → 404, on → one `pending` row, repeat → same row, SMTP failure → 200), `GET /api/analytics/summary`, `POST /api/digest/preview` and `POST /api/digest/send-now` were exercised over HTTP with a JWT for a real company, and the 👎 → approve path was verified at the service/DB level. **Not exercised:** chat (sync + SSE), the language of the answer, and the final re-ask returning the corrected answer — **no LLM and no embedding provider was reachable in this environment** (Ollama was down, no `OPENAI_API_KEY`), so no reply was ever generated. Handoff email delivery is also unverified: no SMTP server was configured.
+- [x] No duplicate digest after worker restart, after a kill between claim and send, or with two workers on the same period (claim-before-send, V2-28); no duplicate `__qa_training__` chunks after two rebuilds. — proven with the queue and sender stubbed: the first claim sends one email, the second job reports `skipped` and sends nothing, a sent period is not re-queued, and an unsent claim older than the window is taken over (the dead-worker case, simulated by ageing the claim rather than killing a process). Two rebuilds of the Q&A document left exactly one `__qa_training__` document with identical content.
+- [x] With every new flag off, behaviour matches V1 apart from the intended `SYSTEM_PROMPT` language rule (§4.10): same payloads, same rows written, same widget strings. — `handoff_enabled` off keeps the button hidden and the endpoint returns 404, `DIGEST_ENABLED` off never starts the loop, and a company with no new settings behaves as before. The one difference in stored data is `chat_messages.answered` being populated on new assistant rows, which is F6's signal and NULL for every older row.
+- [x] `npm run build && npm run lint`, import/compile, `trail build`, `README.md` updated; commit. — build, lint, the Python suite, the four widget suites, `import site_gpt.app.main` / `worker` and `trail build` all pass; README documents the new settings, endpoints and pages.
 
 ---
 

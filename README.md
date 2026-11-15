@@ -175,7 +175,12 @@ same registry are seeded for every company but never published.
 | `widget_language` | yes | `auto` follows the visitor's browser language; a code such as `vi` forces a locale. Built-in labels ship for English and Vietnamese — any other language keeps the English labels until overridden. |
 | `widget_ui_strings` | yes | JSON object overriding individual widget labels, e.g. `{"startChat": "Bắt đầu", "sources": "Nguồn:"}`. Malformed JSON is ignored and the falls back to the shipped labels. |
 | `widget_logo_url` | yes | Chat header badge and bot avatar. Only `https://` URLs and raster `data:image/...;base64` URIs are used; anything else falls back to 🤖. |
-| `handoff_enabled`, `handoff_label`, `require_consent`, `privacy_policy_url` | yes | Seeded for the handoff and privacy features; off/empty by default, so nothing changes until those land. |
+| `handoff_enabled` | yes | Shows a "talk to a human" button in the chat header. A click records one request (upserted per session), emails the team and emits `handoff.requested`; the visitor stays in the chat. Off by default. |
+| `handoff_label` | yes | Button label, an English fallback the language catalogue and `widget_ui_strings` can override. |
+| `require_consent`, `privacy_policy_url` | yes | Seeded for the privacy feature; off/empty by default, so nothing changes until it lands. |
+| `handoff_email` | **no** | Where handoff requests are emailed; empty means every active admin/manager. |
+| `digest_enabled`, `digest_hour`, `digest_day` | **no** | Weekly digest switch, UTC send hour and week start (default `false` / `9` / `monday`). The worker also needs the global `DIGEST_ENABLED`. |
+| `digest_recipients` | **no** | Comma-separated digest recipients; empty means every active admin/manager. |
 | `llm_provider`, `llm_model` | **no** | Chat model pair, written from **Settings → Model**. Only pairs listed in `services/llm.py::ALLOWED_CHAT_MODELS` are honoured (`fast` = GPT-4.1 mini, `accurate` = GPT-4.1, empty = the `LLM_AI` / `LLM_MODEL` defaults); anything else silently falls back to the environment. Embeddings are not switched here. |
 
 Keys understood by `widget_ui_strings`: `clear`, `send`, `thinking`, `sources`,
@@ -192,6 +197,21 @@ Keys understood by `widget_ui_strings`: `clear`, `send`, `thinking`, `sources`,
 - **Custom logo** — header badge and bot avatars, with a safe fallback.
 - **Runtime model switching** — Settings → Model, applied to the next message
   with no restart; the catalogue keeps arbitrary model names out.
+- **Q&A training** — a 👎 rating carries the id of the answer it judges, so
+  `GET /api/feedback` can show the real question and answer. **Training** lets an
+  admin correct the answer and approve it; approved pairs are re-embedded into one
+  `__qa_training__` extra document per website (rebuilt on demand from
+  `POST /api/feedback/rebuild`), so retrieval picks them up with no new code path.
+- **Human handoff** — `POST /api/handoff` (public, rate-limited) resolves the
+  contact, upserts one request per session, emails the team the last ten messages
+  and emits an integration event. `/handoffs` is the team's queue.
+- **Weekly digest and analytics** — `GET /api/analytics/summary`,
+  `POST /api/digest/preview` and `POST /api/digest/send-now`, plus the `/analytics`
+  page. `build_digest` reports conversation volume, messages, new contacts,
+  👍/👎, top topics and the questions whose answer was tagged `answered = False`,
+  each with a deep link. Delivery is at-most-once: the `digest_log` row is claimed
+  before the email is sent, so a retry, a restart or a second worker cannot send
+  the same week twice.
 
 ## Dev commands
 
