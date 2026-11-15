@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from site_gpt.app import models
 from site_gpt.app.core.auth import get_current_user, get_manager_user
+from site_gpt.app.core.config import SITEMAP_SYNC_MAX_URLS
 from site_gpt.app.db.session import get_db
 from site_gpt.app.models import Website
 from site_gpt.app.schemas.app import DashboardStats, PaginatedResponse
@@ -390,7 +391,15 @@ def load_website_site_map(
 
     try:
         added = 0
+        truncated = False
         for url in urls:
+            # Stop creating pages once this sync hits the cap: a sitemap can list
+            # tens of thousands of URLs, and the next ingest crawls them all.
+            # Existing pages do not consume the budget, so repeated syncs keep
+            # making progress instead of re-scanning the same first N URLs.
+            if SITEMAP_SYNC_MAX_URLS > 0 and added >= SITEMAP_SYNC_MAX_URLS:
+                truncated = True
+                break
             # Scoped to this website: pages of another tenant that happen to
             # share a URL must not make this sync skip them.
             if (
@@ -422,4 +431,12 @@ def load_website_site_map(
             detail="Could not save the sitemap pages. Please try again.",
         )
 
-    return {"status": "ok", "added": added, "total": len(urls)}
+    return {
+        "status": "ok",
+        "added": added,
+        "total": len(urls),
+        # True when the sitemap had more new URLs than this sync was allowed to
+        # create; syncing again continues with the rest.
+        "truncated": truncated,
+        "limit": SITEMAP_SYNC_MAX_URLS,
+    }

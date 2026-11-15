@@ -89,10 +89,12 @@ class SiteMapEndpointTests(unittest.TestCase):
             second = self.sync()
 
         self.assertEqual(first.status_code, 200, first.text)
-        self.assertEqual(
-            first.json(), {"status": "ok", "added": 2, "total": 2}
-        )
-        self.assertEqual(second.json(), {"status": "ok", "added": 0, "total": 2})
+        self.assertEqual(first.json()["added"], 2)
+        self.assertEqual(first.json()["total"], 2)
+        self.assertFalse(first.json()["truncated"])
+        self.assertEqual(second.json()["added"], 0)
+        self.assertEqual(second.json()["total"], 2)
+        self.assertFalse(second.json()["truncated"])
 
     # ---- 404 stays a 404 ---------------------------------------------------
     def test_unknown_website_is_404_not_500(self):
@@ -156,6 +158,140 @@ class SiteMapEndpointTests(unittest.TestCase):
         self.assertNotIn("disk full", detail)
         rollback.assert_called_once()
         self.assertIn("disk full", printed.call_args[0][0])
+
+
+class SitemapSyncCapTests(unittest.TestCase):
+    """A single sitemap can list tens of thousands of URLs; one sync must not
+    create all of them, and it must say when it stopped short."""
+
+    def setUp(self):
+        self.engine = create_engine(
+            "sqlite+pysqlite:///:memory:", connect_args={"check_same_thread": False}
+        )
+        Base.metadata.create_all(
+            self.engine,
+            tables=[
+                models.Company.__table__,
+                models.Website.__table__,
+                models.WebsitePage.__table__,
+            ],
+        )
+        self.Session = sessionmaker(bind=self.engine)
+        self.db = self.Session()
+
+        company = models.Company(name="Customer", description="")
+        self.db.add(company)
+        self.db.commit()
+        self.db.refresh(company)
+
+        self.site = models.Website(
+            url="https://example.com",
+            name="Customer",
+            site_map_url="https://example.com/sitemap.xml",
+            company_id=company.id,
+        )
+        self.db.add(self.site)
+        self.db.commit()
+        self.db.refresh(self.site)
+
+        app = FastAPI()
+        app.include_router(website_api.router, prefix="/api/websites")
+        app.dependency_overrides[get_db] = lambda: self.db
+        app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(
+            id=uuid4(), company_id=company.id
+        )
+        self.client = TestClient(app)
+
+    def tearDown(self):
+        self.db.close()
+        self.engine.dispose()
+
+    def sync(self, urls, limit):
+        with patch.object(
+            website_api, "extract_urls_from_sitemap", return_value=list(urls)
+        ), patch.object(website_api, "SITEMAP_SYNC_MAX_URLS", limit):
+            return self.client.post(f"/api/websites/{self.site.id}/load-site-map")
+
+    def page_count(self):
+        return self.db.query(models.WebsitePage).count()
+
+    def test_cap_limits_created_pages_and_reports_truncation(self):
+        urls = [f"https://example.com/p{i}" for i in range(5)]
+
+        response = self.sync(urls, limit=2)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.json()
+        self.assertEqual(body["added"], 2)
+        self.assertEqual(body["total"], 5)
+        self.assertTrue(body["truncated"])
+        self.assertEqual(body["limit"], 2)
+        self.assertEqual(self.page_count(), 2)
+
+    def test_repeated_syncs_continue_where_the_last_stopped(self):
+        urls = [f"https://example.com/p{i}" for i in range(5)]
+
+        first = self.sync(urls, limit=2).json()
+        second = self.sync(urls, limit=2).json()
+        third = self.sync(urls, limit=2).json()
+
+        self.assertEqual((first["added"], first["truncated"]), (2, True))
+        self.assertEqual((second["added"], second["truncated"]), (2, True))
+        # Last sync consumes the rest and has nothing left to truncate.
+        self.assertEqual((third["added"], third["truncated"]), (1, False))
+        self.assertEqual(self.page_count(), 5)
+        for body in (first, second, third):
+            self.assertEqual(body["total"], 5)
+
+    def test_a_sitemap_under_the_cap_is_not_truncated(self):
+        urls = [f"https://example.com/p{i}" for i in range(3)]
+
+        body = self.sync(urls, limit=10).json()
+
+        self.assertEqual(body["added"], 3)
+        self.assertFalse(body["truncated"])
+
+    def test_exactly_at_the_cap_is_not_truncated(self):
+        urls = [f"https://example.com/p{i}" for i in range(2)]
+
+        body = self.sync(urls, limit=2).json()
+
+        self.assertEqual((body["added"], body["total"]), (2, 2))
+        self.assertFalse(body["truncated"])
+
+    def test_existing_pages_do_not_consume_the_budget(self):
+        urls = [f"https://example.com/p{i}" for i in range(3)]
+        self.sync(urls, limit=10)
+
+        # A cap of 1 with 3 already-known URLs must still add nothing new.
+        body = self.sync(urls, limit=1).json()
+
+        self.assertEqual(body["added"], 0)
+        self.assertFalse(body["truncated"])
+        self.assertEqual(self.page_count(), 3)
+
+    def test_zero_disables_the_cap(self):
+        urls = [f"https://example.com/p{i}" for i in range(5)]
+
+        body = self.sync(urls, limit=0).json()
+
+        self.assertEqual(body["added"], 5)
+        self.assertFalse(body["truncated"])
+        self.assertEqual(self.page_count(), 5)
+
+    def test_default_cap_comes_from_config(self):
+        # No patch: the module constant is what ships.
+        urls = [f"https://example.com/p{i}" for i in range(3)]
+        with patch.object(
+            website_api, "extract_urls_from_sitemap", return_value=list(urls)
+        ):
+            body = self.client.post(
+                f"/api/websites/{self.site.id}/load-site-map"
+            ).json()
+
+        self.assertEqual(body["limit"], website_api.SITEMAP_SYNC_MAX_URLS)
+        self.assertGreater(body["limit"], 0)
+        self.assertEqual(body["added"], 3)
 
 
 class CrawlerRaiseOnErrorTests(unittest.TestCase):

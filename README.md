@@ -120,6 +120,7 @@ npm install && npm run dev   # :5173
 | `CRAWL_REFRESH_HOURS` | `24` | worker re-crawl interval; `0` disables the scheduler |
 | `RAG_MAX_DISTANCE` | `0.6` | max cosine distance for a retrieved chunk to count as context; above it the chunk is dropped and an empty result returns a canned "no information" reply without an LLM call. Lower = stricter, negative disables |
 | `MAX_UPLOAD_MB` | `20` | largest accepted upload or remote import (URL / Google Drive); enforced while streaming, larger requests get `413` and leave no file behind |
+| `SITEMAP_SYNC_MAX_URLS` | `500` | most pages one sitemap sync may create; the response reports `added`/`total`/`truncated`, and syncing again continues with the rest (`0` disables) |
 | `DAILY_MESSAGE_LIMIT` | `1000` | daily chat-message ceiling per website, counted in Redis and reset at UTC midnight; past it the visitor gets a friendly reply instead of an LLM call (`0` disables). Per-IP limits alone cannot bound a viral embed's spend |
 | `SQL_ECHO` | `false` | log every SQL statement (debugging only) |
 | `VITE_BACKEND_URL` (frontend) | — | backend base URL |
@@ -281,6 +282,11 @@ so `EMBEDDING_DIMENSIONS` must equal that model's native size.
   chunks before re-embedding, so re-running ingest won't duplicate vectors.
 - **`POST /api/ingest` is now protected** — requires a manager/admin token and ownership of
   the website (was fully public).
+- **Sitemap sync is capped.** A sitemap can list tens of thousands of URLs, and one click used to
+  create every one of them for the next ingest to crawl. A sync now creates at most
+  `SITEMAP_SYNC_MAX_URLS` (default 500, `0` disables) **new** pages — already-known URLs do not use
+  the budget, so repeated syncs keep making progress — and answers
+  `{"status": "ok", "added": n, "total": urls, "truncated": bool, "limit": n}`.
 - **Sitemap sync reports real errors.** `POST /api/websites/{id}/load-site-map` used to wrap every
   failure in `except Exception` and re-raise it as `500` with `str(e)` in `detail`, so a missing
   website answered 500 instead of 404 and an unsafe/unreachable sitemap leaked internal text. It now

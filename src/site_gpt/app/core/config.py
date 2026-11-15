@@ -78,6 +78,12 @@ RAG_MAX_DISTANCE = float(os.getenv("RAG_MAX_DISTANCE", "0.6"))
 MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "20"))
 MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
 
+# Most pages one sitemap sync may create. A sitemap can list tens of thousands of
+# URLs; without a cap a single click creates all of them and the next ingest
+# crawls every one. Repeated syncs keep adding where the last one stopped.
+# 0 disables the cap.
+SITEMAP_SYNC_MAX_URLS = int(os.getenv("SITEMAP_SYNC_MAX_URLS", "500"))
+
 # Daily ceiling on chat messages per website, counted in Redis and reset at UTC
 # midnight. Per-IP rate limiting alone cannot bound what one viral embed spends
 # on the owner's LLM account; 0 disables the cap.
