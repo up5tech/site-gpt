@@ -142,12 +142,19 @@ def format_history(messages):
 
 def save_message(
     db: Session, website_id: UUID, session_id: str, role: str, message: str
-):
+) -> models.ChatMessage:
+    """Persist one message and return it.
+
+    The assistant row's id is what the widget sends back with a rating (F4), so
+    callers need the refreshed row — `created_at` is a server default.
+    """
     msg = models.ChatMessage(
         session_id=session_id, role=role, message=message, website_id=website_id
     )
     db.add(msg)
     db.commit()
+    db.refresh(msg)
+    return msg
 
 
 # Static reply used when retrieval returns nothing above the distance threshold.
@@ -162,8 +169,14 @@ NO_CONTEXT_ANSWER = (
 def _no_context_answer(db: Session, website_id: UUID, session_id: str, question: str):
     """Persist the exchange and return the canned "no information" reply."""
     save_message(db, website_id, session_id, "user", question)
-    save_message(db, website_id, session_id, "assistant", NO_CONTEXT_ANSWER)
-    return {"answer": NO_CONTEXT_ANSWER, "sources": []}
+    answer = save_message(
+        db, website_id, session_id, "assistant", NO_CONTEXT_ANSWER
+    )
+    return {
+        "answer": NO_CONTEXT_ANSWER,
+        "sources": [],
+        "message_id": answer.id,
+    }
 
 
 SYSTEM_PROMPT = (
@@ -213,8 +226,12 @@ def ask(db: Session, website_id: UUID, session_id: str, question: str):
     save_message(db, website_id, session_id, "user", question)
     # save response
     content = answer.content if hasattr(answer, "content") else str(answer)
-    save_message(db, website_id, session_id, "assistant", str(content))
-    return {"answer": content, "sources": collect_sources(results)}
+    saved = save_message(db, website_id, session_id, "assistant", str(content))
+    return {
+        "answer": content,
+        "sources": collect_sources(results),
+        "message_id": saved.id,
+    }
 
 
 def _safe_error_message(exc: Exception) -> str:
@@ -254,7 +271,7 @@ async def ask_stream(db: Session, website_id: UUID, session_id: str, question: s
                 save_message, db, website_id, session_id, "user", question
             )
             yield f"data: {json.dumps({'chunk': NO_CONTEXT_ANSWER})}\n\n"
-            await asyncio.to_thread(
+            saved = await asyncio.to_thread(
                 save_message,
                 db,
                 website_id,
@@ -262,7 +279,7 @@ async def ask_stream(db: Session, website_id: UUID, session_id: str, question: s
                 "assistant",
                 NO_CONTEXT_ANSWER,
             )
-            yield f"data: {json.dumps({'done': True, 'sources': []})}\n\n"
+            yield f"data: {json.dumps({'done': True, 'sources': [], 'message_id': str(saved.id)})}\n\n"
             return
         context = "\n\n".join([row["content"] for row in results])
         sources = collect_sources(results)
@@ -298,10 +315,10 @@ async def ask_stream(db: Session, website_id: UUID, session_id: str, question: s
             yield f"data: {json.dumps({'chunk': text})}\n\n"
 
         answer_text = "".join(full)
-        await asyncio.to_thread(
+        saved = await asyncio.to_thread(
             save_message, db, website_id, session_id, "assistant", answer_text
         )
-        yield f"data: {json.dumps({'done': True, 'sources': sources})}\n\n"
+        yield f"data: {json.dumps({'done': True, 'sources': sources, 'message_id': str(saved.id)})}\n\n"
 
     except Exception as exc:
         # Log the full traceback server-side for diagnostics.

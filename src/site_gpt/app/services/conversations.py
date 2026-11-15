@@ -106,6 +106,29 @@ def get_conversation_messages(
     )
 
 
+def question_for_answer(
+    db: Session, website_id: UUID, session_id: str, answer: models.ChatMessage
+) -> models.ChatMessage | None:
+    """The user message that prompted `answer` (F4).
+
+    Resolved from stored rows, never from the client, so a rating can only ever
+    train the question that was actually asked in that session.
+    """
+    return (
+        db.query(models.ChatMessage)
+        .filter(
+            models.ChatMessage.website_id == website_id,
+            models.ChatMessage.session_id == session_id,
+            models.ChatMessage.role == "user",
+            models.ChatMessage.created_at <= answer.created_at,
+            models.ChatMessage.id != answer.id,
+        )
+        .order_by(models.ChatMessage.created_at.desc())
+        .limit(1)
+        .first()
+    )
+
+
 def delete_conversation(db: Session, website_id: UUID, session_id: str) -> int:
     """Delete every message of a session. Returns number of rows removed."""
     deleted = (

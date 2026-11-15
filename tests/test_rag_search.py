@@ -117,7 +117,10 @@ class NoContextShortcutTests(unittest.TestCase):
         ) as get_llm:
             result = rag.ask(MagicMock(), self.website_id, "sess", "who won?")
 
-        self.assertEqual(result, {"answer": NO_CONTEXT_ANSWER, "sources": []})
+        self.assertEqual(result["answer"], NO_CONTEXT_ANSWER)
+        self.assertEqual(result["sources"], [])
+        # The stored assistant row is what a rating links to (F4).
+        self.assertIn("message_id", result)
         get_llm.assert_not_called()
         self.assertEqual(
             [call.args[3] for call in save.call_args_list], ["user", "assistant"]
@@ -143,7 +146,11 @@ class NoContextShortcutTests(unittest.TestCase):
         first = json.loads(events[0].removeprefix("data: ").strip())
         last = json.loads(events[1].removeprefix("data: ").strip())
         self.assertEqual(first, {"chunk": NO_CONTEXT_ANSWER})
-        self.assertEqual(last, {"done": True, "sources": []})
+        self.assertEqual(
+            {k: v for k, v in last.items() if k != "message_id"},
+            {"done": True, "sources": []},
+        )
+        self.assertIn("message_id", last)
 
     def test_ask_stream_done_event_after_normal_answer_carries_sources(self):
         chunk = SimpleNamespace(content="hello")

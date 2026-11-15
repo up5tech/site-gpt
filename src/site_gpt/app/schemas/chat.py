@@ -21,6 +21,9 @@ class ChatSource(BaseModel):
 class ChatResponse(BaseModel):
     answer: str
     sources: list[ChatSource] = []
+    # The stored assistant message, so a rating can point at the exact answer
+    # (F4). Absent only on paths that persist nothing (e.g. the quota notice).
+    message_id: UUID | None = None
 
 
 class FeedbackRequest(BaseModel):
@@ -30,6 +33,9 @@ class FeedbackRequest(BaseModel):
     session_id: str
     rating: str  # "up" | "down"
     comment: str | None = None
+    # Optional so a widget that has not been reloaded (or any pre-V2 embed) keeps
+    # working; without it the row is stored but not trainable.
+    message_id: UUID | None = None
 
 
 class ConversationMessage(BaseModel):

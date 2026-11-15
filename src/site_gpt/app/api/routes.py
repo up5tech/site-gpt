@@ -150,11 +150,31 @@ def chat_feedback(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="rating must be 'up' or 'down'",
         )
+    # A rating may point at the exact answer it judges. It must belong to this
+    # website and session, otherwise the admin review would show another
+    # visitor's answer; absent is fine (pre-V2 embeds), wrong is a client error.
+    message = None
+    if body.message_id is not None:
+        message = (
+            db.query(models.ChatMessage)
+            .filter(
+                models.ChatMessage.id == body.message_id,
+                models.ChatMessage.website_id == body.website_id,
+                models.ChatMessage.session_id == body.session_id,
+                models.ChatMessage.role == "assistant",
+            )
+            .first()
+        )
+        if message is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Message not found"
+            )
     feedback = models.ChatFeedback(
         website_id=body.website_id,
         session_id=body.session_id,
         rating=rating,
         comment=body.comment,
+        message_id=message.id if message is not None else None,
     )
     db.add(feedback)
     db.commit()
