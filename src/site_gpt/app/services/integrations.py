@@ -103,7 +103,11 @@ class WebhookProvider(IntegrationProvider):
     """
 
     type = "webhook"
-    secret_fields = ()
+    # The URL is the credential here: hooks are routinely issued as
+    # `/hooks/<token>`, so it is masked like a Slack webhook URL and a PATCH
+    # echoing the mask keeps the stored value. Signature keys stay in the
+    # environment (`INTEGRATION_WEBHOOK_SECRET`), never in `config`.
+    secret_fields = ("url",)
 
     async def send(self, config_data, event_type, payload):
         url = str(config_data.get("url") or "").strip()
