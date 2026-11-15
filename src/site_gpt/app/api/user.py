@@ -1,4 +1,6 @@
 from datetime import datetime, timedelta, UTC
+import hashlib
+import hmac
 import secrets
 from typing import Optional
 from uuid import UUID
@@ -22,6 +24,11 @@ from site_gpt.app.services.ratelimit import rate_limit
 router = APIRouter()
 
 RESET_TOKEN_TTL_MINUTES = 30
+
+
+def _token_digest(token: str) -> str:
+    """SHA-256 of a reset token, which is all the database ever stores."""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
 @router.get("/me")
@@ -61,7 +68,9 @@ def forgot_password(
     )
     if exist_user:
         token = secrets.token_urlsafe(32)
-        exist_user.reset_token = token
+        # Only the digest is stored: a database read must not hand out working
+        # reset links. The email still carries the raw token.
+        exist_user.reset_token = _token_digest(token)
         exist_user.reset_token_expires_at = datetime.now(UTC) + timedelta(
             minutes=RESET_TOKEN_TTL_MINUTES
         )
@@ -100,7 +109,7 @@ def reset_password(
     if (
         not exist_user
         or not exist_user.reset_token
-        or exist_user.reset_token != body.token
+        or not hmac.compare_digest(exist_user.reset_token, _token_digest(body.token))
     ):
         raise HTTPException(status_code=400, detail="Invalid reset token")
     if (
