@@ -42,6 +42,9 @@ class Company(BaseModel):
     digest_logs = relationship(
         "DigestLog", cascade="all, delete-orphan", passive_deletes=True
     )
+    integrations = relationship(
+        "Integration", cascade="all, delete-orphan", passive_deletes=True
+    )
 
 
 class User(BaseModel):
@@ -315,6 +318,31 @@ class DigestLog(BaseModel):
         DateTime(timezone=True), nullable=True
     )
     recipient_count: Mapped[int] = mapped_column(nullable=False, default=0)
+
+
+class Integration(BaseModel):
+    """An outbound integration for one company (F7).
+
+    `config` and `events` are JSON text, like `ApiKey.scopes`. Credentials live
+    inside `config` and are masked on every read, so a token never round-trips
+    to a browser, a log line or an API response.
+    """
+
+    __tablename__ = "integrations"
+
+    __table_args__ = (
+        Index("idx_integrations_company_id_enabled", "company_id", "enabled"),
+    )
+
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
+    )
+    # "webhook" | "slack" | "zendesk" | "crisp" — the key in PROVIDERS.
+    type: Mapped[str] = mapped_column(String(50), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    config: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    events: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
 
 class ApiKey(BaseModel):
