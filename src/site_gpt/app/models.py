@@ -3,6 +3,7 @@ from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     ForeignKey,
     Index,
@@ -36,6 +37,9 @@ class Company(BaseModel):
     )
     api_keys = relationship(
         "ApiKey", cascade="all, delete-orphan", passive_deletes=True
+    )
+    digest_logs = relationship(
+        "DigestLog", cascade="all, delete-orphan", passive_deletes=True
     )
 
 
@@ -100,6 +104,9 @@ class Website(BaseModel):
     )
     contacts = relationship(
         "Contact", cascade="all, delete-orphan", passive_deletes=True
+    )
+    handoff_requests = relationship(
+        "HandoffRequest", cascade="all, delete-orphan", passive_deletes=True
     )
 
 
@@ -222,6 +229,10 @@ class ChatMessage(BaseModel):
     website_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("websites.id", ondelete="CASCADE"), nullable=False
     )
+    # Whether the answer was grounded in retrieved context (ADR-7). NULL means
+    # "unknown" — rows written before V2, and the partial answer saved after a
+    # stream failure — never "unanswered".
+    answered: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
 
 
 class ChatFeedback(BaseModel):
@@ -235,6 +246,53 @@ class ChatFeedback(BaseModel):
     session_id: Mapped[str] = mapped_column(String(255), nullable=False)
     rating: Mapped[str] = mapped_column(String(20), nullable=False)  # "up" | "down"
     comment: Mapped[str] = mapped_column(Text, nullable=True)
+
+
+class HandoffRequest(BaseModel):
+    """A visitor asking to be handed to a human (F5, notify-and-callback)."""
+
+    __tablename__ = "handoff_requests"
+
+    __table_args__ = (
+        Index("idx_handoff_requests_website_id", "website_id"),
+        Index("idx_handoff_requests_status", "status"),
+    )
+
+    website_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("websites.id", ondelete="CASCADE"), nullable=False
+    )
+    session_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Optional: a visitor can ask for a human before giving contact details, and
+    # deleting the contact must not erase the request history.
+    contact_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("contacts.id", ondelete="SET NULL"), nullable=True
+    )
+    message: Mapped[str] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="pending"
+    )  # "pending" | "accepted" | "closed"
+    channel: Mapped[str] = mapped_column(String(50), nullable=True)
+
+
+class DigestLog(BaseModel):
+    """One weekly digest period for one company (F6).
+
+    The row is inserted *before* the email goes out with `sent_at` NULL, so a
+    crash, a retry or a second worker cannot send the same period twice;
+    `sent_at` is stamped once delivery succeeded.
+    """
+
+    __tablename__ = "digest_log"
+
+    __table_args__ = (UniqueConstraint("company_id", "period_start"),)
+
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
+    )
+    period_start: Mapped[datetime] = mapped_column(nullable=False)
+    period_end: Mapped[datetime] = mapped_column(nullable=False)
+    sent_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    recipient_count: Mapped[int] = mapped_column(nullable=False, default=0)
 
 
 class ApiKey(BaseModel):
