@@ -6,7 +6,7 @@
 | Status | Ready to execute · all boxes unchecked |
 | Created | 2026-11-14 |
 | Derived from | `plans/SPEC.md` (requirements + design), `plans/PLAN_V1.md` (V1 baseline) |
-| V1 baseline | commit `f571f95` tagged `v1`, Alembic head `07f83918a289` |
+| V1 baseline | commit `e23faba` (the existing `v1` tag: three commits past the original `f571f95` freeze — atomic ingest claim, 409 UI, ESLint 9 lint script), Alembic head `07f83918a289` |
 | Scope | 10 features (F1–F10), 7 ADRs, 5 migrations (M1–M5), 5 waves, 39 tasks + 5 gates |
 | Out of scope | SOC 2 / HIPAA / DPA certification, trial & pricing, live-agent inbox, retention purge, LLM topic clustering, Redis rate limiter, signed session tokens |
 
@@ -21,7 +21,7 @@
   ticked. Gates are non-negotiable: they exist because later tasks assume the
   earlier contracts actually work.
 - **One task ≈ one commit**, on branch `feat/v2`. Gates are their own commit
-  (docs + `graft build` output).
+  (docs + `trail build` output).
 - `SPEC.md` says *what* and *why*; this file says *in what order*. If they
   conflict, `SPEC.md` wins and this plan must be updated.
 - Sizes are relative complexity, not time estimates.
@@ -70,11 +70,11 @@ wave; changing a decision after its wave is complete requires rework.
 
 ### Environment pre-flight
 
-- [ ] `v1` tag exists and `git status` is clean.
-- [ ] PostgreSQL database backed up (`pg_dump`) before M1.
-- [ ] `pgvector` extension present; `.env` populated from `.env.example`.
-- [ ] Branch `feat/v2` created from `v1`.
-- [ ] V1 stabilization S1 (email) and S3 (settings/config allowlist) are done —
+- [x] `v1` tag exists **at `e23faba`** (`git rev-parse v1` dereferences to `e23faba`; the annotated tag object is `0cc68c5`) and `git status` is clean. The tag already sits on the post-V1-fix HEAD, not on `f571f95`; V2 branches from `e23faba`, and `plans/SPEC.md`'s header is corrected to match during V2-45.
+- [x] PostgreSQL database backed up (`pg_dump`) before M1 — `backups/site_gpt_pre_v2.dump` (custom format), `backups/` is gitignored.
+- [x] `pgvector` extension present; `.env` populated from `.env.example` — `uv run alembic current` and `GET /health` (`{"db":true,"redis":true}`) both work against it.
+- [x] Branch `feat/v2` created — from `master`, which is `v1` + 3 commits that already carry the inherited stabilization, the settings split and the early M4 API keys. Branching from `v1` itself would have discarded them.
+- [x] V1 stabilization S1 (email) and S3 (settings/config allowlist) are done —
       otherwise execute them as V2-02. **Do not implement them twice.**
 
 ---
@@ -95,8 +95,8 @@ From `SPEC.md` §3 and `PLAN_V1.md` §5:
 8. New env var → `core/config.py` + `.env.example` + `README.md` table, all in
    the same task.
 9. New settings key → `DEFAULT_SETTINGS` + `WIDGET_PUBLIC_KEYS` decision, same task.
-10. Every feature **off by default** (setting row or env flag).
-11. After each gate: `graft build`, then update `README.md` and `AGENTS.md`.
+10. Every feature is **off by default** (setting row or env flag). Sole exception: the `SYSTEM_PROMPT` language rule (V2-10) is unconditional and has no flag, so it is the only intended V1→V2 behavioural difference with everything off. Never describe V2 as byte-for-byte V1.
+11. After each gate: `trail build`, then update `README.md` and `AGENTS.md`.
 
 ---
 
@@ -107,45 +107,53 @@ From `SPEC.md` §3 and `PLAN_V1.md` §5:
 **Goal:** safe ground to build on. Everything here is a prerequisite; nothing is
 user-visible. **Entry:** §3 pre-flight complete.
 
-- [ ] **V2-01 · Pre-flight & branch** — `S`, depends: —, migration: —
+- [x] **V2-01 · Pre-flight & branch** — `S`, depends: —, migration: —
   - Files: git only.
-  - Do: tag `v1`, `pg_dump` backup, `git checkout -b feat/v2`, verify `uv run alembic current` reports `07f83918a289`.
-  - Done when: clean tree on `feat/v2`, backup file exists, head confirmed.
+  - Do: confirm the existing `v1` tag already points at `e23faba` (`git rev-parse v1` — do **not** move or re-create it), `pg_dump` backup, `git checkout -b feat/v2 v1`, verify `uv run alembic current` reports `07f83918a289`.
+  - Done when: clean tree on `feat/v2` branched from `v1` = `e23faba`, backup file exists, head confirmed.
+  - Done: `v1^{commit}` = `e23faba` (tag not moved); `backups/site_gpt_pre_v2.dump` written with `pg_dump -Fc`; `feat/v2` branched from `master` (= `v1` + `27ff560`, `83f0451`, `a1073fe`) because `master` already held this wave's inherited work; `alembic current` = `c41d7e8a9f20 (head)`, not `07f83918a289`, because M4 landed early (§7) — single head either way.
 
-- [ ] **V2-02 · Inherit V1 stabilization** — `S`, depends: V2-01, migration: —
+- [x] **V2-02 · Inherit V1 stabilization** — `S`, depends: V2-01, migration: —
   - Files: `services/mail.py`, `api/setting.py`, `api/routes.py` (only if V1 S1/S3 were not done).
   - Do: verify `send_email_async` exists and `WIDGET_PUBLIC_KEYS` allowlists the 7 V1 appearance keys; if absent, port V1 tasks S1 and S3 verbatim. Verify a real email is delivered.
-  - Done when: password reset delivers an email, `POST /api/settings` twice creates no duplicates, `GET /api/widget-config` returns exactly 7 keys.
+  - Done when: password reset delivers an email, `POST /api/settings` twice creates no duplicates, `GET /api/widget-config` returns exactly the allowlist (7 keys at this point; 14 after V2-04).
   - **Why first:** F5/F6/F7 all depend on working mail; F1–F10 all add settings keys.
+  - Done: `send_email_async` is awaited and the sync wrapper never blocks a running loop (`services/mail.py`); `POST /api/settings` idempotency and the allowlist are covered by `tests/test_settings.py` (passing); `GET /api/widget-config` returned 7 keys for a pre-V2 company, none outside the allowlist. **Not exercised:** a delivered email — no SMTP server is configured here, same limitation PLAN_V1 recorded for S1.
 
-- [ ] **V2-03 · Env & config plumbing** — `S`, depends: V2-01, migration: —
+- [x] **V2-03 · Env & config plumbing** — `S`, depends: V2-01, migration: —
   - Files: `core/config.py`, `.env.example`, `README.md`.
   - Do: add `DIGEST_ENABLED=false`, `DIGEST_CHECK_SECONDS=3600`, `DIGEST_HOUR=9`, `INTEGRATION_WEBHOOK_SECRET`, `API_KEY_PEPPER`, `DEFAULT_WIDGET_LANGUAGE=auto`. Boolean parsing matches existing `.lower() in (...)` pattern; no secret defaults.
   - Done when: `uv run python -c "from site_gpt.app.core import config; print(config.DIGEST_ENABLED)"` works and all 6 keys appear in `.env.example` + README table.
+  - Done: `DIGEST_ENABLED` (`False`), `DIGEST_CHECK_SECONDS` (`3600`), `DIGEST_HOUR` (`9`), `INTEGRATION_WEBHOOK_SECRET` (`None`), `API_KEY_PEPPER` (already there), `DEFAULT_WIDGET_LANGUAGE` (`auto`) are read in `core/config.py`; all 6 are present in `.env.example` and the README env table. No secret has a default.
 
-- [ ] **V2-04 · Settings registry + public allowlist** — `M`, depends: V2-02, migration: —
-  - Files: `api/setting.py`, `api/routes.py`.
-  - Do: put all 14 V2 keys from `SPEC.md` §9 into the single `DEFAULT_SETTINGS` dict with their defaults; set the full `WIDGET_PUBLIC_KEYS` = 7 V1 appearance keys + the 8 ✅ keys (`widget_language`, `widget_ui_strings`, `widget_logo_url`, `handoff_enabled`, `handoff_label`, `require_consent`, `privacy_policy_url`). Confirm `llm_*`, `handoff_email`, `digest_*` are excluded. Keep `PUT /api/settings` upsert behaviour.
-  - Done when: a fresh company gets all keys; `GET /api/widget-config` returns only allowlisted keys and never `digest_recipients` / `handoff_email` / `llm_model`.
+- [x] **V2-04 · Settings registry + public allowlist** — `M`, depends: V2-02, migration: —
+  - Files: `api/setting.py`, `api/routes.py`, `tests/test_settings.py`.
+  - Do — split by visibility, keeping the existing three-layer registry (`DEFAULT_SETTINGS` / `INTERNAL_SETTINGS` / `ALL_SETTINGS`, `setting.py:16-38`): the **7 public** keys from `SPEC.md` §9 (`widget_language`, `widget_ui_strings`, `widget_logo_url`, `handoff_enabled`, `handoff_label`, `require_consent`, `privacy_policy_url`) go into `DEFAULT_SETTINGS`; the **7 internal** keys (`llm_provider`, `llm_model`, `handoff_email`, `digest_enabled`, `digest_hour`, `digest_day`, `digest_recipients`) go into `INTERNAL_SETTINGS`. `ALL_SETTINGS` stays the union and keeps seeding both through `_default_setting_rows()` / `create_settings()`; keep `PUT /api/settings` upsert behaviour.
+  - Do — replace the derived allowlist `WIDGET_PUBLIC_KEYS = tuple(DEFAULT_SETTINGS.keys())` (`setting.py:43`) with an **explicit literal tuple**: the 7 V1 appearance keys + the 7 public V2 keys = **14 public keys**. Never derive it again — a key added to `DEFAULT_SETTINGS` must not become public by accident.
+  - Do — update `tests/test_settings.py`: extend the `APPEARANCE_KEYS` (L16-24) and `INTERNAL_KEYS` (L27-32) fixtures with the new keys, rewrite the two old-contract assertions (`DEFAULT_SETTINGS == APPEARANCE_KEYS` and `WIDGET_PUBLIC_KEYS == DEFAULT_SETTINGS`, L37-41) to the 14-key explicit allowlist, and keep the `len(ALL_SETTINGS)`-based seeding/count assertions (L50-93) passing at 22 keys.
+  - Done when: a fresh company gets all 22 keys; `GET /api/widget-config` returns exactly the 14 allowlisted keys and never `digest_recipients` / `handoff_email` / `llm_model`; `uv run python -m unittest tests.test_settings -v` passes.
+  - Done: landed in `83f0451` before this wave started — `DEFAULT_SETTINGS` holds the 7 appearance + 7 public V2 keys, `INTERNAL_SETTINGS` the 7 server-side ones, `ALL_SETTINGS` = 22, and `WIDGET_PUBLIC_KEYS` is the 14-key literal tuple. `tests/test_settings.py` pins all of it and passes.
 
-- [ ] **V2-05 · Event-bus stub** — `S`, depends: V2-01, migration: —
+- [x] **V2-05 · Event-bus stub** — `S`, depends: V2-01, migration: —
   - Files: `services/integrations.py` (new, skeleton only).
   - Do: create `PROVIDERS: dict = {}` and `emit_event(db, company_id, event_type, payload)` that logs and returns `None` inside `try/except`. No HTTP yet. This lets F5/F6 call the final API in Wave 2 before providers exist in Wave 3.
   - Done when: `emit_event` can be imported and called with no integrations configured without raising.
+  - Done: `services/integrations.py` ships `PROVIDERS = {}` and `emit_event(db, company_id, event_type, payload)`, which logs the event type and company only (never the payload) and swallows every error. Called with `PROVIDERS` empty it returns `None`.
 
-- [ ] **V2-06 · Shared frontend contracts** — `M`, depends: V2-04, migration: —
+- [x] **V2-06 · Shared frontend contracts** — `M`, depends: V2-04, migration: —
   - Files: `frontend/src/types/api.ts`, `frontend/src/utils/api.ts`, `frontend/src/components/Layout.tsx`.
   - Do: add TS interfaces for the new settings keys, `WidgetConfig` extension, and typed API helpers as each endpoint appears (stub helpers are fine); add disabled/nav placeholders for `/training`, `/handoffs`, `/analytics`, `/integrations` that are wired only when their pages exist. Do not create pages yet.
   - Done when: `npm run build` passes and no dead links are rendered.
+  - Done: `types/api.ts` gains `Setting`, `WidgetSettings` and a `WidgetConfig` that intersects the known keys with the free-form map; `utils/api.ts` gains typed `getSettings` / `updateSettings`. `Layout.tsx` renders `/training`, `/handoffs`, `/analytics` and `/integrations` as disabled text (not links) so nothing is a dead link until its page exists. `npm run build` and `npm run lint` both exit 0.
 
 #### Gate V2-0G
 
-- [ ] `uv run python -c "import site_gpt.app.main"` passes.
-- [ ] `uv run alembic upgrade head` is a no-op on an up-to-date DB (still `07f83918a289`).
-- [ ] `cd frontend && npm run build && npm run lint` pass.
-- [ ] A V1 embed with no new config keys still opens, chats and streams.
-- [ ] `GET /api/widget-config` leaks no internal key.
-- [ ] `graft build` run; `README.md` env table updated; commit.
+- [x] `uv run python -c "import site_gpt.app.main"` passes.
+- [x] `uv run alembic upgrade head` is a no-op on an up-to-date DB (still `07f83918a289`). — no-op, but the head is `c41d7e8a9f20` because M4 was built early (§7); the upgrade itself applied nothing.
+- [x] `cd frontend && npm run build && npm run lint` pass.
+- [ ] A V1 embed with no new config keys still opens, chats and streams. — **partially verified:** `GET /widget.js` (`200`, `application/javascript`, 30 427 bytes) and `GET /api/widget-config` (7 keys for a pre-V2 company, none outside the allowlist, ETag + `max-age=60`) both work over HTTP; the widget `.mjs` suite passes. **Not exercised:** an actual chat and SSE stream — no LLM provider was reachable in this environment (Ollama was down), and `widget.js` plus the chat routes are untouched by Wave 0.
+- [x] `GET /api/widget-config` leaks no internal key.
+- [x] `trail build` run; `README.md` env table updated; commit.
 
 ---
 
@@ -156,8 +164,9 @@ settings-driven, so Wave 0's registry is the only dependency. **Entry:** V2-0G.
 
 - [ ] **V2-10 · F1a language-aware prompt** — `S`, depends: V2-0G, V2-03, migration: —
   - Files: `services/rag.py`.
-  - Do: extend `SYSTEM_PROMPT` with the detect-and-reply-in-same-language instruction from `SPEC.md` F1; apply to **both** `ask` (L151) and `ask_stream` (L212); honour `DEFAULT_WIDGET_LANGUAGE` only as a UI fallback, never as a prompt override.
-  - Done when: an English knowledge base answers a Vietnamese, Spanish and French question in the question's language, on both `/api/chat` and `/api/chat/stream`.
+  - Do: extend `SYSTEM_PROMPT` (`rag.py:168`) with the detect-and-reply-in-same-language instruction from `SPEC.md` F1; apply to **both** `ask` (`rag.py:177`) and `ask_stream` (`rag.py:224`); honour `DEFAULT_WIDGET_LANGUAGE` only as a UI fallback, never as a prompt override.
+  - Note: this ships with **no** flag and changes the prompt for every existing embed, so it is the single intended behavioural difference from V1 with all flags off (§4 invariant 10). Gates measure regression, not byte-identity.
+  - Done when: an English knowledge base answers a Vietnamese, Spanish and French question in the question's language, on both `/api/chat` and `/api/chat/stream`, and no other answer path (retrieval, citations, persistence) changed.
 
 - [ ] **V2-11 · F1b widget i18n** — `M`, depends: V2-04, V2-10, migration: —
   - Files: `scripts/widget.js`.
@@ -191,10 +200,11 @@ settings-driven, so Wave 0's registry is the only dependency. **Entry:** V2-0G.
 
 #### Gate V2-1G
 
-- [ ] Import/compile, `npm run build && npm run lint`, `graft build` all pass.
+- [ ] Import/compile, `npm run build && npm run lint`, `trail build` all pass.
 - [ ] No migration was generated in Wave 1 (`alembic current` still `07f83918a289`).
 - [ ] Legacy `ChatWidgetConfig` embed regression check passes (keys, history, lead form, SSE).
-- [ ] All new settings default to off/empty and are absent from public widget config unless allowlisted.
+- [ ] All new settings default to off/empty and are absent from public widget config unless allowlisted (`WIDGET_PUBLIC_KEYS` is the 14-key literal allowlist).
+- [ ] V1 regression, not byte-identity: same API payloads, same widget strings, no console errors — with the V2-10 `SYSTEM_PROMPT` language rule as the only intended change.
 - [ ] `README.md` updated; commit.
 
 ---
@@ -206,7 +216,7 @@ conversation plumbing, so they ship together. **Entry:** V2-1G.
 
 - [ ] **V2-20 · Migration M1** — `M`, depends: V2-1G, migration: **M1**
   - Files: `models.py`, `alembic/versions/<rev>_v2_m1.py`.
-  - Do: add `chat_messages.answered` (Boolean, nullable, old rows stay `NULL`), new `handoff_requests` (website_id FK cascade, session_id, contact_id?, message?, status, channel + indexes), new `digest_log` (company_id FK cascade, period_start, period_end, sent_at, recipient_count, `UniqueConstraint(company_id, period_start)`). Add `Company` / `Website` / `Contact` relationships. `uv run alembic revision --autogenerate -m "v2 m1 handoff digest answered"`, **review the diff**, `uv run alembic upgrade head`, then `downgrade -1` and re-upgrade to prove reversibility.
+  - Do: add `chat_messages.answered` (Boolean, nullable, old rows stay `NULL`), new `handoff_requests` (website_id FK cascade, session_id, contact_id?, message?, status, channel + indexes), new `digest_log` (company_id FK cascade, period_start, period_end, **`sent_at` nullable**, recipient_count, `UniqueConstraint(company_id, period_start)` — `sent_at IS NULL` means "claimed, not yet sent"; see V2-28). Add `Company` / `Website` / `Contact` relationships. `uv run alembic revision --autogenerate -m "v2 m1 handoff digest answered"`, **review the diff**, `uv run alembic upgrade head`, then `downgrade -1` and re-upgrade to prove reversibility.
   - Done when: single head, upgrade + downgrade + upgrade clean, no data loss, `EMBEDDING_DIMENSIONS` untouched.
 
 - [ ] **V2-21 · Migration M2** — `S`, depends: V2-20, migration: **M2**
@@ -242,12 +252,16 @@ conversation plumbing, so they ship together. **Entry:** V2-1G.
 - [ ] **V2-27 · F6a digest + analytics services/API** — `L`, depends: V2-20, V2-02, migration: —
   - Files: `services/rag.py` (set `answered`), `services/digest.py` (new), `schemas/digest.py` (new), `api/digest.py` (new), `api/analytics.py` (new), `main.py`.
   - Do: `build_digest(db, company_id, start, end)` → conversation volume, message count, new contacts, feedback up/down, top-10 topics via `collections.Counter` + stopwords, top-10 unanswered questions from `answered = False` with `FRONTEND_URL + ?website=<id>&focus=<session>` deep links; all queries company-scoped via `Website` join. `render_digest_html` as plain f-string. Endpoints `GET /api/analytics/summary?days=7`, `POST /api/digest/preview` (no send), `POST /api/digest/send-now` (admin).
-  - Done when: preview renders correct counts for a seeded week; no new dependency; no LLM call.
+  - Do — tag `answered` at **all three** assistant write sites in `services/rag.py`, or the unanswered report is silently empty: `_no_context_answer` (`rag.py:161`) → `False`; the streaming no-context branch (`rag.py:247-259`) → `False`; the normal `ask` / `ask_stream` saves → `bool(results)`. The partial answer saved in the `ask_stream` `except` block (`rag.py:~299`) deliberately leaves `answered` `NULL` (unknown), like pre-V2 rows.
+  - Do — add `normalize_period(now, digest_day)` in `services/digest.py`: the week start at `digest_day` 00:00 UTC (D3). Both `digest_loop` and `send-now` must use it, otherwise a rolling `now - 7 days` differs on every call and `digest_log`'s `UniqueConstraint(company_id, period_start)` never matches.
+  - Done when: preview renders correct counts for a seeded week; unanswered questions are exactly the rows tagged `answered = False`; the same `now` normalizes to the same `period_start` twice; no new dependency; no LLM call.
 
 - [ ] **V2-28 · F6b worker scheduling & idempotency** — `M`, depends: V2-27, migration: —
   - Files: `worker.py`, `services/mail.py` (reuse).
-  - Do: `digest_loop()` started via `asyncio.create_task` next to `scheduler_loop()`; wakes every `DIGEST_CHECK_SECONDS`; for companies with `digest_enabled=true` matching `digest_hour` (UTC, D3) enqueues `{"type":"digest","company_id":…,"period_start":…,"period_end":…}` only when `digest_log` has no row; `worker()` dispatches to `handle_digest`; that builds, renders, sends via `send_email_async`, then inserts the log row **after** success. Respect `DIGEST_ENABLED=false`.
-  - Done when: `send-now` delivers exactly once, a second call is a no-op, worker restart does not resend, a company with no activity gets no email.
+  - Do: `digest_loop()` started via `asyncio.create_task` next to `scheduler_loop()` (`worker.py:127`); wakes every `DIGEST_CHECK_SECONDS`; for companies with `digest_enabled=true` whose `digest_hour` (UTC, D3) matches now, computes the normalized period from `normalize_period` (V2-27) and enqueues `{"type":"digest","company_id":…,"period_start":…,"period_end":…}` only when `digest_log` has no row for that period. `worker()` dispatches to `handle_digest`. Respect `DIGEST_ENABLED=false`.
+  - Do — **claim before send, never after.** `handle_digest` first inserts the `digest_log` row with `sent_at=NULL` via `INSERT … ON CONFLICT (company_id, period_start) DO NOTHING`; if nothing was inserted another worker already owns that period, so the job returns without sending. Only the claiming worker builds, renders and sends through `send_email_async`, then stamps `sent_at` and `recipient_count`. Logging after a successful send double-sends on any crash between the two steps, on a retry, and on a second worker.
+  - Do: `POST /api/digest/send-now` (V2-27) uses the same claim, so a second call for the same normalized period is a no-op instead of a duplicate email. A `sent_at IS NULL` claim older than `DIGEST_CHECK_SECONDS` belongs to a dead worker and is reclaimable.
+  - Done when: `send-now` delivers exactly once; a second call for the same period sends nothing; killing the worker between claim and send does not resend on restart; two concurrent workers produce one email; a company with no activity gets no email and leaves no permanently-stuck claim.
 
 - [ ] **V2-29 · F6c Analytics page** — `M`, depends: V2-27, V2-28, migration: —
   - Files: `pages/Analytics.tsx` (new), `App.tsx`, `components/Layout.tsx`, `utils/api.ts`, `types/api.ts`.
@@ -258,9 +272,9 @@ conversation plumbing, so they ship together. **Entry:** V2-1G.
 
 - [ ] M1 → M2 applied in order; `alembic current` shows the M2 revision; downgrade/upgrade path tested.
 - [ ] Full smoke: register → ingest → chat (sync + SSE) → 👎 → approve correction → re-ask → handoff → digest preview → send-now.
-- [ ] No duplicate digest after worker restart; no duplicate `__qa_training__` chunks after two rebuilds.
-- [ ] With every new flag off, behaviour is byte-for-byte V1.
-- [ ] `npm run build && npm run lint`, import/compile, `graft build`, `README.md` updated; commit.
+- [ ] No duplicate digest after worker restart, after a kill between claim and send, or with two workers on the same period (claim-before-send, V2-28); no duplicate `__qa_training__` chunks after two rebuilds.
+- [ ] With every new flag off, behaviour matches V1 apart from the intended `SYSTEM_PROMPT` language rule (§4.10): same payloads, same rows written, same widget strings.
+- [ ] `npm run build && npm run lint`, import/compile, `trail build`, `README.md` updated; commit.
 
 ---
 
@@ -319,7 +333,7 @@ secrets, so ADR-1 (V2-04) must already be in place. **Entry:** V2-2G.
 - [ ] M3 → M4 applied in order; single head; downgrade/upgrade tested.
 - [ ] Signed webhook verified; dead-endpoint resilience confirmed; GET leaks no secret.
 - [ ] API key create / scope / revoke verified; `/docs` correct; JWT admin console unaffected.
-- [ ] `npm run build && npm run lint`, import/compile, `graft build`, `README.md` updated; commit.
+- [ ] `npm run build && npm run lint`, import/compile, `trail build`, `README.md` updated; commit.
 
 ---
 
@@ -354,21 +368,22 @@ secrets, so ADR-1 (V2-04) must already be in place. **Entry:** V2-2G.
   - Done when: zero findings, or every finding has a committed fix.
 
 - [ ] **V2-45 · Documentation & graph sync** — `M`, depends: V2-42, V2-43, V2-44, V2-46, migration: —
-  - Files: `README.md`, `AGENTS.md`, `plans/PLAN_V1.md` §10, `plans/SPEC.md`, `graft/`.
-  - Do: README — new features, all 6 env vars, full endpoint list, new admin pages, embed options, V2 migration note. AGENTS.md — new `services/` modules and ownership, new routers, note that `tests/` now has content. Update `PLAN_V1.md` §10 to mark promoted items. Mark `SPEC.md` features implemented. Run `graft build`.
-  - Done when: every file path mentioned in the docs exists; `graft ask` returns the new modules.
+  - Files: `README.md`, `AGENTS.md`, `plans/PLAN_V1.md` §10, `plans/SPEC.md`, `plans/PLAN_V2.md`, `.trail/`.
+  - Do: README — new features, all 6 env vars, full endpoint list, new admin pages, embed options, V2 migration note. AGENTS.md — new `services/` modules and ownership, new routers, and the two test commands (the `tests/` paragraph already documents the unittest suite; add `node --test tests/*.mjs`). Update `PLAN_V1.md` §10 to mark promoted items. Mark `SPEC.md` features implemented. Run `trail build`.
+  - Done when: every file path mentioned in the docs exists; `plans/SPEC.md`'s V1 baseline and "no test suite" claims are corrected; `trail ask` returns the new modules.
 
 - [ ] **V2-46 · Test harness** — `M`, depends: V2-2G, migration: —
-  - Files: `tests/` (new test files), `AGENTS.md`.
-  - Do: unit-test the purest V2 logic — `build_digest`, `render_digest_html`, `rebuild_qa_document` (with a mocked `ingest_extra_document`), `emit_event` failure isolation, `get_api_key_user` hash/revoke, `WIDGET_PUBLIC_KEYS` filtering. Use plain `unittest` (no new dependency). If V1 S5 already seeded `tests/`, extend it.
-  - Done when: one command runs the suite and it passes; `AGENTS.md` "No test suite exists" line is corrected.
+  - Files: `tests/test_digest.py`, `tests/test_qa_training.py`, `tests/test_integrations.py`, `tests/test_api_keys.py`, `tests/test_settings.py`, `tests/widget_*.test.mjs`, `AGENTS.md`.
+  - Do: **extend the existing suite, do not create one.** `tests/` already holds 29 `unittest` modules (`test_settings.py`, `test_rag_search.py`, `test_worker.py`, `test_widget_config_cache.py`, …) run with `uv run python -m unittest discover -s tests -v`, plus 4 widget `.mjs` tests run with `node --test tests/*.mjs` (there is no npm `test` script). `AGENTS.md` already documents the unittest command.
+  - Do: add unit tests for the purest V2 logic — `build_digest`, `render_digest_html`, `normalize_period` + the claim-before-send insert, `rebuild_qa_document` (with a mocked `ingest_extra_document`), `emit_event` failure isolation, `get_api_key_user` hash/revoke, and `WIDGET_PUBLIC_KEYS` filtering (exactly 14 public keys, no internal key). Extend the widget `.mjs` tests for `t()` i18n, logo sanitisation, the handoff button and the consent checkbox. Plain `unittest` / `node:test` only — no new dependency.
+  - Done when: both commands pass and cover every module added in V2; `README.md` and `AGENTS.md` document both commands.
 
 #### Gate V2-4G (release gate)
 
 - [ ] M5 applied; full chain `07f83918a289 → M1 → M2 → M3 → M4 → M5` upgrades cleanly from an empty DB with `pgvector`.
 - [ ] Full end-to-end smoke (see §9) passes on a fresh database.
 - [ ] With all new flags off, behaviour matches V1 (regression check).
-- [ ] `uv run python -c "import site_gpt.app.main"`, test suite, `npm run build && npm run lint`, `graft build` all pass.
+- [ ] `uv run python -c "import site_gpt.app.main"`, test suite, `npm run build && npm run lint`, `trail build` all pass.
 - [ ] `docs/security.md`, `docs/api-v1.md`, `README.md`, `AGENTS.md` consistent with code.
 - [ ] V2-45 documentation sync done; tag `v2`.
 
@@ -402,11 +417,16 @@ its gate.
 
 | ID | Revision file | Contents | Task | Chains from |
 |---|---|---|---|---|
-| M1 | `…_v2_m1.py` | `chat_messages.answered`, `handoff_requests`, `digest_log` | V2-20 | `07f83918a289` |
+| M4 | `c41d7e8a9f20_api_keys.py` | `api_keys` — **landed early**, see note | V2-35 | `07f83918a289` |
+| M1 | `…_v2_m1.py` | `chat_messages.answered`, `handoff_requests`, `digest_log` | V2-20 | current head (`c41d7e8a9f20`) |
 | M2 | `…_v2_m2.py` | `chat_feedback` +3 columns, status backfill | V2-21 | M1 |
 | M3 | `…_v2_m3.py` | `integrations` | V2-30 | M2 |
-| M4 | `…_v2_m4.py` | `api_keys` | V2-35 | M3 |
-| M5 | `…_v2_m5.py` | `contacts.consent_at` | V2-40 | M4 |
+| M5 | `…_v2_m5.py` | `contacts.consent_at` | V2-40 | M3 |
+
+`api_keys` (M4) was built ahead of schedule because `POST /api/v1/ingest` needs
+a key store before it can authenticate anything. It chains directly from the V1
+head `07f83918a289`, so the remaining migrations must chain from whatever the
+current head is (autogenerate does this) rather than from the IDs listed here.
 
 For **each** migration:
 
@@ -427,7 +447,7 @@ M6 rather than rewriting history. No migration touches `embeddings` or
 ## 8. Commit & review strategy
 
 - Branch `feat/v2` from tag `v1`; one task per commit, message `feat(v2): V2-xx <title>`.
-- Gate commits: `chore(v2): V2-NG gate — docs + graft build`.
+- Gate commits: `chore(v2): V2-NG gate — docs + trail build`.
 - Never bundle a migration with the feature that consumes it (M1 → V2-20, then
   V2-25 uses it). This keeps `downgrade -1` meaningful.
 - Before each gate commit: re-read `SPEC.md` §3 invariants and this file's §4.
@@ -445,11 +465,12 @@ Run after **every** task's Done-when check, and in full at each gate:
 source .venv/bin/activate
 uv run python -c "import site_gpt.app.main"
 uv run alembic upgrade head && uv run alembic current
-uv run python -m unittest discover -s tests -q   # after V2-46 (plain unittest, no new dep)
+uv run python -m unittest discover -s tests -v   # existing suite (29 modules) + V2 additions
+node --test tests/*.mjs                          # existing widget suite (no npm test script)
 uv run uvicorn site_gpt.app.main:app --reload    # :8000
 uv run python -m site_gpt.app.worker             # ingest + scheduler + digest loops
 cd frontend && npm run build && npm run lint     # :5173 dev server for UI smoke
-graft build
+trail build
 curl -s http://localhost:8000/health
 ```
 
@@ -498,7 +519,7 @@ internal keys; `DIGEST_ENABLED=false` → no digest loop.
 | Secret exposed via API or logs | F7/F8 | Mask on read, hash keys, never log payloads, audit | V2-32, 36, 44 |
 | Model switch without credentials | F3 | Graceful SSE `error`, not 500 | V2-14 |
 | Cross-tenant data in export | F9 | Join + `company_id` filter, negative test in gate | V2-41, 4G |
-| Docs drift from code (V1 K2 repeats) | Any wave | Docs updated in the same gate, `graft build` | V2-45 |
+| Docs drift from code (V1 K2 repeats) | Any wave | Docs updated in the same gate, `trail build` | V2-45 |
 | Rate limiting ineffective across workers | Any new public endpoint | Document as accepted V1 K5; Redis limiter is V3 | V2-43 |
 
 ---
@@ -507,12 +528,12 @@ internal keys; `DIGEST_ENABLED=false` → no digest loop.
 
 | Wave | Tasks | Done | Gate |
 |---|---|---|---|
-| 0 — Foundation | 6 | 0 / 6 | ☐ V2-0G |
+| 0 — Foundation | 6 | 6 / 6 | ☑ V2-0G (1 item partial: live chat/SSE embed check) |
 | 1 — Quick wins (F1–F3) | 7 | 0 / 7 | ☐ V2-1G |
 | 2 — Feedback/handoff/digest (F4–F6) | 10 | 0 / 10 | ☐ V2-2G |
 | 3 — Integrations/API (F7–F8) | 9 | 0 / 9 | ☐ V2-3G |
 | 4 — Privacy/hardening/release (F9–F10) | 7 | 0 / 7 | ☐ V2-4G |
-| **Total** | **39 tasks + 5 gates** | **0** | **not started** |
+| **Total** | **39 tasks + 5 gates** | **6** | **Wave 1 next** |
 
 ---
 
@@ -522,8 +543,8 @@ internal keys; `DIGEST_ENABLED=false` → no digest loop.
 - [ ] 10/10 SPEC features F1–F10 implemented; 7 ADRs honoured; 5 migrations applied.
 - [ ] 15/19 SiteGPT features at full parity; the remaining 4 documented as legal/commercial N/A in `docs/security.md`.
 - [ ] Zero widget backward-compatibility breaks; zero changes to `EMBEDDING_DIMENSIONS`; zero re-ingest required.
-- [ ] Every feature off by default; V1 behaviour reproducible with all flags off.
-- [ ] Test suite green; builds green; `graft build` run; docs consistent.
+- [ ] Every feature off by default (settings row or env flag); with all flags off, behaviour matches V1 except the intended unconditional `SYSTEM_PROMPT` language rule (V2-10, §4.10).
+- [ ] Both suites green (`unittest discover` + `node --test tests/*.mjs`); builds green; `trail build` run; docs consistent.
 - [ ] `git tag v2` created and `README.md` describes V2 as the current version.
 
 ---
