@@ -41,6 +41,7 @@ const APPEARANCE_KEYS = [
   'suggested_questions',
   'widget_language',
   'widget_ui_strings',
+  'widget_logo_url',
 ] as const;
 
 const DEFAULT_APPEARANCE = {
@@ -53,6 +54,7 @@ const DEFAULT_APPEARANCE = {
   suggested_questions: '',
   widget_language: 'auto',
   widget_ui_strings: '',
+  widget_logo_url: '',
 };
 
 // Languages the widget ships labels for. Anything else follows the English
@@ -140,6 +142,10 @@ function buildPreview(values: Record<string, unknown>) {
       values.widget_ui_strings,
       DEFAULT_APPEARANCE.widget_ui_strings,
     ),
+    logoUrl: asText(
+      values.widget_logo_url,
+      DEFAULT_APPEARANCE.widget_logo_url,
+    ),
   };
 }
 
@@ -154,6 +160,7 @@ interface AppearanceFormValues {
   suggested_questions?: string;
   widget_language?: string;
   widget_ui_strings?: string;
+  widget_logo_url?: string;
 }
 
 interface ProfileFormValues {
@@ -230,6 +237,7 @@ export function Settings() {
         suggested_questions: map.suggested_questions || '',
         widget_language: map.widget_language || 'auto',
         widget_ui_strings: map.widget_ui_strings || '',
+        widget_logo_url: map.widget_logo_url || '',
       };
       appearanceForm.setFieldsValue(values);
       setPreview(buildPreview(values));
@@ -516,6 +524,13 @@ export function Settings() {
               >
                 <Form.Item name='assistant_name' label='Assistant Name'>
                   <Input placeholder='Site GPT' />
+                </Form.Item>
+                <Form.Item
+                  name='widget_logo_url'
+                  label='Logo URL'
+                  tooltip='Shown in the chat header and as the bot avatar. Must be an https:// URL (or a data:image base64 URI). Leave empty for the default emoji.'
+                >
+                  <Input placeholder='https://example.com/logo.png' />
                 </Form.Item>
                 <Row gutter={16}>
                   <Col span={12}>

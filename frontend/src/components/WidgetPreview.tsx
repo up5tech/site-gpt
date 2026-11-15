@@ -1,4 +1,5 @@
 import { Empty } from 'antd';
+import { useEffect, useState } from 'react';
 import type { CSSProperties } from 'react';
 
 export interface WidgetPreviewProps {
@@ -11,6 +12,19 @@ export interface WidgetPreviewProps {
   suggestedQuestions?: string;
   language?: string;
   uiStrings?: string;
+  logoUrl?: string;
+}
+
+// Same rule as widget.js: only absolute https URLs and raster data URIs can
+// become an <img src>, so no javascript:/inline-SVG source reaches the preview.
+const LOGO_HTTPS = /^https:\/\/[^\s"'<>]+$/i;
+const LOGO_DATA = /^data:image\/(?:png|jpe?g|gif|webp);base64,[a-z0-9+/=\s]+$/i;
+
+function safeLogoUrl(value: string | undefined): string {
+  const candidate = (value || '').trim();
+  return LOGO_HTTPS.test(candidate) || LOGO_DATA.test(candidate)
+    ? candidate
+    : '';
 }
 
 // The shipped label catalogue mirrors widget.js, which owns the full table; the
@@ -73,7 +87,14 @@ export function WidgetPreview({
   suggestedQuestions = '',
   language,
   uiStrings,
+  logoUrl,
 }: WidgetPreviewProps) {
+  // A logo that fails to load must fall back to the emoji, and a new URL gets a
+  // fresh chance instead of staying on the previous failure.
+  const [logoFailed, setLogoFailed] = useState(false);
+  useEffect(() => setLogoFailed(false), [logoUrl]);
+  const logo = logoFailed ? '' : safeLogoUrl(logoUrl);
+
   const overrides = parseUiStrings(uiStrings);
   const catalogue = PREVIEW_STRINGS[resolveLocale(language)] || {};
   const label = (key: 'clear' | 'send', fallback: string) =>
@@ -220,24 +241,66 @@ export function WidgetPreview({
       <div style={deviceStyle}>
         <div style={chatBoxStyle}>
           <div style={headerStyle}>
-            <span>{assistantName || 'Assistant'}</span>
+            <span
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                minWidth: 0,
+              }}
+            >
+              {logo && (
+                <img
+                  key={logo}
+                  src={logo}
+                  alt=''
+                  referrerPolicy='no-referrer'
+                  style={{
+                    width: 22,
+                    height: 22,
+                    objectFit: 'contain',
+                    borderRadius: 4,
+                    flex: '0 0 auto',
+                  }}
+                  onError={() => setLogoFailed(true)}
+                />
+              )}
+              <span>{assistantName || 'Assistant'}</span>
+            </span>
             <button style={clearBtnStyle} type='button'>
               {label('clear', 'Clear')}
             </button>
           </div>
           <div style={messagesStyle}>
             <div style={{ display: 'flex', marginBottom: 8 }}>
-              <div
-                style={{
-                  width: 26,
-                  height: 26,
-                  marginRight: 6,
-                  textAlign: 'center',
-                  lineHeight: '26px',
-                }}
-              >
-                🤖
-              </div>
+              {logo ? (
+                <img
+                  key={logo}
+                  src={logo}
+                  alt=''
+                  referrerPolicy='no-referrer'
+                  style={{
+                    width: 26,
+                    height: 26,
+                    marginRight: 6,
+                    objectFit: 'contain',
+                    borderRadius: 4,
+                  }}
+                  onError={() => setLogoFailed(true)}
+                />
+              ) : (
+                <div
+                  style={{
+                    width: 26,
+                    height: 26,
+                    marginRight: 6,
+                    textAlign: 'center',
+                    lineHeight: '26px',
+                  }}
+                >
+                  🤖
+                </div>
+              )}
               <div style={bubbleStyle}>{greeting}</div>
             </div>
 

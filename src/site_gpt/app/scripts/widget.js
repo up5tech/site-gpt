@@ -14,6 +14,7 @@
     footerColor: '#4c74af',
     placeholder: 'Type a message...',
     welcomeMessage: 'Hi 👋 How can I help you?',
+    logoUrl: '',
     enableHistory: true,
     suggestedQuestions: [],
     requireContactInfo: true,
@@ -79,11 +80,23 @@
     return trimmed || fallback;
   }
 
+  // `widget_logo_url` becomes an <img src>, so only absolute https URLs and
+  // raster data URIs are accepted. Anything else (javascript:, data:text/html,
+  // inline SVG, a bare word) is dropped and the avatar falls back to the emoji.
+  const LOGO_HTTPS = /^https:\/\/[^\s"'<>]+$/i;
+  const LOGO_DATA = /^data:image\/(?:png|jpe?g|gif|webp);base64,[a-z0-9+/=\s]+$/i;
+
+  function safeLogoUrl(value) {
+    const candidate = String(value === null || value === undefined ? '' : value).trim();
+    return LOGO_HTTPS.test(candidate) || LOGO_DATA.test(candidate) ? candidate : '';
+  }
+
   function sanitizeConfig(cfg) {
     const theme = cfg.theme || {};
     return Object.assign({}, cfg, {
       botName: safeText(cfg.botName, DEFAULT_CONFIG.botName),
       placeholder: safeText(cfg.placeholder, DEFAULT_CONFIG.placeholder, 200),
+      logoUrl: safeLogoUrl(cfg.logoUrl),
       welcomeMessage: safeText(
         cfg.welcomeMessage,
         DEFAULT_CONFIG.welcomeMessage,
@@ -245,6 +258,21 @@
         display: flex;
         justify-content: space-between;
         align-items: center;
+      }
+
+      .chat-header .title {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-width: 0;
+      }
+
+      .header-logo {
+        width: 22px;
+        height: 22px;
+        object-fit: contain;
+        border-radius: 4px;
+        flex: 0 0 auto;
       }
 
       .clear-btn {
@@ -452,7 +480,10 @@
 
     <div class="chat-box" id="chatBox">
       <div class="chat-header">
-        <span id="chatHeaderName">${escapeHtml(config.botName)}</span>
+        <span class="title">
+          <img class="header-logo" id="headerLogo" alt="" referrerpolicy="no-referrer" hidden />
+          <span id="chatHeaderName">${escapeHtml(config.botName)}</span>
+        </span>
         <button class="clear-btn" id="clearBtn">Clear</button>
       </div>
       <div class="chat-messages" id="messages"></div>
@@ -519,14 +550,59 @@
       .replace(/\n/g, '<br>');
   }
 
+  // ================= LOGO =================
+  // The header badge and every bot avatar share the owner's logo. Both fall
+  // back to the emoji when the image cannot load, so a dead URL can never leave
+  // a broken image icon in the chat.
+  function applyLogo() {
+    const logo = shadow.getElementById('headerLogo');
+    if (!logo) return;
+    if (!config.logoUrl) {
+      logo.hidden = true;
+      logo.removeAttribute('src');
+      return;
+    }
+    logo.onerror = () => {
+      logo.hidden = true;
+    };
+    logo.src = config.logoUrl;
+    logo.hidden = false;
+  }
+
+  function createBotAvatar() {
+    if (!config.logoUrl) {
+      const emoji = document.createElement('div');
+      emoji.className = 'avatar';
+      emoji.textContent = '🤖';
+      return emoji;
+    }
+    const img = document.createElement('img');
+    img.className = 'avatar';
+    img.alt = '';
+    img.referrerPolicy = 'no-referrer';
+    img.onerror = () => {
+      const fallback = document.createElement('div');
+      fallback.className = 'avatar';
+      fallback.textContent = '🤖';
+      if (img.parentNode) img.parentNode.replaceChild(fallback, img);
+    };
+    img.src = config.logoUrl;
+    return img;
+  }
+
   // ================= MESSAGE =================
   function addMessage(text, role, isThinking = false, skipScroll = false) {
     const row = document.createElement('div');
     row.className = `row ${role}`;
 
-    const avatar = document.createElement('div');
-    avatar.className = 'avatar';
-    avatar.textContent = role === 'user' ? '👤' : '🤖';
+    let avatar;
+    if (role === 'user') {
+      avatar = document.createElement('div');
+      avatar.className = 'avatar';
+      avatar.textContent = '👤';
+    } else {
+      avatar = createBotAvatar();
+    }
 
     const bubble = document.createElement('div');
     bubble.className = 'bubble';
@@ -980,6 +1056,9 @@
 
       // Language before any label, because everything below goes through `t()`.
       // No key at all (a pre-V2 company) keeps the English V1 strings.
+      if (cfg.widget_logo_url !== undefined) {
+        config.logoUrl = safeLogoUrl(cfg.widget_logo_url);
+      }
       if (cfg.widget_language) uiLanguage = normalizeLanguage(cfg.widget_language);
       uiStrings = parseUiStrings(cfg.widget_ui_strings);
 
@@ -994,6 +1073,7 @@
         config.theme.primaryColor;
       shadow.querySelector('.chat-input').style.background = config.footerColor;
       inputEl.placeholder = t('placeholder', config.placeholder);
+      applyLogo();
       container.style[config.position === 'bottom-left' ? 'left' : 'right'] =
         '20px';
     } catch (e) {
