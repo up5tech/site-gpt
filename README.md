@@ -117,6 +117,7 @@ npm install && npm run dev   # :5173
 | `API_KEY_PEPPER` | — | pepper mixed into the SHA-256 of company API keys (`/api/api-keys`, `/api/v1`); required in production, changing it invalidates every issued key |
 | `DIGEST_ENABLED` | `false` | global switch for the worker's weekly-digest loop (each company also needs its `digest_enabled` setting) |
 | `DIGEST_CHECK_SECONDS` | `3600` | how often the digest loop looks for companies whose send hour has come |
+| `DELIVERY_CHECK_SECONDS` | `60` | how often the worker retries integration deliveries whose backoff has elapsed |
 | `DIGEST_HOUR` | `9` | default UTC send hour for a company without its own `digest_hour` setting |
 | `INTEGRATION_WEBHOOK_SECRET` | — | HMAC-SHA256 secret that signs outbound webhook payloads (`X-SiteGPT-Signature: sha256=...`) |
 | `DEFAULT_WIDGET_LANGUAGE` | `auto` | fallback widget UI language when the visitor's browser language cannot be detected (`auto` follows the browser) |
@@ -226,9 +227,14 @@ Keys understood by `widget_ui_strings`: `clear`, `send`, `thinking`, `sources`,
   one per provider, each subscribed to `lead.captured`, `feedback.received`,
   `handoff.requested` and `digest.generated`. Webhooks are signed
   (`X-SiteGPT-Signature: sha256=…` over `<timestamp>.<body>`, keyed with
-  `INTEGRATION_WEBHOOK_SECRET`); a failing endpoint is logged and never breaks the
-  action that emitted it. Reads never return a stored credential — secrets come
-  back as `***` and a PATCH echoing the mask keeps the stored value.
+  `INTEGRATION_WEBHOOK_SECRET`). Every event is written to
+  `integration_deliveries` **before** it is sent, so a lead or rating is never
+  dropped when an endpoint is down: a failed send is retried by the worker with
+  backoff (1m, 5m, 30m, 2h, 6h), parked as `dead` after five attempts, and can be
+  resent from `/integrations` → Recent deliveries. Each event carries one
+  `event_id` (`X-SiteGPT-Event-Id` and `data.event_id`) that stays the same across
+  retries, so a receiver can dedupe. Reads never return a stored credential —
+  secrets come back as `***` and a PATCH echoing the mask keeps the stored value.
 - **API keys and `/api/v1`** — Settings → API keys mints scoped keys (`read`,
   `ingest:write`, `settings:write`, `chat:write`), stored only as a peppered
   SHA-256 hash and shown once. `POST /ingest`, `GET|PUT /settings`,

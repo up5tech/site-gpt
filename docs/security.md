@@ -38,7 +38,8 @@ processes.
 | Tenant isolation | Every admin query filters on the caller's `company_id`; a foreign id answers 404, not 403, so ids cannot be probed | `api/*`, `api/privacy.py` |
 | API keys | Only `sha256(pepper + raw)` is stored; comparison uses `hmac.compare_digest`; keys carry scopes, a prefix for identification and a `revoked_at`; the raw value is returned once | `services/api_keys.py`, `api/api_key.py` |
 | Public config | `GET /api/widget-config` returns an explicit allowlist of 14 widget keys, never a table dump | `api/setting.py` (`WIDGET_PUBLIC_KEYS`), `api/routes.py` |
-| Integration secrets | Masked as `***` on every read; a PATCH echoing the mask keeps the stored value; provider errors are scrubbed of every stored secret before they reach a client | `api/integration.py` |
+| Integration secrets | Masked as `***` on every read; a PATCH echoing the mask keeps the stored value; provider errors are scrubbed of every stored secret before they reach a client **and** before they are stored on a delivery row | `api/integration.py`, `services/integrations.py` |
+| Delivery retention | Delivery rows keep the event payload (visitor contact details) for retries, but no API returns it: `/integrations/deliveries` exposes type, status, attempts and the scrubbed error only | `api/integration.py` |
 | Webhooks | HMAC-SHA256 over `<timestamp>.<body>`, header `X-SiteGPT-Signature`; receivers can reject replays by checking the timestamp | `services/integrations.py` |
 | Rate limits | Fixed window per client IP on public endpoints (in-memory, see accepted risk K5) | `services/ratelimit.py` |
 | Spend ceiling | Daily message cap per website, counted in Redis, reset at UTC midnight | `api/routes.py` |
@@ -142,6 +143,7 @@ tokenless read of an *unclaimed* session is allowed; see §5 for the trade-off.
 | `api_keys` | Prefix, peppered hash, scopes, timestamps | No raw secret |
 | `session_tokens` | Per-session token **hash**, expiry, last use | A credential once removed; not personal data |
 | `integrations` | Provider config **including credentials** | Credentials, not personal data |
+| `integration_deliveries` | Event payload (may contain a lead's name/email), status, attempts, scrubbed error | Personal data copied out of `contacts` for retry; no pruning yet |
 | `digest_log` | Which weekly period was sent to whom | Recipient personal data |
 | `uploads/` | Imported source files | Depends on the file |
 
