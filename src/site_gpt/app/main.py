@@ -18,7 +18,39 @@ from site_gpt.app.api.v1 import router as v1_router
 from site_gpt.app.api.website import router as website_router
 from site_gpt.app.core.config import CORS_ORIGINS
 
-app = FastAPI(title="AI Agent Expose API")
+DESCRIPTION = """
+SiteGPT admin API, worker and embeddable chat widget.
+
+Two authentication paths coexist:
+
+* **JWT** (`Authorization: Bearer …`) for the admin console and every legacy
+  `/api/...` route.
+* **API key** (`X-API-Key: sk_…`) for the versioned [`/api/v1`] routes, so a
+  server-to-server integration never needs an admin password. See
+  `docs/api-v1.md` for scopes, examples and rate limits.
+"""
+
+TAGS_METADATA = [
+    {
+        "name": "v1",
+        "description": "Versioned, API-key-authenticated endpoints (F8). "
+        "Keys are created under Settings → API keys.",
+    },
+    {
+        "name": "integrations",
+        "description": "Outbound webhook/Slack/Zendesk/Crisp integrations (F7). "
+        "Reads never return a stored credential.",
+    },
+]
+
+app = FastAPI(
+    title="AI Agent Expose API",
+    version="2.0.0",
+    description=DESCRIPTION,
+    openapi_tags=TAGS_METADATA,
+    docs_url="/docs",
+    redoc_url="/redoc",
+)
 
 # Browsers reject `allow_credentials=True` together with a wildcard origin,
 # so credentials are only enabled for explicit (non-wildcard) origin lists.
@@ -54,3 +86,37 @@ app.include_router(digest_router)
 app.include_router(analytics_router)
 app.include_router(integration_router, prefix="/api/integrations")
 app.include_router(v1_router, prefix="/api/v1")
+
+
+def _openapi_with_api_key():
+    """Publish the `X-API-Key` scheme that the v1 routes already enforce.
+
+    `get_api_key` reads a plain header, which FastAPI cannot document on its own,
+    so the scheme and the per-operation security requirement are added here — the
+    spec and `docs/api-v1.md` stay in step with the code.
+    """
+    from fastapi.openapi.utils import get_openapi
+
+    if app.openapi_schema:
+        return app.openapi_schema
+    schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=app.routes,
+        tags=TAGS_METADATA,
+    )
+    schema.setdefault("components", {}).setdefault("securitySchemes", {})[
+        "ApiKeyAuth"
+    ] = {"type": "apiKey", "in": "header", "name": "X-API-Key"}
+    for path, operations in schema.get("paths", {}).items():
+        if not path.startswith("/api/v1"):
+            continue
+        for operation in operations.values():
+            if isinstance(operation, dict):
+                operation["security"] = [{"ApiKeyAuth": []}]
+    app.openapi_schema = schema
+    return schema
+
+
+app.openapi = _openapi_with_api_key

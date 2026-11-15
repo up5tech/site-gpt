@@ -109,6 +109,37 @@ def company_setting(db: Session, company_id, key: str) -> str | None:
     return row.value if row is not None else None
 
 
+def apply_settings(
+    db: Session, company_id, pairs: list[tuple[str, str]]
+) -> int:
+    """Upsert `(key, value)` rows for one company; returns how many were written.
+
+    Shared by the admin `PUT /api/settings` and `PUT /api/v1/settings`, so the
+    upsert (and its "create the row for an older company" behaviour) exists once.
+    """
+    if not pairs:
+        return 0
+    existing = {
+        row.key: row
+        for row in db.query(models.Setting)
+        .filter(
+            models.Setting.company_id == company_id,
+            models.Setting.key.in_([key for key, _ in pairs]),
+        )
+        .all()
+    }
+    for key, value in pairs:
+        row = existing.get(key)
+        if row is not None:
+            row.value = value
+        else:
+            # Upsert so companies created before a key existed can still store
+            # it (e.g. widget_position, greeting_message, widget_language).
+            db.add(models.Setting(key=key, value=value, company_id=company_id))
+    db.commit()
+    return len(pairs)
+
+
 def company_daily_message_limit(db: Session, company_id) -> int:
     """This company's daily message ceiling per website.
 
@@ -140,28 +171,9 @@ def update_settings(
     db: Session = Depends(get_db),
     user=Depends(get_admin_user),
 ):
-    for setting in settings:
-        existing = (
-            db.query(models.Setting)
-            .filter(
-                models.Setting.key == setting.key,
-                models.Setting.company_id == user.company_id,
-            )
-            .first()
-        )
-        if existing:
-            existing.value = setting.value
-        else:
-            # Upsert so companies created before new keys were added can still
-            # persist them (e.g. widget_position, greeting_message, ...).
-            db.add(
-                models.Setting(
-                    key=setting.key,
-                    value=setting.value,
-                    company_id=user.company_id,
-                )
-            )
-    db.commit()
+    apply_settings(
+        db, user.company_id, [(setting.key, setting.value) for setting in settings]
+    )
     return {"message": "Settings updated successfully"}
 
 
