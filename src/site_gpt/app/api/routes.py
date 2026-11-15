@@ -10,7 +10,11 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from site_gpt.app import models
-from site_gpt.app.api.setting import WIDGET_PUBLIC_KEYS, _default_setting_rows
+from site_gpt.app.api.setting import (
+    WIDGET_PUBLIC_KEYS,
+    _default_setting_rows,
+    company_daily_message_limit,
+)
 from site_gpt.app.core.auth import (
     create_access_token,
     get_manager_user,
@@ -171,8 +175,11 @@ async def chat(
         )
     _ensure_website_active(website)
     _ensure_embed_allowed(request, db, website, allow_authenticated=True)
-    # Daily per-website ceiling: per-IP limits do not bound a viral embed.
-    if not await consume_message(website.id):
+    # Daily per-website ceiling: per-IP limits do not bound a viral embed. The
+    # company's own setting wins; without one the env default applies.
+    if not await consume_message(
+        website.id, limit=company_daily_message_limit(db, website.company_id)
+    ):
         return {"answer": QUOTA_MESSAGE, "sources": []}
     # `ask` does blocking I/O (embedding, pgvector, LLM); keep it off the loop,
     # which this handler now shares because it awaits the quota check.
@@ -423,7 +430,9 @@ async def chat_stream(
         )
     _ensure_website_active(website)
     _ensure_embed_allowed(request, db, website, allow_authenticated=True)
-    if not await consume_message(website.id):
+    if not await consume_message(
+        website.id, limit=company_daily_message_limit(db, website.company_id)
+    ):
         return StreamingResponse(
             quota_sse_events(),
             media_type="text/event-stream",

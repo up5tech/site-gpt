@@ -3,8 +3,10 @@ from sqlalchemy.orm import Session
 
 from site_gpt.app import models
 from site_gpt.app.core.auth import get_admin_user
+from site_gpt.app.core.config import DAILY_MESSAGE_LIMIT
 from site_gpt.app.db.session import get_db
 from site_gpt.app.schemas.setting import SettingRes
+from site_gpt.app.services.quota import parse_limit
 
 router = APIRouter()
 
@@ -21,6 +23,20 @@ DEFAULT_SETTINGS: dict[str, str] = {
     "suggested_questions": "",
 }
 
+# Internal per-company settings. They describe backend behaviour rather than the
+# widget's appearance, so they are seeded like the rest but never published by
+# the public `GET /api/widget-config`.
+INTERNAL_SETTINGS: dict[str, str] = {
+    # Messages this company's websites may answer per UTC day. Seeded with the
+    # env default; clearing the row (or an old company without it) also falls
+    # back to that env value.
+    "daily_message_limit": str(DAILY_MESSAGE_LIMIT),
+}
+
+# Every setting a company can have: seeded on register, accepted by
+# `POST /api/settings`, and validated by the same helpers.
+ALL_SETTINGS: dict[str, str] = {**DEFAULT_SETTINGS, **INTERNAL_SETTINGS}
+
 # Only these keys are exposed by the public, unauthenticated
 # `GET /api/widget-config`. Any internal setting added later stays private
 # unless it is explicitly listed here.
@@ -31,8 +47,33 @@ def _default_setting_rows(company_id):
     """Build the default Setting rows for a newly created company."""
     return [
         models.Setting(key=key, value=value, company_id=company_id)
-        for key, value in DEFAULT_SETTINGS.items()
+        for key, value in ALL_SETTINGS.items()
     ]
+
+
+def company_setting(db: Session, company_id, key: str) -> str | None:
+    """One company's raw setting value, or None when the row is absent."""
+    row = (
+        db.query(models.Setting)
+        .filter(
+            models.Setting.company_id == company_id,
+            models.Setting.key == key,
+        )
+        .first()
+    )
+    return row.value if row is not None else None
+
+
+def company_daily_message_limit(db: Session, company_id) -> int:
+    """This company's daily message ceiling per website.
+
+    A company created before the setting existed has no row, so the env value
+    (`DAILY_MESSAGE_LIMIT`) remains the default.
+    """
+    return parse_limit(
+        company_setting(db, company_id, "daily_message_limit"),
+        default=DAILY_MESSAGE_LIMIT,
+    )
 
 
 @router.get("/")
@@ -97,7 +138,7 @@ def create_settings(
     }
     missing = [
         models.Setting(key=key, value=value, company_id=user.company_id)
-        for key, value in DEFAULT_SETTINGS.items()
+        for key, value in ALL_SETTINGS.items()
         if key not in existing_keys
     ]
     if missing:
@@ -105,5 +146,5 @@ def create_settings(
         db.commit()
     return {
         "created": len(missing),
-        "skipped": len(DEFAULT_SETTINGS) - len(missing),
+        "skipped": len(ALL_SETTINGS) - len(missing),
     }

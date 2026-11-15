@@ -121,7 +121,7 @@ npm install && npm run dev   # :5173
 | `RAG_MAX_DISTANCE` | `0.6` | max cosine distance for a retrieved chunk to count as context; above it the chunk is dropped and an empty result returns a canned "no information" reply without an LLM call. Lower = stricter, negative disables |
 | `MAX_UPLOAD_MB` | `20` | largest accepted upload or remote import (URL / Google Drive); enforced while streaming, larger requests get `413` and leave no file behind |
 | `SITEMAP_SYNC_MAX_URLS` | `500` | most pages one sitemap sync may create; the response reports `added`/`total`/`truncated`, and syncing again continues with the rest (`0` disables) |
-| `DAILY_MESSAGE_LIMIT` | `1000` | daily chat-message ceiling per website, counted in Redis and reset at UTC midnight; past it the visitor gets a friendly reply instead of an LLM call (`0` disables). Per-IP limits alone cannot bound a viral embed's spend |
+| `DAILY_MESSAGE_LIMIT` | `1000` | **default** daily chat-message ceiling per website (the per-company `daily_message_limit` setting wins); counted in Redis and reset at UTC midnight; past it the visitor gets a friendly reply instead of an LLM call (`0` disables). Used whenever the company has no `daily_message_limit` row or its value is unusable |
 | `SQL_ECHO` | `false` | log every SQL statement (debugging only) |
 | `VITE_BACKEND_URL` (frontend) | — | backend base URL |
 | `GOOGLE_DRIVE_ENABLED` / `GOOGLE_DRIVE_CLIENT_ID` | `false` / — | optional; backend flag + OAuth client id for the Google Drive import flow |
@@ -350,6 +350,11 @@ so `EMBEDDING_DIMENSIONS` must equal that model's native size.
   and history are now requested together with one `Promise.all` instead of being awaited one after
   another; history is fetched early but painted only after the contact gate, so a visitor who still
   has to fill in the form sees exactly what they saw before.
+- **The daily cap is tunable per company.** `daily_message_limit` now lives in the settings registry
+  (`INTERNAL_SETTINGS`), is seeded from `DAILY_MESSAGE_LIMIT` for new companies, and is **not**
+  published by `GET /api/widget-config`. `POST /api/chat` and `/api/chat/stream` read the company's
+  value and fall back to the env default whenever the row is absent (companies created earlier) or its
+  value is empty/garbage/negative — a typo can never silently remove the ceiling. `0` still disables it.
 - **Daily per-website message cap.** Per-IP rate limiting caps a single visitor and nothing else, so one
   viral embed could spend a customer's whole LLM budget in a day. `POST /api/chat` and
   `POST /api/chat/stream` now count each message in Redis (`quota:messages:<website_id>:<UTC date>`,

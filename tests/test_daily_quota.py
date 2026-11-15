@@ -129,6 +129,19 @@ class QuotaUnitTests(unittest.TestCase):
             self.assertFalse(self.run_consume(redis, website_id))
 
 
+class _One:
+    """Minimal single-row query stub (filter().first())."""
+
+    def __init__(self, result):
+        self._result = result
+
+    def filter(self, *args, **kwargs):
+        return self
+
+    def first(self):
+        return self._result
+
+
 class ChatQuotaEndpointTests(unittest.TestCase):
     def setUp(self):
         hits = getattr(ratelimit, "_hits", None)
@@ -145,7 +158,14 @@ class ChatQuotaEndpointTests(unittest.TestCase):
             status="active",
         )
         db = MagicMock()
-        db.query.return_value.filter.return_value.first.return_value = self.site
+
+        def query(model):
+            if model is models.Website:
+                return _One(self.site)
+            # No daily_message_limit row: the env default applies.
+            return _One(None)
+
+        db.query.side_effect = query
 
         app = FastAPI()
         app.include_router(routes.router)
@@ -197,7 +217,10 @@ class ChatQuotaEndpointTests(unittest.TestCase):
         ):
             self.client.post("/api/chat", json=self.body)
 
-        consume.assert_awaited_once_with(self.site.id)
+        consume.assert_awaited_once()
+        self.assertEqual(consume.await_args.args[0], self.site.id)
+        # The ceiling comes from the company settings, not a global constant.
+        self.assertEqual(consume.await_args.kwargs["limit"], quota.DAILY_MESSAGE_LIMIT)
 
 
 if __name__ == "__main__":

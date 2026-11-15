@@ -27,6 +27,26 @@ QUOTA_MESSAGE = (
 )
 
 
+def parse_limit(raw: str | None, *, default: int) -> int:
+    """Turn a stored setting into a message limit.
+
+    Missing, empty or unparseable values fall back to `default` (the env
+    setting), so a typo can never silently remove the ceiling. Zero is a real
+    value and disables the cap; negative numbers are treated as a typo.
+    """
+    if raw is None or str(raw).strip() == "":
+        return default
+    try:
+        value = int(str(raw).strip())
+    except (TypeError, ValueError):
+        print(f"[quota] ignoring invalid daily message limit {raw!r}")
+        return default
+    if value < 0:
+        print(f"[quota] ignoring negative daily message limit {value}")
+        return default
+    return value
+
+
 def quota_key(website_id: UUID | str, now: datetime) -> str:
     """One counter per website per UTC day; tomorrow's date is a new key."""
     return f"quota:messages:{website_id}:{now:%Y-%m-%d}"

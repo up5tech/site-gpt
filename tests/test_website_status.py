@@ -30,7 +30,9 @@ class FakeQuery:
         return self
 
     def first(self):
-        return self._result
+        # A list result means "a collection was queried"; a single-row lookup
+        # found nothing.
+        return None if isinstance(self._result, list) else self._result
 
     def all(self):
         return self._result if isinstance(self._result, list) else []
