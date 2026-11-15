@@ -15,6 +15,17 @@ JWT_ALGORITHM = "HS256"
 # Left empty in development so local runs and the test suite need no setup.
 API_KEY_PEPPER = os.getenv("API_KEY_PEPPER", "")
 
+# Fallback UI language for the embeddable widget when the visitor's browser
+# language cannot be detected. "auto" follows `navigator.language`; a BCP-47
+# code (e.g. "vi") pins that language. Never a prompt override — the chat model
+# always answers in the language of the question.
+DEFAULT_WIDGET_LANGUAGE = os.getenv("DEFAULT_WIDGET_LANGUAGE", "auto")
+
+# HMAC-SHA256 secret used to sign outbound webhook payloads
+# (`X-SiteGPT-Signature: sha256=...`). Only the webhook integration needs it; an
+# empty value means receivers cannot verify what we send.
+INTEGRATION_WEBHOOK_SECRET = os.getenv("INTEGRATION_WEBHOOK_SECRET")
+
 LLM_AI = os.getenv("LLM_AI", "openai")
 LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4o-mini")
 LLM_EMBEDDING_MODEL = os.getenv("LLM_EMBEDDING_MODEL", "text-embedding-3-small")
@@ -66,6 +77,20 @@ SQL_ECHO = os.getenv("SQL_ECHO", "false").lower() in ("1", "true", "yes", "on")
 # How often (in hours) the worker should auto re-crawl a website to keep its
 # knowledge base fresh. Set to 0 to disable the periodic scheduler.
 CRAWL_REFRESH_HOURS = int(os.getenv("CRAWL_REFRESH_HOURS", "24"))
+
+# Weekly digest (F6). DIGEST_ENABLED is the global switch for the worker's
+# digest loop, DIGEST_CHECK_SECONDS is how often it looks for companies whose
+# hour has come, and DIGEST_HOUR is the default UTC hour for a company without
+# its own `digest_hour` setting. The per-company switches (`digest_enabled`,
+# `digest_hour`, `digest_day`, `digest_recipients`) live in `settings`.
+DIGEST_ENABLED = os.getenv("DIGEST_ENABLED", "false").lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+DIGEST_CHECK_SECONDS = int(os.getenv("DIGEST_CHECK_SECONDS", "3600"))
+DIGEST_HOUR = int(os.getenv("DIGEST_HOUR", "9"))
 
 # Maximum cosine distance for a retrieved chunk to be used as context. Chunks
 # further away are discarded, and when nothing survives the question is
