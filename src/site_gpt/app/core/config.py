@@ -104,6 +104,11 @@ DIGEST_ENABLED = os.getenv("DIGEST_ENABLED", "false").lower() in (
     "on",
 )
 DIGEST_CHECK_SECONDS = int(os.getenv("DIGEST_CHECK_SECONDS", "3600"))
+
+# How often the worker looks for integration deliveries that are due for a
+# retry. Retries are cheap (a select and maybe one HTTP call), so this is
+# minutes rather than hours; the backoff itself lives in `services/integrations`.
+DELIVERY_CHECK_SECONDS = int(os.getenv("DELIVERY_CHECK_SECONDS", "60"))
 DIGEST_HOUR = int(os.getenv("DIGEST_HOUR", "9"))
 
 # Maximum cosine distance for a retrieved chunk to be used as context. Chunks

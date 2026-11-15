@@ -379,6 +379,54 @@ class SessionToken(BaseModel):
     )
 
 
+class IntegrationDelivery(BaseModel):
+    """One attempt-tracked delivery of one event to one integration (F7).
+
+    The row is written **before** the first HTTP call, so a crash, a restart or a
+    dead endpoint leaves work to retry instead of losing the lead silently. The
+    payload is kept for retries but never returned by the API (it carries visitor
+    contact details).
+
+    `integration_id` is nullable and ON DELETE SET NULL: deleting an integration
+    must not erase the record that its events failed, and a delivery whose
+    integration is gone is marked dead on the next attempt.
+    """
+
+    __tablename__ = "integration_deliveries"
+
+    __table_args__ = (
+        UniqueConstraint("integration_id", "event_id"),
+        Index("idx_integration_deliveries_company_id", "company_id"),
+        Index("idx_integration_deliveries_due", "status", "next_attempt_at"),
+    )
+
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
+    )
+    integration_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("integrations.id", ondelete="SET NULL"), nullable=True
+    )
+    # Copied from the integration so the row stays readable after a deletion.
+    integration_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    integration_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Shared by every integration subscribed to the same event, and sent to the
+    # receiver so it can drop a duplicate retry.
+    event_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
+    event_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    payload: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    # "pending" (will retry) | "delivered" | "dead" (retries exhausted)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    attempts: Mapped[int] = mapped_column(nullable=False, default=0)
+    last_error: Mapped[str] = mapped_column(Text, nullable=True)
+    last_status_code: Mapped[int] = mapped_column(nullable=True)
+    next_attempt_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    delivered_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
 class ApiKey(BaseModel):
     """A company key for the versioned `/api/v1` API.
 

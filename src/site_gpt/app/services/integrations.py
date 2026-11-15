@@ -4,16 +4,20 @@
 tell the outside world something happened. The providers and the dispatcher that
 filter by `enabled` + subscribed events live here.
 
-Two rules hold for every path in this module:
+Three rules hold for every path in this module:
 
 * an integration failure never reaches the originating request — the chat still
   answers, the lead is still stored, even when a webhook endpoint is down;
+* nothing is dropped: every event becomes an `integration_deliveries` row before
+  the first HTTP call, failed attempts are retried with backoff, and a delivery
+  that runs out of attempts is parked as `dead` instead of disappearing;
 * payloads are never logged, because they carry visitor contact details. Only the
-  integration id, its type and the event name are logged.
+  integration id, its type, the event name and the attempt counter are logged.
 
-There are no retries: a failed delivery is logged and dropped. A retry queue
-would need its own table and worker, and the plan deliberately keeps V2 free of
-that (ADR-4/ADR-7 spirit: notify and callback, do not build a pipeline).
+The retry state lives in the database rather than in a task queue: a restart, a
+crash or a deploy mid-delivery must not lose a lead. `process_due_deliveries` is
+what the worker's `delivery_loop` calls; the endpoints in `api/integration.py`
+read the rows and resend a dead one.
 """
 
 import asyncio
@@ -22,10 +26,12 @@ import hmac
 import json
 import logging
 import time
+from datetime import UTC, datetime, timedelta
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import httpx
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from site_gpt.app import models
@@ -34,6 +40,12 @@ from site_gpt.app.core import config
 logger = logging.getLogger(__name__)
 
 TIMEOUT_SECONDS = 5.0
+
+# Delay before retry N+1, after attempt N failed. The fifth failure parks the
+# delivery, so a broken endpoint is retried five times over ~9 hours instead of
+# for ever; a `dead` row is visible in the UI and can be resent by hand.
+RETRY_BACKOFF_SECONDS = (60, 300, 1800, 7200, 21600)
+MAX_DELIVERY_ATTEMPTS = len(RETRY_BACKOFF_SECONDS)
 
 # Kept in one place so the API can validate a subscription and the docs can list
 # them; adding an event means adding it here.
@@ -73,7 +85,7 @@ def events_of(integration: models.Integration) -> list[str]:
 def summarize(event_type: str, payload: dict[str, Any]) -> str:
     """One line a human can read in Slack/Zendesk/Crisp."""
     bits = [f"SiteGPT event: {event_type}"]
-    for key in ("website_name", "question", "rating", "email", "session_id"):
+    for key in ("website_name", "question", "rating", "email", "session_id", "event_id"):
         value = payload.get(key)
         if isinstance(value, str) and value.strip():
             bits.append(f"{key}={value.strip()[:120]}")
@@ -137,6 +149,10 @@ class WebhookProvider(IntegrationProvider):
             "X-SiteGPT-Timestamp": timestamp,
             "X-SiteGPT-Signature": f"sha256={digest}",
         }
+        # Also in the body (`data.event_id`); the header saves a receiver from
+        # parsing a body it may want to verify first. A retry reuses the id.
+        if payload.get("event_id"):
+            headers["X-SiteGPT-Event-Id"] = str(payload["event_id"])
         async with httpx.AsyncClient(timeout=TIMEOUT_SECONDS) as client:
             response = await client.post(url, content=body, headers=headers)
         return {"status_code": response.status_code}
@@ -222,9 +238,27 @@ PROVIDERS: dict[str, IntegrationProvider] = {
 }
 
 
-def _deliveries(
-    db: Session, company_id: UUID, event_type: str, payload: dict[str, Any]
-) -> list[tuple[IntegrationProvider, dict[str, Any]]]:
+def safe_error(exc: BaseException, config_data: dict[str, Any], secret_fields) -> str:
+    """An error message fit to show an admin: credentials redacted.
+
+    `str(httpx.ConnectError)` contains the URL, and for a webhook the URL *is*
+    the credential. Anything matching a stored secret value or a `scheme://user:…@`
+    pair is replaced before the message reaches the API, the logs or the DB.
+    """
+    message = f"{type(exc).__name__}: {exc}"
+    for field in secret_fields or ():
+        value = str(config_data.get(field) or "").strip()
+        if value:
+            message = message.replace(value, "***")
+    if "://" in message:
+        head, _, tail = message.partition("://")
+        authority, slash, rest = tail.partition("/")
+        if "@" in authority:
+            message = f"{head}://***@{authority.rpartition('@')[2]}{slash}{rest}"
+    return message[:500]
+
+
+def targets(db: Session, company_id: UUID, event_type: str) -> list[models.Integration]:
     """Enabled integrations of this company subscribed to `event_type`."""
     rows = (
         db.query(models.Integration)
@@ -232,20 +266,164 @@ def _deliveries(
             models.Integration.company_id == company_id,
             models.Integration.enabled.is_(True),
         )
+        .order_by(models.Integration.created_at.asc())
         .all()
     )
-    deliveries: list[tuple[IntegrationProvider, dict[str, Any]]] = []
+    selected: list[models.Integration] = []
     for row in rows:
         if event_type not in events_of(row):
             continue
-        provider = PROVIDERS.get(row.type)
-        if provider is None:
+        if row.type not in PROVIDERS:
             logger.warning(
                 "integration %s has unknown type %r; skipping", row.id, row.type
             )
             continue
-        deliveries.append((provider, config_of(row)))
-    return deliveries
+        selected.append(row)
+    return selected
+
+
+def retry_delay_seconds(attempts: int) -> int:
+    """Backoff after `attempts` failures, clamped to the schedule."""
+    index = min(max(attempts, 1), len(RETRY_BACKOFF_SECONDS)) - 1
+    return RETRY_BACKOFF_SECONDS[index]
+
+
+def _queue(
+    db: Session,
+    integration: models.Integration,
+    event_type: str,
+    event_id: UUID,
+    payload: dict[str, Any],
+) -> models.IntegrationDelivery | None:
+    """Persist one delivery, or return None if this event is already queued."""
+    existing = (
+        db.query(models.IntegrationDelivery)
+        .filter(
+            models.IntegrationDelivery.integration_id == integration.id,
+            models.IntegrationDelivery.event_id == event_id,
+        )
+        .first()
+    )
+    if existing is not None:
+        return None
+    delivery = models.IntegrationDelivery(
+        company_id=integration.company_id,
+        integration_id=integration.id,
+        integration_type=integration.type,
+        integration_name=integration.name,
+        event_id=event_id,
+        event_type=event_type,
+        payload=json.dumps(payload, sort_keys=True, default=str),
+        status="pending",
+        attempts=0,
+        next_attempt_at=datetime.now(UTC),
+    )
+    db.add(delivery)
+    return delivery
+
+
+def _gave_up(
+    db: Session,
+    delivery: models.IntegrationDelivery,
+    message: str,
+    retryable: bool = True,
+) -> bool:
+    """Record a failure: schedule the next attempt or park the delivery.
+
+    `retryable=False` parks it on the first failure — a deleted integration or an
+    unknown provider type will not heal by waiting.
+    """
+    delivery.last_error = (message or "delivery failed")[:500]
+    if retryable and (delivery.attempts or 0) < MAX_DELIVERY_ATTEMPTS:
+        delivery.status = "pending"
+        delivery.next_attempt_at = datetime.now(UTC) + timedelta(
+            seconds=retry_delay_seconds(delivery.attempts or 1)
+        )
+    else:
+        delivery.status = "dead"
+        delivery.next_attempt_at = None
+    db.commit()
+    return False
+
+
+async def attempt_delivery(db: Session, delivery: models.IntegrationDelivery) -> bool:
+    """Try one delivery once, recording the outcome. Never raises.
+
+    The integration is re-read on every attempt so a fixed URL or a rotated token
+    is used by the retry, and a deleted integration ends the retries instead of
+    retrying for ever.
+    """
+    integration = None
+    if delivery.integration_id is not None:
+        integration = (
+            db.query(models.Integration)
+            .filter(
+                models.Integration.id == delivery.integration_id,
+                models.Integration.company_id == delivery.company_id,
+            )
+            .first()
+        )
+    if integration is None:
+        delivery.attempts = (delivery.attempts or 0) + 1
+        return _gave_up(db, delivery, "integration was deleted", retryable=False)
+
+    provider = PROVIDERS.get(integration.type)
+    if provider is None:
+        delivery.attempts = (delivery.attempts or 0) + 1
+        return _gave_up(
+            db,
+            delivery,
+            f"unknown integration type {integration.type!r}",
+            retryable=False,
+        )
+
+    config_data = config_of(integration)
+    delivery.integration_type = integration.type
+    delivery.integration_name = integration.name
+    delivery.attempts = (delivery.attempts or 0) + 1
+    try:
+        payload = json.loads(delivery.payload or "{}")
+    except (TypeError, ValueError):
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+
+    try:
+        result = await provider.send(config_data, delivery.event_type, payload)
+    except Exception as exc:
+        logger.warning(
+            "integration %s failed to deliver %s (attempt %s/%s)",
+            provider.type,
+            delivery.event_type,
+            delivery.attempts,
+            MAX_DELIVERY_ATTEMPTS,
+        )
+        return _gave_up(db, delivery, safe_error(exc, config_data, provider.secret_fields))
+
+    status_code = result.get("status_code") if isinstance(result, dict) else None
+    if isinstance(status_code, int) and status_code >= 400:
+        # A provider that answers 500 has not accepted the event: that is the
+        # failure this whole table exists for. 408/429 are worth retrying, other
+        # 4xx will not fix themselves (a 404 URL, a 401 token) so they park.
+        delivery.last_status_code = status_code
+        retryable = status_code >= 500 or status_code in (408, 429)
+        return _gave_up(
+            db, delivery, f"endpoint answered HTTP {status_code}", retryable=retryable
+        )
+
+    delivery.status = "delivered"
+    delivery.delivered_at = datetime.now(UTC)
+    delivery.next_attempt_at = None
+    delivery.last_error = None
+    delivery.last_status_code = status_code
+    db.commit()
+    logger.info(
+        "integration %s delivered %s (%s)",
+        provider.type,
+        delivery.event_type,
+        delivery.last_status_code,
+    )
+    return True
 
 
 async def emit_event_async(
@@ -254,36 +432,89 @@ async def emit_event_async(
     event_type: str,
     payload: dict[str, Any] | None = None,
 ) -> int:
-    """Deliver one company-scoped event; returns how many integrations were hit.
+    """Deliver one company-scoped event; returns how many integrations accepted it.
 
-    Awaitable so worker jobs and async routes can deliver before finishing, and
-    so tests do not have to guess when a background send happened. Every provider
-    call is wrapped: one broken endpoint cannot stop the others and nothing is
-    ever raised to the caller.
+    Every target gets a row committed *before* the first HTTP call, so the event
+    survives a crash or a dead endpoint. The first attempt happens inline (so a
+    healthy webhook is still delivered right away and tests stay deterministic);
+    anything that fails is picked up by `process_due_deliveries`. Nothing is ever
+    raised to the caller.
     """
+    payload = dict(payload or {})
+    event_id = uuid4()
+    payload["event_id"] = str(event_id)
+
     try:
-        deliveries = _deliveries(db, company_id, event_type, payload or {})
+        rows = targets(db, company_id, event_type)
     except Exception:
         logger.exception("integration event %s could not be prepared", event_type)
         return 0
 
+    queued: list[models.IntegrationDelivery] = []
+    for integration in rows:
+        delivery = _queue(db, integration, event_type, event_id, payload)
+        if delivery is not None:
+            queued.append(delivery)
+    if not queued:
+        return 0
+    # Commit the queue before talking to anyone: a rollback here would lose the
+    # event that the retry loop is supposed to protect.
+    try:
+        db.commit()
+    except Exception:
+        logger.exception("integration event %s could not be queued", event_type)
+        db.rollback()
+        return 0
+
     delivered = 0
-    for provider, config_data in deliveries:
+    for delivery in queued:
         try:
-            result = await provider.send(config_data, event_type, payload or {})
-            delivered += 1
-            logger.info(
-                "integration %s delivered %s (%s)",
-                provider.type,
-                event_type,
-                result.get("status_code"),
-            )
+            if await attempt_delivery(db, delivery):
+                delivered += 1
         except Exception:
-            # The payload is deliberately absent from this line.
-            logger.exception(
-                "integration %s failed to deliver %s", provider.type, event_type
-            )
+            # attempt_delivery is meant not to raise; if it does, the row is left
+            # pending and the worker retries it.
+            logger.exception("integration delivery %s could not be attempted", delivery.id)
+            db.rollback()
     return delivered
+
+
+async def process_due_deliveries(db: Session, limit: int = 50) -> dict[str, int]:
+    """Retry pending deliveries whose backoff has elapsed (worker entry point)."""
+    now = datetime.now(UTC)
+    due = (
+        db.query(models.IntegrationDelivery)
+        .filter(
+            models.IntegrationDelivery.status == "pending",
+            or_(
+                models.IntegrationDelivery.next_attempt_at.is_(None),
+                models.IntegrationDelivery.next_attempt_at <= now,
+            ),
+        )
+        .order_by(models.IntegrationDelivery.next_attempt_at.asc())
+        .limit(limit)
+        .all()
+    )
+    delivered = 0
+    for delivery in due:
+        try:
+            if await attempt_delivery(db, delivery):
+                delivered += 1
+        except Exception:
+            logger.exception("integration delivery %s could not be attempted", delivery.id)
+            db.rollback()
+    return {"attempted": len(due), "delivered": delivered}
+
+
+async def resend_delivery(db: Session, delivery: models.IntegrationDelivery) -> bool:
+    """Give a dead (or pending) delivery a fresh attempt budget and try once."""
+    delivery.status = "pending"
+    delivery.attempts = 0
+    delivery.next_attempt_at = datetime.now(UTC)
+    delivery.last_error = None
+    delivery.delivered_at = None
+    db.commit()
+    return await attempt_delivery(db, delivery)
 
 
 def _schedule(coro) -> None:

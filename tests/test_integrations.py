@@ -5,9 +5,10 @@ request that emitted the event, and must never stop the other integrations.
 """
 
 import asyncio
+import json
 import unittest
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 from site_gpt.app.services import integrations
@@ -29,6 +30,7 @@ def _chain(**kwargs):
 def _row(**overrides):
     row = SimpleNamespace(
         id=uuid4(),
+        company_id=uuid4(),
         type="webhook",
         name="hooks",
         config='{"url": "https://example.com/hook"}',
@@ -54,62 +56,83 @@ class _Provider:
 
 
 class EmitEventAsyncTests(unittest.TestCase):
-    def _db(self, rows):
+    """The queue half of emit: rows are persisted before any HTTP happens.
+
+    The attempt half is exercised in `test_integration_delivery.py`; here
+    `attempt_delivery` is patched so these tests stay about ordering and safety.
+    """
+
+    def _db(self, rows, existing=None):
         db = MagicMock()
-        db.query.return_value = _chain(all_value=rows)
+        db.query.return_value = _chain(all_value=rows, first_value=existing)
         return db
 
+    def _emit(self, db, event_type="ping", payload=None, attempt=None):
+        attempt = attempt or AsyncMock(return_value=True)
+        with patch.object(integrations, "attempt_delivery", attempt):
+            delivered = asyncio.run(
+                integrations.emit_event_async(db, uuid4(), event_type, payload)
+            )
+        return delivered, attempt
+
     def test_no_integrations_delivers_nothing(self):
-        delivered = asyncio.run(
-            integrations.emit_event_async(self._db([]), uuid4(), "ping")
+        db = self._db([])
+        delivered, attempt = self._emit(db)
+        self.assertEqual(delivered, 0)
+        attempt.assert_not_called()
+        db.add.assert_not_called()
+
+    def test_every_target_gets_a_row_committed_before_the_first_attempt(self):
+        db = self._db([_row(), _row(type="slack", config='{"webhook_url": "https://x"}')])
+        delivered, attempt = self._emit(db)
+
+        self.assertEqual(delivered, 2)
+        rows = [call.args[0] for call in db.add.call_args_list]
+        self.assertEqual(len(rows), 2)
+        self.assertEqual({row.status for row in rows}, {"pending"})
+        self.assertEqual({row.event_type for row in rows}, {"ping"})
+        # One event id shared by every integration, so the receiver can dedupe.
+        self.assertEqual(len({row.event_id for row in rows}), 1)
+        self.assertEqual(json.loads(rows[0].payload)["event_id"], str(rows[0].event_id))
+        # commit (the queue) must happen before the first send.
+        calls = [name for name, _, _ in db.mock_calls]
+        self.assertLess(calls.index("commit"), calls.index("rollback") if "rollback" in calls else len(calls))
+        self.assertGreater(len(attempt.await_args_list), 0)
+
+    def test_a_failing_attempt_is_swallowed(self):
+        db = self._db([_row()])
+        delivered, attempt = self._emit(
+            db, attempt=AsyncMock(side_effect=RuntimeError("connection refused"))
         )
         self.assertEqual(delivered, 0)
+        self.assertEqual(len(attempt.await_args_list), 1)
 
-    def test_a_failing_provider_is_swallowed(self):
-        provider = _Provider("webhook", error=RuntimeError("connection refused"))
-        with patch.dict(integrations.PROVIDERS, {"webhook": provider}):
-            delivered = asyncio.run(
-                integrations.emit_event_async(
-                    self._db([_row()]), uuid4(), "ping", {"website_name": "Acme"}
-                )
-            )
-        self.assertEqual(delivered, 0)
-        self.assertEqual(len(provider.calls), 1)
-
-    def test_one_failure_does_not_stop_the_other_integration(self):
-        failing = _Provider("webhook", error=RuntimeError("boom"))
-        healthy = _Provider("slack")
-        rows = [_row(), _row(type="slack", config='{"webhook_url": "https://x"}')]
-        with patch.dict(
-            integrations.PROVIDERS, {"webhook": failing, "slack": healthy}
-        ):
-            delivered = asyncio.run(
-                integrations.emit_event_async(self._db(rows), uuid4(), "ping")
-            )
+    def test_one_exception_does_not_stop_the_other_integration(self):
+        db = self._db([_row(), _row(type="slack")])
+        attempt = AsyncMock(side_effect=[RuntimeError("boom"), True])
+        delivered, _ = self._emit(db, attempt=attempt)
         self.assertEqual(delivered, 1)
-        self.assertEqual(len(healthy.calls), 1)
-        self.assertEqual(healthy.calls[0][1], "ping")
+        self.assertEqual(len(attempt.await_args_list), 2)
+
+    def test_payload_carries_the_event_id(self):
+        db = self._db([_row()])
+        self._emit(db, payload={"website_name": "Acme"})
+        sent = json.loads(db.add.call_args.args[0].payload)
+        self.assertEqual(sent["website_name"], "Acme")
+        self.assertIn("event_id", sent)
 
     def test_unsubscribed_event_is_not_delivered(self):
-        provider = _Provider("webhook")
-        with patch.dict(integrations.PROVIDERS, {"webhook": provider}):
-            delivered = asyncio.run(
-                integrations.emit_event_async(
-                    self._db([_row(events='["lead.captured"]')]), uuid4(), "ping"
-                )
-            )
+        db = self._db([_row(events='["lead.captured"]')])
+        delivered, attempt = self._emit(db)
         self.assertEqual(delivered, 0)
-        self.assertEqual(provider.calls, [])
+        attempt.assert_not_called()
+        db.add.assert_not_called()
 
     def test_unknown_type_is_skipped(self):
-        provider = _Provider("webhook")
-        with patch.dict(integrations.PROVIDERS, {"webhook": provider}):
-            delivered = asyncio.run(
-                integrations.emit_event_async(
-                    self._db([_row(type="nosuchprovider")]), uuid4(), "ping"
-                )
-            )
+        db = self._db([_row(type="nosuchprovider")])
+        delivered, attempt = self._emit(db)
         self.assertEqual(delivered, 0)
+        db.add.assert_not_called()
 
     def test_a_broken_query_returns_zero(self):
         db = MagicMock()

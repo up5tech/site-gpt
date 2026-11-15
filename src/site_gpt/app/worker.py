@@ -12,11 +12,13 @@ from site_gpt.app.services.parse import extract_text_from_file
 from site_gpt.app.services.redis import redis_client, enqueue_job
 from site_gpt.app.core.config import (
     CRAWL_REFRESH_HOURS,
+    DELIVERY_CHECK_SECONDS,
     DIGEST_CHECK_SECONDS,
     DIGEST_ENABLED,
     DIGEST_HOUR,
 )
 from site_gpt.app.services import company_settings, digest
+from site_gpt.app.services.integrations import process_due_deliveries
 from site_gpt.app.db.session import SessionLocal
 from site_gpt.app import models
 
@@ -116,6 +118,10 @@ async def worker():
     # that never opted in runs exactly the V1 loops.
     if DIGEST_ENABLED:
         asyncio.create_task(digest_loop())
+    # Retries for outbound integration deliveries that failed or were queued
+    # while the endpoint was down. Always on: an event must not be lost because
+    # the receiver had a bad minute.
+    asyncio.create_task(delivery_loop())
     while True:
         try:
             _, job = await redis_client.brpop("queue:jobs")  # type: ignore
@@ -362,6 +368,25 @@ async def enqueue_due_digests(now: datetime | None = None) -> list[str]:
     finally:
         db.close()
     return queued
+
+
+async def delivery_loop():
+    """Retry integration deliveries whose backoff has elapsed.
+
+    The row is the queue: if this worker dies before the next tick, the delivery
+    is still `pending` in the database and the next process picks it up.
+    """
+    while True:
+        db = SessionLocal()
+        try:
+            result = await process_due_deliveries(db)
+            if result["attempted"]:
+                print(f"[worker] integration deliveries: {result}")
+        except Exception as e:
+            print(f"[worker] integration delivery retry failed: {e}")
+        finally:
+            db.close()
+        await asyncio.sleep(DELIVERY_CHECK_SECONDS)
 
 
 async def digest_loop():

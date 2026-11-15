@@ -47,3 +47,44 @@ class IntegrationTestResult(BaseModel):
     delivered: bool
     status_code: int | None = None
     error: str | None = None
+
+
+class DeliveryRes(BaseModel):
+    """One tracked delivery.
+
+    `payload` is deliberately absent: it is stored for retries, but it repeats the
+    visitor's contact details and does not need to travel to the browser.
+    """
+
+    id: UUID
+    integration_id: UUID | None
+    integration_name: str
+    integration_type: str
+    event_id: UUID
+    event_type: str
+    status: str
+    attempts: int
+    max_attempts: int
+    last_error: str | None
+    last_status_code: int | None
+    next_attempt_at: datetime | None
+    delivered_at: datetime | None
+    created_at: datetime
+
+
+class DeliveryListRes(BaseModel):
+    items: list[DeliveryRes]
+    total: int
+    # Counts by status, so the UI can show "2 dead" without a second request.
+    pending: int
+    dead: int
+    delivered: int
+
+
+class DeliveryAttemptRes(BaseModel):
+    id: UUID
+    status: str
+    attempts: int
+    delivered: bool
+    last_error: str | None
+    next_attempt_at: datetime | None
