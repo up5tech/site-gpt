@@ -120,6 +120,13 @@ DIGEST_CHECK_SECONDS = int(os.getenv("DIGEST_CHECK_SECONDS", "3600"))
 # minutes rather than hours; the backoff itself lives in `services/integrations`.
 DELIVERY_CHECK_SECONDS = int(os.getenv("DELIVERY_CHECK_SECONDS", "60"))
 
+# How long a settled (`delivered`/`dead`) integration delivery row is kept, in
+# days (default 30). Those rows carry the event payload — a lead's name and email
+# — so they are deleted once this window passes; a dead row's payload is cleared
+# immediately because it can never be retried. 0 keeps the rows (the dead-payload
+# clear still runs). See `services/integrations.purge_deliveries`.
+DELIVERY_RETENTION_DAYS = int(os.getenv("DELIVERY_RETENTION_DAYS", "30"))
+
 # How often the worker queues the retention purge for companies that set a
 # `retention_days` policy. Daily: the purge removes rows older than the policy,
 # so a faster tick would only re-scan the same rows.

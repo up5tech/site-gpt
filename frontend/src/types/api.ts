@@ -235,6 +235,8 @@ export interface DeliveryItem {
   next_attempt_at: string | null;
   delivered_at: string | null;
   created_at: string;
+  /** False once retention cleared the payload: the event cannot be resent. */
+  payload_available: boolean;
 }
 
 export interface DeliveryList {

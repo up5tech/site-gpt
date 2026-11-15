@@ -14,7 +14,10 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
+from fastapi import HTTPException
+
 from site_gpt.app import models
+from site_gpt.app.db.base import Base
 from site_gpt.app.services import integrations
 
 
@@ -393,6 +396,152 @@ class DueDeliveryClaimTests(unittest.TestCase):
 
         self.assertEqual(result["attempted"], 0)
         attempt.assert_not_called()
+
+
+class DeliveryRetentionTests(unittest.TestCase):
+    """Delivery rows carry a lead's email/phone; retention must take them away."""
+
+    def setUp(self):
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+
+        self.engine = create_engine("sqlite+pysqlite:///:memory:")
+        Base.metadata.create_all(
+            self.engine,
+            tables=[
+                models.Company.__table__,
+                models.Integration.__table__,
+                models.IntegrationDelivery.__table__,
+            ],
+        )
+        self.db = sessionmaker(bind=self.engine)()
+        self.company = models.Company(name="Acme")
+        self.other = models.Company(name="Other")
+        self.db.add_all([self.company, self.other])
+        self.db.commit()
+        self.integration = self._integration(self.company)
+        self.other_integration = self._integration(self.other)
+        self.now = datetime.now(UTC)
+
+    def tearDown(self):
+        self.db.close()
+        self.engine.dispose()
+
+    def _integration(self, company):
+        row = models.Integration(
+            company_id=company.id,
+            type="webhook",
+            name="Hooks",
+            config='{"url": "https://example.com/hook"}',
+            events='["lead.captured"]',
+            enabled=True,
+        )
+        self.db.add(row)
+        self.db.commit()
+        return row
+
+    def _delivery(self, integration, status, age_days, payload='{"email": "lead@example.com"}'):
+        created = self.now - timedelta(days=age_days)
+        row = models.IntegrationDelivery(
+            company_id=integration.company_id,
+            integration_id=integration.id,
+            integration_type="webhook",
+            integration_name="Hooks",
+            event_id=uuid4(),
+            event_type="lead.captured",
+            payload=payload,
+            status=status,
+            attempts=1,
+            created_at=created,
+            updated_at=created,
+        )
+        self.db.add(row)
+        self.db.commit()
+        return row
+
+    def test_old_settled_rows_are_deleted_and_pending_ones_are_not(self):
+        old_delivered = self._delivery(self.integration, "delivered", 40)
+        old_dead = self._delivery(self.integration, "dead", 40)
+        old_pending = self._delivery(self.integration, "pending", 40)
+        fresh_delivered = self._delivery(self.integration, "delivered", 1)
+
+        result = integrations.purge_deliveries(self.db, days=30, now=self.now)
+
+        remaining = {row.id for row in self.db.query(models.IntegrationDelivery).all()}
+        self.assertEqual(remaining, {old_pending.id, fresh_delivered.id})
+        self.assertEqual(result["deleted"], 2)
+        self.assertEqual(result["retention_days"], 30)
+
+    def test_a_dead_payload_is_cleared_even_before_the_window(self):
+        dead = self._delivery(self.integration, "dead", 0)
+        delivered = self._delivery(self.integration, "delivered", 0)
+
+        integrations.purge_deliveries(self.db, days=30, now=self.now)
+        self.db.refresh(dead)
+        self.db.refresh(delivered)
+
+        self.assertEqual(dead.payload, "")
+        self.assertTrue(integrations.payload_purged(dead))
+        # A delivered row still has its payload until the window deletes the row.
+        self.assertIn("lead@example.com", delivered.payload)
+
+    def test_a_zero_window_still_clears_dead_payloads(self):
+        dead = self._delivery(self.integration, "dead", 400)
+        delivered = self._delivery(self.integration, "delivered", 400)
+
+        result = integrations.purge_deliveries(self.db, days=0, now=self.now)
+        self.db.refresh(dead)
+
+        self.assertEqual(result["deleted"], 0)
+        self.assertEqual(result["cleared_payloads"], 1)
+        self.assertEqual(dead.payload, "")
+        self.assertEqual(
+            self.db.query(models.IntegrationDelivery)
+            .filter(models.IntegrationDelivery.status == "delivered")
+            .count(),
+            1,
+        )
+
+    def test_dry_run_counts_without_deleting(self):
+        self._delivery(self.integration, "dead", 40)
+        self._delivery(self.integration, "delivered", 40)
+
+        result = integrations.purge_deliveries(
+            self.db, days=30, now=self.now, dry_run=True
+        )
+
+        self.assertEqual(result["deleted"], 2)
+        self.assertEqual(result["cleared_payloads"], 1)
+        self.assertEqual(self.db.query(models.IntegrationDelivery).count(), 2)
+
+    def test_another_company_is_not_touched(self):
+        mine = self._delivery(self.integration, "dead", 40).id
+        theirs = self._delivery(self.other_integration, "dead", 40).id
+
+        integrations.purge_deliveries(
+            self.db, days=30, now=self.now, company_id=self.company.id
+        )
+
+        remaining = {row.id for row in self.db.query(models.IntegrationDelivery).all()}
+        self.assertEqual(remaining, {theirs})
+        self.assertNotIn(mine, remaining)
+
+    def test_a_purged_payload_cannot_be_resent(self):
+        dead = self._delivery(self.integration, "dead", 0)
+        integrations.purge_deliveries(self.db, days=30, now=self.now)
+        self.db.refresh(dead)
+
+        with self.assertRaises(HTTPException) as caught:
+            asyncio.run(integrations.resend_delivery(self.db, dead))
+
+        self.assertEqual(caught.exception.status_code, 409)
+        self.assertIn("purged", caught.exception.detail)
+
+    def test_bad_window_values_mean_keep_for_ever(self):
+        for raw in (None, "", "0", "-3", "soon"):
+            self.assertEqual(integrations.parse_delivery_retention_days(raw), 0, raw)
+        self.assertEqual(integrations.parse_delivery_retention_days("45"), 45)
+        self.assertIsNone(integrations.delivery_retention_cutoff(0, self.now))
 
 
 class ResendTests(unittest.TestCase):

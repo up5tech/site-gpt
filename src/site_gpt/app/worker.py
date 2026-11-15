@@ -19,7 +19,10 @@ from site_gpt.app.core.config import (
     DIGEST_HOUR,
 )
 from site_gpt.app.services import company_settings, digest, retention
-from site_gpt.app.services.integrations import process_due_deliveries
+from site_gpt.app.services.integrations import (
+    process_due_deliveries,
+    purge_deliveries,
+)
 from site_gpt.app.db.session import SessionLocal
 from site_gpt.app import models
 
@@ -446,6 +449,11 @@ async def delivery_loop():
             result = await process_due_deliveries(db)
             if result["attempted"]:
                 print(f"[worker] integration deliveries: {result}")
+            # Delivery rows carry the visitor's contact details; clear a dead
+            # row's payload immediately and drop settled rows past the window.
+            purged = purge_deliveries(db)
+            if purged["cleared_payloads"] or purged["deleted"]:
+                print(f"[worker] delivery retention: {purged}")
         except Exception as e:
             print(f"[worker] integration delivery retry failed: {e}")
         finally:

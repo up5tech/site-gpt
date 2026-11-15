@@ -31,6 +31,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import httpx
+from fastapi import HTTPException, status
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
@@ -40,6 +41,9 @@ from site_gpt.app.core import config
 logger = logging.getLogger(__name__)
 
 TIMEOUT_SECONDS = 5.0
+
+# Default window for keeping a settled delivery row: `config.DELIVERY_RETENTION_DAYS`
+# overrides it per deployment (0 = keep the rows, still clear dead payloads).
 
 # Delay before retry N+1, after attempt N failed. The fifth failure parks the
 # delivery, so a broken endpoint is retried five times over ~9 hours instead of
@@ -529,8 +533,113 @@ async def process_due_deliveries(db: Session, limit: int = 50) -> dict[str, int]
     return {"attempted": attempted, "delivered": delivered}
 
 
+def parse_delivery_retention_days(raw: str | int | None) -> int:
+    """How long a settled delivery row is kept. Unusable input means "for ever"."""
+    if raw is None or raw == "":
+        return 0
+    try:
+        days = int(str(raw).strip())
+    except (TypeError, ValueError):
+        return 0
+    return days if days > 0 else 0
+
+
+def delivery_retention_cutoff(
+    days: int, now: datetime | None = None
+) -> datetime | None:
+    if days <= 0:
+        return None
+    now = now or datetime.now(UTC)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=UTC)
+    return now - timedelta(days=days)
+
+
+def payload_purged(delivery: models.IntegrationDelivery) -> bool:
+    """Whether this row's payload is gone (cleared by retention, or empty).
+
+    A purged payload cannot be resent: the event would arrive with no data at
+    all, which is worse than a visible failure. The API reports this as
+    `payload_available: false` so the UI can disable Resend.
+    """
+    return not (delivery.payload or "").strip()
+
+
+def purge_deliveries(
+    db: Session,
+    days: int | None = None,
+    now: datetime | None = None,
+    dry_run: bool = False,
+    company_id: UUID | None = None,
+) -> dict[str, Any]:
+    """Drop the visitor data that delivery rows carry.
+
+    Two separate controls, because they answer different questions:
+
+    * **Every dead row loses its payload immediately.** It will never be retried,
+      so nothing needs the name/email it was going to send; keeping it is pure
+      PII exposure. Delivery-status and the scrubbed error stay, so "this lead
+      was never delivered" is still visible.
+    * **settled rows older than the window are deleted** (`delivered`/`dead`,
+      `created_at < cutoff`). `pending` rows are never deleted — they are work
+      that has not happened yet. A window of 0 disables deletion only; the payload
+      clear still runs.
+    """
+    days = config.DELIVERY_RETENTION_DAYS if days is None else days
+    now = now or datetime.now(UTC)
+    cutoff = delivery_retention_cutoff(days, now)
+
+    def rows(model):
+        query = db.query(model)
+        if company_id is not None:
+            # An admin may only clean their own company; the worker passes None
+            # and sweeps every tenant.
+            query = query.filter(model.company_id == company_id)
+        return query
+
+    dead = rows(models.IntegrationDelivery).filter(
+        models.IntegrationDelivery.status == "dead"
+    )
+    carried = dead.filter(models.IntegrationDelivery.payload != "")
+    cleared = carried.count() if dry_run else carried.update(
+        {models.IntegrationDelivery.payload: ""}, synchronize_session=False
+    )
+
+    deleted = 0
+    if cutoff is not None:
+        settled = rows(models.IntegrationDelivery).filter(
+            models.IntegrationDelivery.status.in_(("delivered", "dead")),
+            models.IntegrationDelivery.created_at < cutoff,
+        )
+        deleted = settled.count() if dry_run else settled.delete(synchronize_session=False)
+
+    if not dry_run:
+        db.commit()
+        if cleared or deleted:
+            logger.info(
+                "delivery retention: cleared %s dead payload(s), deleted %s settled row(s)",
+                cleared,
+                deleted,
+            )
+    return {
+        "retention_days": days,
+        "cutoff": cutoff,
+        "dry_run": dry_run,
+        "cleared_payloads": cleared,
+        "deleted": deleted,
+    }
+
+
 async def resend_delivery(db: Session, delivery: models.IntegrationDelivery) -> bool:
     """Give a dead (or pending) delivery a fresh attempt budget and try once."""
+    if payload_purged(delivery):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "The payload of this delivery was purged by retention and cannot be "
+                "resent; the event has to be produced again"
+            ),
+        )
     delivery.status = "pending"
     delivery.attempts = 0
     delivery.next_attempt_at = datetime.now(UTC)

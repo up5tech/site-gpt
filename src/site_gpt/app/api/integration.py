@@ -21,6 +21,7 @@ from site_gpt.app.db.session import get_db
 from site_gpt.app.schemas.integration import (
     DeliveryAttemptRes,
     DeliveryListRes,
+    DeliveryPurgeRes,
     DeliveryRes,
     IntegrationCreate,
     IntegrationRes,
@@ -33,6 +34,8 @@ from site_gpt.app.services.integrations import (
     PROVIDERS,
     config_of,
     events_of,
+    payload_purged,
+    purge_deliveries,
     resend_delivery,
     safe_error,
 )
@@ -107,6 +110,7 @@ def _delivery_res(row: models.IntegrationDelivery) -> DeliveryRes:
         next_attempt_at=row.next_attempt_at,
         delivered_at=row.delivered_at,
         created_at=row.created_at,
+        payload_available=not payload_purged(row),
     )
 
 
@@ -280,6 +284,28 @@ def list_deliveries(
         dead=counts.get("dead", 0),
         delivered=counts.get("delivered", 0),
     )
+
+
+@router.post("/deliveries/purge", response_model=DeliveryPurgeRes)
+def purge_delivery_history(
+    dry_run: bool = True,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_admin_user),
+):
+    """Preview (default) or run the delivery retention pass for this company.
+
+    The worker runs the same pass every `DELIVERY_CHECK_SECONDS`; this endpoint
+    exists so the window can be inspected before it starts deleting, and so an
+    owner can clear PII now instead of waiting.
+    """
+    result = purge_deliveries(db, dry_run=dry_run, company_id=user.company_id)
+    logger.info(
+        "delivery retention (%s) requested by %s: %s",
+        "dry run" if dry_run else "applied",
+        user.id,
+        result,
+    )
+    return DeliveryPurgeRes(**result)
 
 
 @router.post("/deliveries/{delivery_id}/resend", response_model=DeliveryAttemptRes)

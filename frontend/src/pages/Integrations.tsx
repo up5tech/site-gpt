@@ -421,6 +421,12 @@ export function Integrations() {
           size='small'
           icon={<RedoOutlined />}
           loading={resendingId === item.id}
+          disabled={!item.payload_available}
+          title={
+            item.payload_available
+              ? undefined
+              : 'The payload was purged by retention — the event cannot be resent'
+          }
           onClick={() => resend(item)}
         >
           Resend

@@ -70,6 +70,8 @@ class DeliveryRes(BaseModel):
     next_attempt_at: datetime | None
     delivered_at: datetime | None
     created_at: datetime
+    # False once retention cleared the payload; the UI disables Resend then.
+    payload_available: bool = True
 
 
 class DeliveryListRes(BaseModel):
@@ -79,6 +81,16 @@ class DeliveryListRes(BaseModel):
     pending: int
     dead: int
     delivered: int
+
+
+class DeliveryPurgeRes(BaseModel):
+    """Result of a retention pass, for the admin preview endpoint."""
+
+    retention_days: int
+    cutoff: datetime | None
+    dry_run: bool
+    cleared_payloads: int
+    deleted: int
 
 
 class DeliveryAttemptRes(BaseModel):
