@@ -232,6 +232,8 @@ Keys understood by `widget_ui_strings`: `clear`, `send`, `thinking`, `sources`,
 
 ```bash
 uv run alembic revision --autogenerate -m "[name]" && uv run alembic upgrade head
+uv run python -m unittest discover -s tests -v   # backend suite, no extra deps
+node --test tests/*.mjs                          # widget.js suite (no npm script)
 cd frontend && npm run build && npm run lint
 ```
 
