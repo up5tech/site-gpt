@@ -5,7 +5,7 @@ import os
 from datetime import UTC, datetime
 from uuid import UUID as _UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -40,6 +40,10 @@ from site_gpt.app.schemas.contact import (
     ContactListResponse,
     ContactRes,
 )
+from site_gpt.app.schemas.session_token import (
+    SessionTokenRequest,
+    SessionTokenResponse,
+)
 from site_gpt.app.schemas.user import UserLogin
 from site_gpt.app.services.conversations import (
     delete_conversation,
@@ -56,6 +60,7 @@ from site_gpt.app.services.quota import (
 )
 from site_gpt.app.services.rag import ask, ask_stream
 from site_gpt.app.services.ratelimit import rate_limit
+from site_gpt.app.services import session_tokens as session_token_queries
 from site_gpt.app.services.redis import enqueue_job, redis_client
 from site_gpt.app.services.website_state import ensure_website_active
 
@@ -337,6 +342,7 @@ def get_contact_endpoint(
     website_id: str,
     request: Request,
     db: Session = Depends(get_db),
+    x_session_token: str | None = Header(default=None, alias="X-Session-Token"),
 ):
     """Public: fetch one session's contact.
 
@@ -358,6 +364,8 @@ def get_contact_endpoint(
         )
     ensure_website_active(website)
     ensure_embed_allowed(request, db, website)
+    # K4: same guard as the conversation read — this one returns an email.
+    session_token_queries.authorize(db, website, session_id, x_session_token)
     contact = (
         db.query(models.Contact)
         .filter(
@@ -371,6 +379,69 @@ def get_contact_endpoint(
             status_code=status.HTTP_404_NOT_FOUND, detail="Contact not found"
         )
     return ContactRes.model_validate(contact)
+
+
+def _session_website(db: Session, website_id: str) -> models.Website:
+    """Resolve the website of a public session request (400/404 like the rest)."""
+    try:
+        site_uuid = _UUID(str(website_id))
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid website_id"
+        )
+    website = db.query(models.Website).filter(models.Website.id == site_uuid).first()
+    if not website:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Website not found"
+        )
+    return website
+
+
+@router.post("/api/session-token", response_model=SessionTokenResponse)
+def mint_session_token(
+    body: SessionTokenRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    x_session_token: str | None = Header(default=None, alias="X-Session-Token"),
+    _: None = Depends(rate_limit("session", max_requests=30, window_seconds=60)),
+):
+    """K4: mint (or rotate) the token the widget uses to read its own session.
+
+    A new session gets one token; an existing session can only *rotate* with the
+    token it already has (expiry does not block rotation). A session that was
+    created before tokens existed cannot be claimed this way at all — otherwise
+    knowing an id would be enough to obtain the credential.
+    """
+    session_id = (body.session_id or "").strip()
+    if not session_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="session_id is required"
+        )
+    website = _session_website(db, str(body.website_id))
+    ensure_website_active(website)
+    ensure_embed_allowed(request, db, website)
+
+    row = session_token_queries.row_for(db, website.id, session_id)
+    if row is not None:
+        if row.revoked_at is not None or not session_token_queries.matches(
+            row, x_session_token
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="This session already has a token; send it as X-Session-Token "
+                "to rotate it",
+            )
+        token, row = session_token_queries.mint(db, website.id, session_id)
+        return SessionTokenResponse(token=token, expires_at=row.expires_at)
+
+    if session_token_queries.session_has_data(db, website.id, session_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This session predates session tokens and cannot be claimed",
+        )
+
+    token, row = session_token_queries.mint(db, website.id, session_id)
+    return SessionTokenResponse(token=token, expires_at=row.expires_at)
 
 
 @router.get("/api/widget-config")
@@ -522,6 +593,7 @@ def get_conversation_endpoint(
     session_id: str,
     website_id: str,
     db: Session = Depends(get_db),
+    x_session_token: str | None = Header(default=None, alias="X-Session-Token"),
 ):
     """Public: fetch the messages of one conversation.
 
@@ -540,6 +612,8 @@ def get_conversation_endpoint(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Website not found"
         )
+    # K4: the id alone is no longer enough once the session has a token.
+    session_token_queries.authorize(db, website, session_id, x_session_token)
     rows = get_conversation_messages(db, website.id, session_id)
     return ConversationMessagesResponse(
         items=[
