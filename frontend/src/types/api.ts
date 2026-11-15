@@ -164,6 +164,27 @@ export interface Setting {
   updated_at?: string;
 }
 
+export interface ApiKeyItem {
+  id: string;
+  name: string;
+  /** First characters of the key: the only part stored in a readable form. */
+  key_prefix: string;
+  scopes: string[];
+  created_at: string;
+  last_used_at?: string | null;
+  revoked_at?: string | null;
+}
+
+export interface ApiKeyCreated extends ApiKeyItem {
+  /** The raw key — returned exactly once, on creation. */
+  key: string;
+}
+
+export interface ApiKeyPayload {
+  name: string;
+  scopes: string[];
+}
+
 export type IntegrationType = 'webhook' | 'slack' | 'zendesk' | 'crisp';
 
 export interface IntegrationItem {

@@ -1,5 +1,5 @@
 import axios, { AxiosInstance } from 'axios';
-import type { AnalyticsSummary, ChatResponse, ContactList, ConversationList, ConversationMessages, DashboardStats, DigestPreview, DigestSendResult, FeedbackItem, FeedbackList, FeedbackRequest, FeedbackReview, HandoffList, HandoffUpdate, IntegrationItem, IntegrationPayload, IntegrationTestResult, LoginResponse, RecentConversations, RegisterRequest, Setting, Website, WebsiteQuota, WidgetConfig } from '../types/api';
+import type { AnalyticsSummary, ApiKeyCreated, ApiKeyItem, ApiKeyPayload, ChatResponse, ContactList, ConversationList, ConversationMessages, DashboardStats, DigestPreview, DigestSendResult, FeedbackItem, FeedbackList, FeedbackRequest, FeedbackReview, HandoffList, HandoffUpdate, IntegrationItem, IntegrationPayload, IntegrationTestResult, LoginResponse, RecentConversations, RegisterRequest, Setting, Website, WebsiteQuota, WidgetConfig } from '../types/api';
 
 // Base API instance with proxy /api -> backend
 const api: AxiosInstance = axios.create({
@@ -91,6 +91,15 @@ export const getHandoffs = (
 
 export const updateHandoff = (id: string, payload: HandoffUpdate) =>
   api.patch(`/handoffs/${id}`, payload);
+
+// Company API keys for /api/v1 (F8). The raw key is only in the create response.
+export const getApiKeys = () => api.get<ApiKeyItem[]>('/api/api-keys/');
+
+export const createApiKey = (payload: ApiKeyPayload) =>
+  api.post<ApiKeyCreated>('/api/api-keys/', payload);
+
+export const revokeApiKey = (id: string) =>
+  api.delete(`/api/api-keys/${id}`);
 
 // Outbound integrations (F7). Reads are masked server-side.
 export const getIntegrations = () =>

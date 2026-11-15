@@ -1,5 +1,6 @@
 import {
   CopyOutlined,
+  KeyOutlined,
   SaveOutlined,
   SettingOutlined,
   UserOutlined,
@@ -28,6 +29,7 @@ import api, {
   getSettings,
   updateSettings,
 } from '../utils/api';
+import { ApiKeysPanel } from '../components/ApiKeysPanel';
 import { WidgetPreview } from '../components/WidgetPreview';
 import {
   WIDGET_VERSION_PLACEHOLDER,
@@ -542,6 +544,21 @@ export function Settings() {
             message='Provider API keys'
             description='Fast and Accurate run on OpenAI, so OPENAI_API_KEY must be set on the server. Default keeps whatever LLM_AI / LLM_MODEL are configured for. Embeddings still come from EMBEDDING_AI and are not switched here.'
           />
+        </Card>
+      ),
+    },
+    {
+      key: 'api-keys',
+      label: (
+        <span>
+          <KeyOutlined />
+          API keys
+        </span>
+      ),
+      children: (
+        <Card variant='borderless' className='premium-card'>
+          <Title level={4}>API Keys</Title>
+          <ApiKeysPanel />
         </Card>
       ),
     },
