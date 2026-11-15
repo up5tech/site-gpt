@@ -118,6 +118,7 @@ npm install && npm run dev   # :5173
 | `DIGEST_ENABLED` | `false` | global switch for the worker's weekly-digest loop (each company also needs its `digest_enabled` setting) |
 | `DIGEST_CHECK_SECONDS` | `3600` | how often the digest loop looks for companies whose send hour has come |
 | `DELIVERY_CHECK_SECONDS` | `60` | how often the worker retries integration deliveries whose backoff has elapsed |
+| `DELIVERY_RETENTION_DAYS` | `30` | how long a delivered/dead delivery row is kept; a dead row's payload is cleared immediately, `0` keeps the rows |
 | `RETENTION_CHECK_SECONDS` | `86400` | how often the worker queues the retention purge for companies that set `retention_days` |
 | `DIGEST_HOUR` | `9` | default UTC send hour for a company without its own `digest_hour` setting |
 | `INTEGRATION_WEBHOOK_SECRET` | — | HMAC-SHA256 secret that signs outbound webhook payloads (`X-SiteGPT-Signature: sha256=...`) |
@@ -236,7 +237,10 @@ Keys understood by `widget_ui_strings`: `clear`, `send`, `thinking`, `sources`,
   backoff (1m, 5m, 30m, 2h, 6h), parked as `dead` after five attempts, and can be
   resent from `/integrations` → Recent deliveries. Each event carries one
   `event_id` (`X-SiteGPT-Event-Id` and `data.event_id`) that stays the same across
-  retries, so a receiver can dedupe. Reads never return a stored credential —
+  retries, so a receiver can dedupe. Those rows carry the lead's details, so a
+  dead row's payload is cleared at once (resend then answers 409) and settled rows
+  are deleted after `DELIVERY_RETENTION_DAYS`; `POST /api/integrations/deliveries/purge`
+  previews the cleanup. Reads never return a stored credential —
   secrets come back as `***` and a PATCH echoing the mask keeps the stored value.
 - **API keys and `/api/v1`** — Settings → API keys mints scoped keys (`read`,
   `ingest:write`, `settings:write`, `chat:write`), stored only as a peppered

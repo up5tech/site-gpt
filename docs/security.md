@@ -164,7 +164,7 @@ an *unclaimed* session is allowed; see §5 for the trade-off.
 | `api_keys` | Prefix, peppered hash, scopes, timestamps | No raw secret |
 | `session_tokens` | Per-session token **hash**, expiry, last use | A credential once removed; not personal data |
 | `integrations` | Provider config **including credentials** | Credentials, not personal data |
-| `integration_deliveries` | Event payload (may contain a lead's name/email), status, attempts, scrubbed error | Personal data copied out of `contacts` for retry; **not** covered by `retention_days`, no pruning yet |
+| `integration_deliveries` | Event payload (may contain a lead's name/email), status, attempts, scrubbed error | Personal data copied out of `contacts` for retry. A **dead** row's payload is cleared by the worker; settled rows are deleted after `DELIVERY_RETENTION_DAYS` (default 30). Not governed by the per-company `retention_days` |
 | `digest_log` | Which weekly period was sent to whom | Recipient personal data |
 | `uploads/` | Imported source files | Depends on the file |
 
@@ -175,9 +175,21 @@ deletes rows **strictly older than** `now - retention_days` from `chat_messages`
 `chat_feedback`, `handoff_requests`, `contacts` and `digest_log`, always through
 that company's websites. Deletion is hard, like the erasure endpoints.
 
-What a policy does *not* cover yet: `integration_deliveries` payloads (they keep
-contact details until an admin deletes the row) and uploaded files under
-`uploads/`. `POST /api/privacy/retention` with `dry_run: true` (the default)
+**Delivery rows.** `integration_deliveries` holds a copy of the event payload so a
+failed send can be retried, so it is cleaned on its own schedule
+(`DELIVERY_RETENTION_DAYS`, default 30, deployment-wide; `0` keeps the rows):
+
+- a row that went **dead** loses its payload immediately — it will never be
+  retried, so the name/email it carried is pure exposure. The status, attempts and
+  scrubbed error stay visible, and `POST /integrations/deliveries/{id}/resend`
+  answers `409` because there is nothing left to send;
+- **settled** rows (`delivered`/`dead`) older than the window are deleted;
+  `pending` rows are never deleted because they are work that has not happened;
+- the worker runs this on every `DELIVERY_CHECK_SECONDS` tick, and an admin can
+  preview or trigger it with `POST /api/integrations/deliveries/purge`
+  (`dry_run` defaults to true, company-scoped).
+
+What a policy does *not* cover yet: uploaded files under `uploads/`. `POST /api/privacy/retention` with `dry_run: true` (the default)
 counts what would go without deleting anything, and accepts `retention_days` as an
 override for a what-if preview.
 
