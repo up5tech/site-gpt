@@ -62,3 +62,24 @@ class PrivacyDeletionResult(BaseModel):
     website_id: UUID
     session_id: str
     deleted: dict[str, int]
+
+
+class RetentionPurgeRequest(BaseModel):
+    """Preview or run the retention purge for the caller's company.
+
+    `dry_run` defaults to True on purpose: a purge is destructive, so the default
+    answers "what would go?" and deleting takes an explicit `false`.
+    """
+
+    dry_run: bool = True
+    # Override the stored `retention_days` for a what-if preview.
+    retention_days: int | None = None
+
+
+class RetentionPurgeResult(BaseModel):
+    retention_days: int
+    # Rows strictly older than this go; `null` when the policy is "keep for ever".
+    cutoff: datetime | None
+    dry_run: bool
+    deleted: dict[str, int]
+    total: int

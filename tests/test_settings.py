@@ -67,6 +67,8 @@ INTERNAL_KEYS = {
     "digest_hour",
     "digest_day",
     "digest_recipients",
+    # Retention policy (F9): days of visitor data to keep, "0" = for ever.
+    "retention_days",
 }
 
 

@@ -109,6 +109,11 @@ DIGEST_CHECK_SECONDS = int(os.getenv("DIGEST_CHECK_SECONDS", "3600"))
 # retry. Retries are cheap (a select and maybe one HTTP call), so this is
 # minutes rather than hours; the backoff itself lives in `services/integrations`.
 DELIVERY_CHECK_SECONDS = int(os.getenv("DELIVERY_CHECK_SECONDS", "60"))
+
+# How often the worker queues the retention purge for companies that set a
+# `retention_days` policy. Daily: the purge removes rows older than the policy,
+# so a faster tick would only re-scan the same rows.
+RETENTION_CHECK_SECONDS = int(os.getenv("RETENTION_CHECK_SECONDS", "86400"))
 DIGEST_HOUR = int(os.getenv("DIGEST_HOUR", "9"))
 
 # Maximum cosine distance for a retrieved chunk to be used as context. Chunks

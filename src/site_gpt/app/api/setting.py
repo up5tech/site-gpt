@@ -57,6 +57,12 @@ INTERNAL_SETTINGS: dict[str, str] = {
     "digest_hour": "9",
     "digest_day": "monday",
     "digest_recipients": "",
+    # How long visitor data is kept, in days (F9). "0" means "keep for ever",
+    # which is the behaviour of every company created before the setting
+    # existed. The worker's retention job deletes rows older than this from
+    # `chat_messages`, `chat_feedback`, `handoff_requests`, `contacts` and
+    # `digest_log`; see `services/retention.py`.
+    "retention_days": "0",
 }
 
 # Every setting a company can have: seeded on register, accepted by

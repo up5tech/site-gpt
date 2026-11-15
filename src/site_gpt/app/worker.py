@@ -14,10 +14,11 @@ from site_gpt.app.core.config import (
     CRAWL_REFRESH_HOURS,
     DELIVERY_CHECK_SECONDS,
     DIGEST_CHECK_SECONDS,
+    RETENTION_CHECK_SECONDS,
     DIGEST_ENABLED,
     DIGEST_HOUR,
 )
-from site_gpt.app.services import company_settings, digest
+from site_gpt.app.services import company_settings, digest, retention
 from site_gpt.app.services.integrations import process_due_deliveries
 from site_gpt.app.db.session import SessionLocal
 from site_gpt.app import models
@@ -122,6 +123,9 @@ async def worker():
     # while the endpoint was down. Always on: an event must not be lost because
     # the receiver had a bad minute.
     asyncio.create_task(delivery_loop())
+    # Daily retention purge for companies that set a policy. Queued rather than
+    # run inline so a large delete does not stall the job loop.
+    asyncio.create_task(retention_loop())
     while True:
         try:
             _, job = await redis_client.brpop("queue:jobs")  # type: ignore
@@ -144,6 +148,12 @@ async def worker():
                 await handle_digest(data)
             except Exception as e:
                 print(f"[worker] digest failed: {e}")
+                traceback.print_exc()
+        elif data.get("type") == "retention":
+            try:
+                await handle_retention(data)
+            except Exception as e:
+                print(f"[worker] retention purge failed: {e}")
                 traceback.print_exc()
 
 
@@ -285,6 +295,60 @@ async def handle_ingest(data):
         raise
     finally:
         db.close()
+
+
+async def handle_retention(data):
+    """Purge one company's expired rows.
+
+    `dry_run` exists for the same reason the API has it: a policy change should be
+    previewable, and this is the code path an operator would want to run by hand
+    before trusting it.
+    """
+    company_id = data.get("company_id")
+    if not company_id:
+        print(f"[retention] incomplete job: {data}")
+        return
+
+    db = SessionLocal()
+    try:
+        result = retention.purge_company(
+            db, UUID(str(company_id)), dry_run=bool(data.get("dry_run"))
+        )
+        print(
+            f"[retention] company {company_id} days={result['retention_days']} "
+            f"dry_run={result['dry_run']} rows={result['deleted']}"
+        )
+    except Exception as e:
+        db.rollback()
+        print(f"[retention] company {company_id} failed: {e}")
+        raise
+    finally:
+        db.close()
+
+
+async def enqueue_due_retention() -> list[str]:
+    """Queue a purge for every company with a retention policy."""
+    db = SessionLocal()
+    queued: list[str] = []
+    try:
+        for company_id in retention.companies_with_policy(db):
+            enqueue_job({"type": "retention", "company_id": str(company_id)})
+            queued.append(str(company_id))
+    finally:
+        db.close()
+    return queued
+
+
+async def retention_loop():
+    """Wake every RETENTION_CHECK_SECONDS and queue the daily purges."""
+    while True:
+        await asyncio.sleep(RETENTION_CHECK_SECONDS)
+        try:
+            queued = await enqueue_due_retention()
+            if queued:
+                print(f"[worker] retention purge queued for {len(queued)} companies")
+        except Exception as e:
+            print(f"[worker] retention enqueue failed: {e}")
 
 
 async def handle_digest(data):

@@ -10,6 +10,7 @@ copy "just in case" is not an erasure. The audit trail for API keys is separate
 and unaffected.
 """
 
+import logging
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -26,10 +27,15 @@ from site_gpt.app.schemas.privacy import (
     PrivacyFeedback,
     PrivacyHandoff,
     PrivacyMessage,
+    RetentionPurgeRequest,
+    RetentionPurgeResult,
 )
+from site_gpt.app.services import retention
 from site_gpt.app.services.conversations import delete_conversation
 
 router = APIRouter()
+
+logger = logging.getLogger(__name__)
 
 
 def _scoped_website(db: Session, website_id: UUID, company_id: UUID) -> models.Website:
@@ -189,6 +195,39 @@ def erase_conversation(
             "handoff_requests": deleted_handoffs,
         },
     )
+
+
+@router.post("/retention", response_model=RetentionPurgeResult)
+def purge_expired_data(
+    body: RetentionPurgeRequest,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_admin_user),
+):
+    """Preview (default) or apply the company's `retention_days` policy now.
+
+    The worker runs the same code once a day; this endpoint exists so an owner can
+    see what a policy would delete before letting it run, and so the purge can be
+    triggered without waiting for the nightly job.
+    """
+    if body.retention_days is not None and body.retention_days < 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="retention_days cannot be negative",
+        )
+
+    result = retention.purge_company(
+        db,
+        user.company_id,
+        days=body.retention_days,
+        dry_run=body.dry_run,
+    )
+    logger.info(
+        "retention purge (%s) for company %s: %s rows",
+        "dry run" if result["dry_run"] else "applied",
+        user.company_id,
+        result["total"],
+    )
+    return RetentionPurgeResult(**result)
 
 
 @router.delete("/contacts/{session_id}", response_model=PrivacyDeletionResult)
