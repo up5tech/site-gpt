@@ -358,6 +358,11 @@ so `EMBEDDING_DIMENSIONS` must equal that model's native size.
   calling the LLM or embedding the question. `0` disables the cap, and a Redis outage fails open
   (chat keeps working, the error is logged) rather than taking the widget down. The counter is spent
   before the LLM call and never refunded, and flushing Redis resets today's counts.
+- **The widget explains a disabled website.** A disabled site answers `403` on every public endpoint; the
+  widget used to show its generic `Error!` bubble (or ask for contact details first). It now recognises
+  the `403` from `widget-config`, `/api/chat/stream` and `/api/contacts`, shows
+  "This assistant is temporarily unavailable. Please try again later." in the chat bubble and hides the
+  input, and skips the contact form entirely. Every other failure keeps its previous behaviour.
 - **`websites.status` disables a bot.** Only an *explicit* other value disables the bot; a NULL/empty
   status means "never set" and stays enabled, so a row created before the switch existed cannot be
   silently killed. Create and update normalise the value (` ACTIVE ` → `active`, the form sends

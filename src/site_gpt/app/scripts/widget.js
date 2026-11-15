@@ -671,6 +671,10 @@
             email,
           }),
         });
+        if (res.status === 403) {
+          markUnavailable(null);
+          return;
+        }
         if (!res.ok) throw new Error('save failed');
         localStorage.setItem(
           'chat_widget_contact',
@@ -686,6 +690,31 @@
       }
     };
     messagesEl.appendChild(form);
+  }
+
+  // ================= DISABLED WEBSITE =================
+  // A website whose owner disabled it answers every public endpoint with 403.
+  // That is a normal, expected state, not a broken widget: tell the visitor so
+  // instead of the generic 'Error!' bubble, and never ask for contact details
+  // on a site that cannot accept them.
+  const UNAVAILABLE_MESSAGE =
+    'This assistant is temporarily unavailable. Please try again later.';
+
+  let siteDisabled = false;
+
+  // `row` is the in-flight bot bubble to reuse; without one the message is
+  // added as a new bubble (and any half-rendered content is dropped).
+  function markUnavailable(row) {
+    siteDisabled = true;
+    setChatInputVisible(false);
+    const bubble = row ? row.querySelector('.bubble') : null;
+    if (bubble) {
+      bubble.classList.remove('thinking');
+      bubble.textContent = UNAVAILABLE_MESSAGE;
+      return;
+    }
+    messagesEl.innerHTML = '';
+    addMessage(UNAVAILABLE_MESSAGE, 'bot');
   }
 
   // ================= SEND =================
@@ -719,6 +748,14 @@
           session_id: sessionId,
         }),
       });
+
+      if (res.status === 403) {
+        // Disabled website: a clear message, not 'Error!'.
+        markUnavailable(thinkingRow);
+        inputEl.disabled = false;
+        sendBtn.disabled = false;
+        return;
+      }
 
       if (!res.ok || !res.body) {
         throw new Error('chat request failed');
@@ -818,6 +855,10 @@
       const res = await fetch(
         `${base}/api/widget-config?website_id=${encodeURIComponent(config.website_id)}`,
       );
+      if (res.status === 403) {
+        siteDisabled = true;
+        return;
+      }
       if (!res.ok) return;
       const cfg = await res.json();
       // Server values are sanitised with the same rules as ChatWidgetConfig.
@@ -910,6 +951,12 @@
       contactRequired ? loadServerContact() : Promise.resolve(false),
       fetchServerHistory(),
     ]);
+
+    // Disabled website: no contact form, no history, just the notice.
+    if (siteDisabled) {
+      markUnavailable(null);
+      return;
+    }
 
     if (contactRequired && !restoredContact) {
       showContactForm();
