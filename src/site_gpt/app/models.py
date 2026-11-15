@@ -387,3 +387,6 @@ class Contact(BaseModel):
     first_name: Mapped[str] = mapped_column(String(255), nullable=False)
     last_name: Mapped[str] = mapped_column(String(255), nullable=False)
     email: Mapped[str] = mapped_column(String(255), nullable=False)
+    # When the visitor ticked the consent box (F9). NULL means "no recorded
+    # consent", which is also the state of every row created before V2.
+    consent_at: Mapped[datetime] = mapped_column(nullable=True)

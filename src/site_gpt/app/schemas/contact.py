@@ -10,6 +10,9 @@ class ContactCreate(BaseModel):
     first_name: str
     last_name: str
     email: str
+    # Optional: a widget that never sends it behaves exactly as before. It is
+    # only enforced when the company turned `require_consent` on (F9).
+    consent: bool | None = None
 
 
 class ContactRes(BaseModel):
@@ -21,6 +24,7 @@ class ContactRes(BaseModel):
     first_name: str | None = None
     last_name: str | None = None
     email: str | None = None
+    consent_at: datetime | None = None
 
     model_config = {"from_attributes": True}
 
