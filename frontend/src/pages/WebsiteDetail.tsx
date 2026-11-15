@@ -47,7 +47,17 @@ export function WebsiteDetail() {
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingPage, setEditingPage] = useState<WebsitePage | null>(null);
+  const [startingIngest, setStartingIngest] = useState(false);
   const [form] = Form.useForm();
+
+  // Mirrors the API's rule: a `processing` row is only "in flight" until
+  // STUCK_INGEST_AFTER (6h) has passed since websites.updated_at. After that the
+  // worker is presumed dead and a manual retry must stay possible.
+  const STUCK_INGEST_AFTER_MS = 6 * 60 * 60 * 1000;
+  const ingestInProgress =
+    website?.ingest_status === 'processing' &&
+    !!website?.updated_at &&
+    Date.now() - new Date(website.updated_at).getTime() <= STUCK_INGEST_AFTER_MS;
 
   const fetchWebsiteDetail = async () => {
     try {
@@ -95,13 +105,28 @@ export function WebsiteDetail() {
   };
 
   const handleRunIngest = async () => {
+    setStartingIngest(true);
     try {
       await api.post(`/ingest`, null, { params: { website_id: id } });
       message.success('Ingest started successfully');
       fetchWebsiteDetail();
     } catch (error) {
       console.error('Run ingest error', error);
-      message.error('Failed to start ingest');
+      const failure = (
+        error as { response?: { status?: number; data?: { detail?: string } } }
+      ).response;
+      if (failure?.status === 409) {
+        // The API refuses a second crawl while one is running.
+        message.warning(
+          failure.data?.detail ||
+            'An ingest is already running for this website.',
+        );
+        fetchWebsiteDetail();
+      } else {
+        message.error('Failed to start ingest');
+      }
+    } finally {
+      setStartingIngest(false);
     }
   };
 
@@ -241,9 +266,16 @@ export function WebsiteDetail() {
             type='primary'
             icon={<DatabaseOutlined />}
             onClick={handleRunIngest}
+            loading={startingIngest}
+            disabled={startingIngest || ingestInProgress}
             style={{ backgroundColor: '#10b981', borderColor: '#10b981' }}
+            title={
+              ingestInProgress
+                ? 'An ingest is already running for this website'
+                : undefined
+            }
           >
-            Run Ingest
+            {ingestInProgress ? 'Ingesting…' : 'Run Ingest'}
           </Button>
         </Space>
       </div>
