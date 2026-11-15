@@ -7,6 +7,7 @@ stored `message_id`, so a rating can only ever teach the pair that was actually
 exchanged in that session.
 """
 
+import logging
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -18,6 +19,9 @@ from site_gpt.app.db.session import get_db
 from site_gpt.app.schemas.app import PaginatedResponse
 from site_gpt.app.schemas.feedback import FeedbackItem, FeedbackReview
 from site_gpt.app.services.conversations import question_for_answer
+from site_gpt.app.services.qa_training import rebuild_qa_document
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -130,6 +134,42 @@ def list_feedback(
     )
 
 
+def _rebuild_quietly(db: Session, website_id: UUID) -> None:
+    """Refresh the Q&A corpus without failing the review that triggered it.
+
+    The decision is already stored; an embedding outage must not make the admin
+    think the approve/reject did not happen. The explicit rebuild endpoint is
+    where such a failure is reported.
+    """
+    try:
+        rebuild_qa_document(db, website_id)
+    except Exception:
+        logger.exception("Q&A rebuild failed for website %s", website_id)
+
+
+@router.post("/rebuild")
+def rebuild_feedback(
+    website_id: UUID,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_manager_user),
+):
+    """Rebuild this website's Q&A training document from approved pairs."""
+    website = (
+        db.query(models.Website)
+        .filter(
+            models.Website.id == website_id,
+            models.Website.company_id == user.company_id,
+        )
+        .first()
+    )
+    if not website:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Website not found"
+        )
+    result = rebuild_qa_document(db, website.id)
+    return {"status": "ok", **result}
+
+
 @router.patch("/{feedback_id}", response_model=FeedbackItem)
 def review_feedback(
     feedback_id: UUID,
@@ -154,4 +194,10 @@ def review_feedback(
         feedback.reviewed_answer = body.reviewed_answer
     db.commit()
     db.refresh(feedback)
+
+    # Only a decided row changes the corpus; a reset to pending does too, since
+    # its pair must stop being retrievable.
+    if body.status is not None:
+        _rebuild_quietly(db, feedback.website_id)
+
     return _to_item(db, feedback)
