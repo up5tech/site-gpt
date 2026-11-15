@@ -106,6 +106,83 @@
     });
   }
 
+  // ================= UI STRINGS =================
+  // Every visible label has its English text at the call site, so this table
+  // only holds the languages the widget ships. Resolution order in `t()`:
+  // the owner's `widget_ui_strings` overrides, then this table for the resolved
+  // language, then the English fallback. Anything unknown stays English.
+  const TRANSLATIONS = {
+    vi: {
+      clear: 'Xoá',
+      send: 'Gửi',
+      thinking: 'Đang trả lời...',
+      sources: 'Nguồn:',
+      helpful: 'Hữu ích',
+      notHelpful: 'Không hữu ích',
+      thanksFeedback: 'Cảm ơn phản hồi của bạn!',
+      contactIntro: ' — vui lòng giới thiệu bản thân để bắt đầu trò chuyện.',
+      firstName: 'Tên',
+      lastName: 'Họ',
+      email: 'Email',
+      contactInvalid: 'Vui lòng nhập tên, họ và email hợp lệ.',
+      startChat: 'Bắt đầu trò chuyện',
+      contactSaveFailed: 'Không lưu được. Vui lòng thử lại.',
+      noResponse: 'Không có phản hồi',
+      missingWebsiteId: 'Thiếu Website ID',
+      error: 'Lỗi!',
+    },
+  };
+
+  // Resolved from the `widget_language` setting. Starts as English so an embed
+  // that has no such setting keeps exactly the V1 strings.
+  let uiLanguage = 'en';
+  let uiStrings = {};
+
+  // `auto` follows the host page's browser language; an explicit code forces a
+  // locale. Region suffixes are dropped (`vi-VN` -> `vi`).
+  function normalizeLanguage(raw) {
+    const value = String(raw === null || raw === undefined ? '' : raw)
+      .trim()
+      .toLowerCase();
+    if (!value || value === 'auto') {
+      const nav =
+        typeof navigator !== 'undefined' && navigator.language
+          ? String(navigator.language).toLowerCase()
+          : '';
+      return nav.split('-')[0] || 'en';
+    }
+    return value.split('-')[0];
+  }
+
+  // `widget_ui_strings` is owner-supplied JSON. Malformed input or a non-object
+  // falls back silently to the catalogue / English, never to an error.
+  function parseUiStrings(raw) {
+    if (typeof raw !== 'string' || !raw.trim()) return {};
+    try {
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        return {};
+      }
+      const out = {};
+      Object.keys(parsed).forEach((key) => {
+        if (typeof parsed[key] === 'string' && parsed[key].trim()) {
+          out[key] = parsed[key];
+        }
+      });
+      return out;
+    } catch (e) {
+      return {};
+    }
+  }
+
+  function t(key, fallback) {
+    const override = uiStrings[key];
+    if (typeof override === 'string' && override) return override;
+    const table = TRANSLATIONS[uiLanguage];
+    const translated = table && table[key];
+    return translated || fallback;
+  }
+
   // ================= CONFIG INSTANCE =================
   const config = sanitizeConfig(
     Object.assign({}, DEFAULT_CONFIG, window.ChatWidgetConfig || {}),
@@ -455,7 +532,7 @@
     bubble.className = 'bubble';
 
     if (isThinking) {
-      bubble.textContent = 'Thinking...';
+      bubble.textContent = t('thinking', 'Thinking...');
       bubble.classList.add('thinking');
     } else {
       bubble.innerHTML = renderMarkdown(text);
@@ -487,7 +564,7 @@
       // Built with DOM nodes (textContent), never innerHTML: source titles come
       // from the customer's crawled pages and are untrusted.
       const heading = document.createElement('strong');
-      heading.textContent = 'Sources:';
+      heading.textContent = t('sources', 'Sources:');
       src.appendChild(heading);
       src.appendChild(document.createTextNode(' '));
       sources.forEach((s, index) => {
@@ -516,14 +593,14 @@
     fb.className = 'feedback';
     const up = document.createElement('button');
     up.textContent = '👍';
-    up.title = 'Helpful';
+    up.title = t('helpful', 'Helpful');
     const down = document.createElement('button');
     down.textContent = '👎';
-    down.title = 'Not helpful';
+    down.title = t('notHelpful', 'Not helpful');
     const thanks = document.createElement('span');
     thanks.className = 'thanks';
     thanks.style.display = 'none';
-    thanks.textContent = 'Thanks for the feedback!';
+    thanks.textContent = t('thanksFeedback', 'Thanks for the feedback!');
 
     const send = (rating) => {
       up.disabled = true;
@@ -637,13 +714,15 @@
     messagesEl.innerHTML = '';
     const form = document.createElement('form');
     form.className = 'contact-form';
+    // The English copy at each call site is the fallback: `t()` swaps in the
+    // language catalogue or the owner's `widget_ui_strings` when present.
     form.innerHTML = `
-      <p><b>${escapeHtml(config.botName)}</b> — please introduce yourself to start chatting.</p>
-      <label>First name<input name="first_name" autocomplete="given-name" /></label>
-      <label>Last name<input name="last_name" autocomplete="family-name" /></label>
-      <label>Email<input name="email" type="email" autocomplete="email" /></label>
+      <p><b>${escapeHtml(config.botName)}</b>${escapeHtml(t('contactIntro', ' — please introduce yourself to start chatting.'))}</p>
+      <label>${escapeHtml(t('firstName', 'First name'))}<input name="first_name" autocomplete="given-name" /></label>
+      <label>${escapeHtml(t('lastName', 'Last name'))}<input name="last_name" autocomplete="family-name" /></label>
+      <label>${escapeHtml(t('email', 'Email'))}<input name="email" type="email" autocomplete="email" /></label>
       <div class="error"></div>
-      <button class="submit" type="submit">Start chat</button>
+      <button class="submit" type="submit">${escapeHtml(t('startChat', 'Start chat'))}</button>
     `;
     const errEl = form.querySelector('.error');
     form.onsubmit = async (e) => {
@@ -652,8 +731,10 @@
       const last_name = form.last_name.value.trim();
       const email = form.email.value.trim();
       if (!first_name || !last_name || email.indexOf('@') < 0) {
-        errEl.textContent =
-          'Please fill first name, last name and a valid email.';
+        errEl.textContent = t(
+          'contactInvalid',
+          'Please fill first name, last name and a valid email.',
+        );
         return;
       }
       const btn = form.querySelector('.submit');
@@ -682,10 +763,13 @@
         );
         messagesEl.innerHTML = '';
         setChatInputVisible(true);
-        addMessage(config.welcomeMessage, 'bot');
+        addMessage(t('greeting', config.welcomeMessage), 'bot');
         renderSuggestions();
       } catch (err) {
-        errEl.textContent = 'Could not save. Please try again.';
+        errEl.textContent = t(
+          'contactSaveFailed',
+          'Could not save. Please try again.',
+        );
         btn.disabled = false;
       }
     };
@@ -793,14 +877,16 @@
         }
       }
 
-      thinkingMsg.innerHTML = renderMarkdown(reply || 'No response');
+      thinkingMsg.innerHTML = renderMarkdown(
+        reply || t('noResponse', 'No response'),
+      );
       thinkingMsg.classList.remove('thinking');
       attachExtras(thinkingRow, pendingSources);
 
       scrollToBottom();
       saveHistory('bot', reply);
     } catch (err) {
-      thinkingMsg.textContent = 'Error!';
+      thinkingMsg.textContent = t('error', 'Error!');
     }
 
     inputEl.disabled = false;
@@ -892,15 +978,22 @@
           .map((s) => s.trim())
           .filter(Boolean);
 
+      // Language before any label, because everything below goes through `t()`.
+      // No key at all (a pre-V2 company) keeps the English V1 strings.
+      if (cfg.widget_language) uiLanguage = normalizeLanguage(cfg.widget_language);
+      uiStrings = parseUiStrings(cfg.widget_ui_strings);
+
       // Apply dynamic styles / labels now that config is loaded.
       headerNameEl.textContent = config.botName;
+      clearBtn.textContent = t('clear', 'Clear');
+      sendBtn.textContent = t('send', 'Send');
       toggleBtn.style.background = config.theme.primaryColor;
       shadow.querySelector('.chat-header').style.background =
         config.theme.primaryColor;
       shadow.querySelector('.chat-input button').style.background =
         config.theme.primaryColor;
       shadow.querySelector('.chat-input').style.background = config.footerColor;
-      inputEl.placeholder = config.placeholder;
+      inputEl.placeholder = t('placeholder', config.placeholder);
       container.style[config.position === 'bottom-left' ? 'left' : 'right'] =
         '20px';
     } catch (e) {
@@ -938,7 +1031,7 @@
 
   async function init() {
     if (!hasWebsiteId) {
-      addMessage('Missing Website ID', 'bot');
+      addMessage(t('missingWebsiteId', 'Missing Website ID'), 'bot');
       return;
     }
 

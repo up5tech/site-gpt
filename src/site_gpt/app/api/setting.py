@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 
 from site_gpt.app import models
 from site_gpt.app.core.auth import get_admin_user
-from site_gpt.app.core.config import DAILY_MESSAGE_LIMIT
+from site_gpt.app.core.config import DAILY_MESSAGE_LIMIT, DEFAULT_WIDGET_LANGUAGE
 from site_gpt.app.db.session import get_db
 from site_gpt.app.schemas.setting import SettingRes
 from site_gpt.app.services.quota import parse_limit
@@ -23,7 +23,10 @@ DEFAULT_SETTINGS: dict[str, str] = {
     "suggested_questions": "",
     # V2 widget-facing keys (plans/SPEC.md §9). Public by decision: they describe
     # how the visitor's own widget looks and behaves, never internal state.
-    "widget_language": "auto",
+    # Seed value for new companies. `DEFAULT_WIDGET_LANGUAGE` (env) lets a
+    # deployment pick the fallback the widget uses when it cannot detect the
+    # visitor's browser language; `auto` follows the browser.
+    "widget_language": DEFAULT_WIDGET_LANGUAGE,
     "widget_ui_strings": "",
     "widget_logo_url": "",
     "handoff_enabled": "false",

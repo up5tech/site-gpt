@@ -12,6 +12,7 @@ from site_gpt.app.api.setting import (
     _default_setting_rows,
     create_settings,
 )
+from site_gpt.app.core.config import DEFAULT_WIDGET_LANGUAGE
 
 APPEARANCE_KEYS = {
     "assistant_name",
@@ -77,7 +78,9 @@ class SettingsRegistryTests(unittest.TestCase):
         self.assertEqual(
             {key: DEFAULT_SETTINGS[key] for key in PUBLIC_V2_KEYS},
             {
-                "widget_language": "auto",
+                # Seeded from the env default (`auto` unless a deployment sets
+                # DEFAULT_WIDGET_LANGUAGE), so the two can never drift.
+                "widget_language": DEFAULT_WIDGET_LANGUAGE,
                 "widget_ui_strings": "",
                 "widget_logo_url": "",
                 "handoff_enabled": "false",
