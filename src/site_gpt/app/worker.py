@@ -6,18 +6,16 @@ from datetime import datetime, timedelta, UTC
 
 from site_gpt.app.services.crawler import crawl_website
 from site_gpt.app.services.ingest import ingest_document, ingest_extra_document
+from site_gpt.app.services.ingest_claim import STUCK_INGEST_AFTER
 from site_gpt.app.services.parse import extract_text_from_file
 from site_gpt.app.services.redis import redis_client, enqueue_job
 from site_gpt.app.core.config import CRAWL_REFRESH_HOURS
 from site_gpt.app.db.session import SessionLocal
 from site_gpt.app import models
 
-# A website still in `processing` longer than this is assumed to belong to a
-# worker that died mid-ingest (deploy, OOM kill, hard reboot). It must be
-# recovered explicitly: the scheduler only picks up `completed` sites, so an
-# orphaned `processing` row would otherwise never be re-ingested again.
-# Deliberately generous so a legitimately slow crawl is not re-queued.
-STUCK_INGEST_AFTER = timedelta(hours=6)
+# The stale-row window is defined in services/ingest_claim.py so the API's
+# atomic claim and this recovery loop can never disagree about when an ingest is
+# dead; it is re-exported here for callers that already import it from `worker`.
 
 
 def _is_stuck(

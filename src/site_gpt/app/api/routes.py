@@ -2,12 +2,11 @@ import asyncio
 import hashlib
 import json
 import os
-from datetime import UTC, datetime
 from uuid import UUID as _UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import FileResponse, Response, StreamingResponse
-from sqlalchemy import or_, text
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from site_gpt.app import models
@@ -21,7 +20,6 @@ from site_gpt.app.core.auth import (
     get_manager_user,
     hash_password,
     verify_password,
-    verify_token,
 )
 from site_gpt.app.core.config import JWT_ALGORITHM, JWT_SECRET_KEY
 from site_gpt.app.db.session import get_db
@@ -41,13 +39,14 @@ from site_gpt.app.schemas.contact import (
     ContactRes,
 )
 from site_gpt.app.schemas.user import UserLogin
-from site_gpt.app.services import embed_guard
 from site_gpt.app.services.conversations import (
     delete_conversation,
     get_conversation_messages,
     list_conversations,
     list_recent_conversations,
 )
+from site_gpt.app.services.embed_guard import ensure_embed_allowed
+from site_gpt.app.services.ingest_claim import claim_ingest
 from site_gpt.app.services.quota import (
     QUOTA_MESSAGE,
     consume_message,
@@ -56,73 +55,9 @@ from site_gpt.app.services.quota import (
 from site_gpt.app.services.rag import ask, ask_stream
 from site_gpt.app.services.ratelimit import rate_limit
 from site_gpt.app.services.redis import enqueue_job, redis_client
-from site_gpt.app.worker import STUCK_INGEST_AFTER
+from site_gpt.app.services.website_state import ensure_website_active
 
 router = APIRouter()
-
-
-def _is_authenticated(request: Request, db: Session) -> bool:
-    """True when the request carries a valid JWT for an active user.
-
-    The admin playground calls the same public chat endpoints as the widget but
-    with the dashboard's token; those requests are not scoped by Origin.
-    """
-    scheme, _, token = (request.headers.get("authorization") or "").partition(" ")
-    if scheme.lower() != "bearer" or not token:
-        return False
-    try:
-        payload = verify_token(token, JWT_SECRET_KEY, [JWT_ALGORITHM])
-    except HTTPException:
-        return False
-    user_id = payload.get("sub")
-    if not user_id:
-        return False
-    return (
-        db.query(models.User)
-        .filter(models.User.id == user_id, models.User.status == "active")
-        .first()
-        is not None
-    )
-
-
-def _ensure_website_active(website: models.Website) -> None:
-    """A website is only served while its `status` is `active`.
-
-    `status` used to be written by the API and never read, so disabling a bot
-    meant deleting the website and losing its documents, history and leads.
-
-    Only an explicit other value disables the bot. `websites.status` is
-    nullable, so a row created before the switch existed (or written by an old
-    form that sent nothing) can hold NULL/empty — that means "never set", and
-    treating it as disabled would silently kill a working bot.
-    """
-    current = (website.status or "").strip().lower()
-    if current and current != "active":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="This website is disabled.",
-        )
-
-
-def _ensure_embed_allowed(
-    request: Request,
-    db: Session,
-    website: models.Website,
-    *,
-    allow_authenticated: bool = False,
-) -> None:
-    """Refuse requests whose Origin/Referer names a foreign site.
-
-    Guards the public widget surface against someone copying a `website_id`
-    and embedding another customer's bot from their own site.
-    """
-    if allow_authenticated and _is_authenticated(request, db):
-        return
-    if not embed_guard.is_allowed_embed_request(request, website):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="This origin is not allowed to embed that assistant.",
-        )
 
 
 @router.post("/api/ingest")
@@ -145,37 +80,12 @@ async def ingest(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Website not found"
         )
-    _ensure_website_active(website)
+    ensure_website_active(website)
 
-    # One ingest per website at a time, claimed atomically: two concurrent clicks
-    # both read a non-processing status, so the check has to live in the UPDATE
-    # itself. Exactly one UPDATE can match the row; the loser sees rowcount 0 and
-    # must not enqueue a second crawl.
-    #
-    # A `processing` row older than STUCK_INGEST_AFTER belongs to a worker that
-    # died (the scheduler only re-crawls `completed` sites), so a manual retry
-    # stays possible; taking it over also refreshes the timestamp so the row does
-    # not look stale again on the next request.
-    stale_before = datetime.now(UTC) - STUCK_INGEST_AFTER
-    claimed = (
-        db.query(models.Website)
-        .filter(
-            models.Website.id == website.id,
-            models.Website.company_id == user.company_id,
-            or_(
-                models.Website.ingest_status.is_(None),
-                models.Website.ingest_status != "processing",
-                models.Website.updated_at.is_(None),
-                models.Website.updated_at < stale_before,
-            ),
-        )
-        .update(
-            {"ingest_status": "processing", "updated_at": datetime.now(UTC)},
-            synchronize_session=False,
-        )
-    )
-    db.commit()
-    if not claimed:
+    # One ingest per website at a time. The claim is a single atomic UPDATE
+    # (services/ingest_claim.py), so exactly one concurrent request can win it
+    # and only the winner enqueues a crawl.
+    if not claim_ingest(db, website.id, user.company_id):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="An ingest is already running for this website.",
@@ -201,8 +111,8 @@ async def chat(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Website not found"
         )
-    _ensure_website_active(website)
-    _ensure_embed_allowed(request, db, website, allow_authenticated=True)
+    ensure_website_active(website)
+    ensure_embed_allowed(request, db, website, allow_authenticated=True)
     # Daily per-website ceiling: per-IP limits do not bound a viral embed. The
     # company's own setting wins; without one the env default applies.
     if not await consume_message(
@@ -276,8 +186,8 @@ def upsert_contact(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Website not found"
         )
-    _ensure_website_active(website)
-    _ensure_embed_allowed(request, db, website)
+    ensure_website_active(website)
+    ensure_embed_allowed(request, db, website)
     contact = (
         db.query(models.Contact)
         .filter(
@@ -371,8 +281,8 @@ def get_contact_endpoint(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Website not found"
         )
-    _ensure_website_active(website)
-    _ensure_embed_allowed(request, db, website)
+    ensure_website_active(website)
+    ensure_embed_allowed(request, db, website)
     contact = (
         db.query(models.Contact)
         .filter(
@@ -410,8 +320,8 @@ def widget_config(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Website not found"
         )
-    _ensure_website_active(website)
-    _ensure_embed_allowed(request, db, website)
+    ensure_website_active(website)
+    ensure_embed_allowed(request, db, website)
     # Allowlist only: this endpoint is public, so internal settings added in
     # future must never leak through it (see WIDGET_PUBLIC_KEYS).
     settings = (
@@ -456,8 +366,8 @@ async def chat_stream(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Website not found"
         )
-    _ensure_website_active(website)
-    _ensure_embed_allowed(request, db, website, allow_authenticated=True)
+    ensure_website_active(website)
+    ensure_embed_allowed(request, db, website, allow_authenticated=True)
     if not await consume_message(
         website.id, limit=company_daily_message_limit(db, website.company_id)
     ):

@@ -22,7 +22,7 @@ Run the suite (or a single file: `uv run python -m unittest tests.test_settings 
 - `src/site_gpt/app/api/` — one module per resource; `routes.py` holds auth/chat/ingest/widget endpoints. Routers define full paths internally or rely on prefix in `main.py` — check before adding routes.
 - `src/site_gpt/app/models.py` + `src/site_gpt/app/db/base.py` (BaseModel: uuid `id`, `created_at/updated_at`) — all FKs use `ondelete` + cascade relationships; follow that pattern.
 - `src/site_gpt/app/schemas/` — Pydantic models mirror each resource; paginated lists use `PaginatedResponse`.
-- `src/site_gpt/app/services/` — `llm.py` (chat provider switches on `LLM_AI`; **embedding provider switches independently on `EMBEDDING_AI`**, defaulting to `LLM_AI`), `rag.py` (raw SQL pgvector `<->` search + chat history), `ingest.py` (chunk 1000/200 + embed), `crawler.py` (sitemap + trafilatura), `parse.py` (file text extraction), `sources.py` (upload source providers), `ratelimit.py` (in-memory per-IP limiter), `redis.py` (queue `queue:jobs` via `brpop`), `mail.py` (`await`-ing `send_email_async`; `send_email` is a sync wrapper for sync routes).
+- `src/site_gpt/app/services/` — `llm.py` (chat provider switches on `LLM_AI`; **embedding provider switches independently on `EMBEDDING_AI`**, defaulting to `LLM_AI`), `rag.py` (raw SQL pgvector `<->` search + chat history), `ingest.py` (chunk 1000/200 + embed), `ingest_claim.py` (atomic single-ingest claim `claim_ingest` + `STUCK_INGEST_AFTER`), `website_state.py` (the 403 for a disabled website, `ensure_website_active`), `crawler.py` (sitemap + trafilatura), `parse.py` (file text extraction), `sources.py` (upload source providers), `embed_guard.py` (Origin/Referer allowlist, `is_authenticated`, and the 403-raising `ensure_embed_allowed` for public endpoints), `ratelimit.py` (in-memory per-IP limiter), `redis.py` (queue `queue:jobs` via `brpop`), `mail.py` (`await`-ing `send_email_async`; `send_email` is a sync wrapper for sync routes).
 - `src/site_gpt/app/core/config.py` — env-only config, no defaults with secrets except dev JWT fallback. New settings go here + `.env.example`.
 - `src/site_gpt/app/scripts/widget.js` — vanilla JS, no build; config via `window.ChatWidgetConfig`.
 - `frontend/src/` — pages per route (`App.tsx`), `utils/api.ts` (axios + JWT), `context/AuthContext` (token storage), Ant Design components.
@@ -47,6 +47,7 @@ Run the suite (or a single file: `uv run python -m unittest tests.test_settings 
 ## Do / don't
 
 - DO reuse existing service helpers (`get_llm`, `get_embedding_model`, `embed_texts`, `enqueue_job`) instead of new clients.
+- DO guard public endpoints with `services/embed_guard.ensure_embed_allowed`, check a website is servable with `services/website_state.ensure_website_active`, and claim ingests with `services/ingest_claim.claim_ingest` — never re-implement any of them in a route; a copy of the claim re-opens the double-crawl race.
 - DO keep new API responses in matching `schemas/` file.
 - DON'T add dependencies without need — `pyproject.toml` / `frontend/package.json` already cover LLM providers, mail, redis, antd.
 - DON'T tighten CORS or rename env keys without updating `.env.example`, `README.md`, and `frontend/.env*`.
