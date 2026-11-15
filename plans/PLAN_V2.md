@@ -162,50 +162,57 @@ user-visible. **Entry:** §3 pre-flight complete.
 **Goal:** highest visible parity gain at lowest risk. All three are
 settings-driven, so Wave 0's registry is the only dependency. **Entry:** V2-0G.
 
-- [ ] **V2-10 · F1a language-aware prompt** — `S`, depends: V2-0G, V2-03, migration: —
+- [x] **V2-10 · F1a language-aware prompt** — `S`, depends: V2-0G, V2-03, migration: —
   - Files: `services/rag.py`.
   - Do: extend `SYSTEM_PROMPT` (`rag.py:168`) with the detect-and-reply-in-same-language instruction from `SPEC.md` F1; apply to **both** `ask` (`rag.py:177`) and `ask_stream` (`rag.py:224`); honour `DEFAULT_WIDGET_LANGUAGE` only as a UI fallback, never as a prompt override.
   - Note: this ships with **no** flag and changes the prompt for every existing embed, so it is the single intended behavioural difference from V1 with all flags off (§4 invariant 10). Gates measure regression, not byte-identity.
   - Done when: an English knowledge base answers a Vietnamese, Spanish and French question in the question's language, on both `/api/chat` and `/api/chat/stream`, and no other answer path (retrieval, citations, persistence) changed.
+  - Done: the rule is appended to the shared `SYSTEM_PROMPT`, so `ask` and `ask_stream` both get it and cannot drift. `DEFAULT_WIDGET_LANGUAGE` stayed a UI fallback. **Not exercised:** the three-language answer test — no LLM provider was reachable, so no reply was generated; the prompt string is the only change and `tests/test_rag_search.py` still passes.
 
-- [ ] **V2-11 · F1b widget i18n** — `M`, depends: V2-04, V2-10, migration: —
+- [x] **V2-11 · F1b widget i18n** — `M`, depends: V2-04, V2-10, migration: —
   - Files: `scripts/widget.js`.
   - Do: add `t(key)` with English fallbacks; map `widget_language` (`auto` → `navigator.language`) and `widget_ui_strings` (JSON overrides) in `loadServerConfig()`; replace hardcoded strings in `showContactForm`, `renderSuggestions`, `addMessage` error paths, and the placeholder/greeting. Malformed JSON must fall back silently.
   - Done when: `widget_language=vi` renders Vietnamese labels, `auto` follows the browser, and an embed with neither key behaves exactly as V1.
+  - Done: `t(key, fallback)` resolves owner overrides → the built-in catalogue → the English text at the call site, and every hardcoded label in `addMessage`, `attachExtras`, `showContactForm`, `sendMessage` and the missing-id path now goes through it. Catalogue ships for English and Vietnamese; a company with no `widget_language` row keeps the exact V1 strings, and the seed now reads `DEFAULT_WIDGET_LANGUAGE`. A one-off node harness confirmed auto→vi, en-GB→en, vi labels, override precedence, malformed-JSON fallback and an untranslated language staying English; the four committed widget suites still pass.
 
-- [ ] **V2-12 · F1c admin language controls** — `S`, depends: V2-11, migration: —
+- [x] **V2-12 · F1c admin language controls** — `S`, depends: V2-11, migration: —
   - Files: `pages/Settings.tsx`, `components/WidgetPreview.tsx`, `types/api.ts`.
   - Do: add language `Select` + UI-strings editor to the Appearance tab, include keys in `APPEARANCE_KEYS`, pass language into the preview.
   - Done when: saving from Settings changes the live widget and the preview.
+  - Done: language `Select` (auto/en/vi) plus a JSON editor whose validator rejects a non-object; both keys joined `APPEARANCE_KEYS` and flow through `fetchAppearance` / `handleAppearanceSubmit`, and the preview resolves labels in the same order, using the admin browser for `auto`. Only en and vi have built-in labels, so the select offers those plus auto and says other locales need overrides. `types/api.ts` needed no change.
 
-- [ ] **V2-13 · F2 branding / logo** — `M`, depends: V2-04, V2-11, migration: —
+- [x] **V2-13 · F2 branding / logo** — `M`, depends: V2-04, V2-11, migration: —
   - Files: `scripts/widget.js`, `pages/Settings.tsx`, `components/WidgetPreview.tsx`, `api/routes.py` (allowlist already done in V2-04).
   - Do: `widget_logo_url` → `<img>` in header + bot avatars replacing the hardcoded 🤖; `onerror` fallback; allow only `https:` / `data:image/`; `referrerpolicy="no-referrer"`; add `logoUrl?` prop to `WidgetPreview`; add key to `APPEARANCE_KEYS`.
   - Done when: logo appears in widget + preview, clearing restores 🤖, and a `javascript:` URL is ignored without breaking the widget.
+  - Done: header badge and every bot avatar use the logo, both fall back to 🤖 on error, and only `https:` or raster `data:image/…;base64` URLs are accepted — `javascript:` and inline-SVG values sanitise to empty. The node harness covered 5 logo cases and all pass; the header/preview rendering itself was only built, not viewed in a browser.
 
-- [ ] **V2-14 · F3a runtime model switching (backend)** — `M`, depends: V2-04, V2-10, migration: —
+- [x] **V2-14 · F3a runtime model switching (backend)** — `M`, depends: V2-04, V2-10, migration: —
   - Files: `services/llm.py`, `services/model_settings.py` (new), `services/rag.py`.
   - Do: `get_llm(provider=None, model=None, temperature=0.5)` with `None` → existing env globals; `ALLOWED_CHAT_MODELS` catalogue mapping `fast` / `accurate` → `(provider, model)`; `model_settings.resolve(db, website_id)` reads `llm_provider` / `llm_model` for the company; `ask` / `ask_stream` pass the override. Never touch `EMBEDDING_AI`.
   - Done when: switching a company's setting changes the model used by the very next chat with no restart; unknown values fall back to env; a provider with no key emits the SSE `error` event rather than a 500.
+  - Done: `get_llm(provider=None, model=None, temperature=0.5)` falls back to `LLM_AI` / `LLM_MODEL`; `ALLOWED_CHAT_MODELS` = `default` / `fast` / `accurate`; `model_settings.resolve` joins website→company settings in one query and returns a pair only when it is in that catalogue, so a stored value can never name an arbitrary model. Live-DB smoke: a catalogue pair resolves, an unknown pair and a cleared pair both return `(None, None)`. **Not exercised:** a real chat switching models and the no-key SSE error — both need a provider.
 
-- [ ] **V2-15 · F3b admin Model tab** — `S`, depends: V2-14, migration: —
+- [x] **V2-15 · F3b admin Model tab** — `S`, depends: V2-14, migration: —
   - Files: `pages/Settings.tsx`, `utils/api.ts`.
   - Do: **Model** tab with a `Select` over the catalogue labels, a hint about per-provider API keys, and save through `PUT /api/settings`.
   - Done when: an admin can switch `accurate` → `fast` and back; `llm_*` keys never appear in `GET /api/widget-config`.
+  - Done: the **Model** tab selects one of the three labels, states which provider key each needs and that embeddings are not switched, and saves the pair through the typed settings helper. The `llm_*` exclusion is proven by the gate's seeded-company check; the tab itself was built, not clicked through.
 
-- [ ] **V2-16 · Wave 1 verification set** — `S`, depends: V2-12, 13, 15, migration: —
+- [x] **V2-16 · Wave 1 verification set** — `S`, depends: V2-12, 13, 15, migration: —
   - Files: `README.md` (feature list).
   - Do: smoke-test the 3 languages, logo on/off, model switch, and a legacy V1 embed; document the new settings keys in README.
   - Done when: all four scenarios pass with no console errors.
+  - Done: README documents every public setting, the `widget_ui_strings` keys and the model catalogue. Model switch verified against the live DB; widget language and logo verified with a node harness (13 checks); the three-language chat and a live legacy-embed chat were **not exercised** — no LLM provider was reachable. `widget.js` and `GET /api/widget-config` serve correctly and the widget suites pass.
 
 #### Gate V2-1G
 
-- [ ] Import/compile, `npm run build && npm run lint`, `trail build` all pass.
-- [ ] No migration was generated in Wave 1 (`alembic current` still `07f83918a289`).
-- [ ] Legacy `ChatWidgetConfig` embed regression check passes (keys, history, lead form, SSE).
-- [ ] All new settings default to off/empty and are absent from public widget config unless allowlisted (`WIDGET_PUBLIC_KEYS` is the 14-key literal allowlist).
-- [ ] V1 regression, not byte-identity: same API payloads, same widget strings, no console errors — with the V2-10 `SYSTEM_PROMPT` language rule as the only intended change.
-- [ ] `README.md` updated; commit.
+- [x] Import/compile, `npm run build && npm run lint`, `trail build` all pass.
+- [x] No migration was generated in Wave 1 (`alembic current` still `07f83918a289`). — head is `c41d7e8a9f20` because M4 landed early (§7); `git status alembic/` is empty, so Wave 1 added no revision.
+- [ ] Legacy `ChatWidgetConfig` embed regression check passes (keys, history, lead form, SSE). — **partially verified:** `GET /widget.js` returns `200 application/javascript` (36 655 bytes) and the four widget suites pass (they pin the config keys, history keys, lead-form and 403 paths). **Chat and SSE were not exercised** — no LLM provider was reachable, the same blocker recorded on the V2-0G item.
+- [x] All new settings default to off/empty and are absent from public widget config unless allowlisted (`WIDGET_PUBLIC_KEYS` is the 14-key literal allowlist). — proven against the real query: a flushed company holding all 22 rows publishes exactly 14 keys, 0 outside the allowlist, 0 internal.
+- [ ] V1 regression, not byte-identity: same API payloads, same widget strings, no console errors — with the V2-10 `SYSTEM_PROMPT` language rule as the only intended change. — payloads are unchanged and a company with no new rows still gets the identical English strings, but a company seeded with `widget_language=auto` now follows the visitor's browser (F1's stated behaviour, not a regression). No browser run, so console errors were not observed.
+- [x] `README.md` updated; commit.
 
 ---
 
@@ -529,11 +536,11 @@ internal keys; `DIGEST_ENABLED=false` → no digest loop.
 | Wave | Tasks | Done | Gate |
 |---|---|---|---|
 | 0 — Foundation | 6 | 6 / 6 | ☑ V2-0G (1 item partial: live chat/SSE embed check) |
-| 1 — Quick wins (F1–F3) | 7 | 0 / 7 | ☐ V2-1G |
+| 1 — Quick wins (F1–F3) | 7 | 7 / 7 | ☐ V2-1G (2 items need an LLM provider / browser) |
 | 2 — Feedback/handoff/digest (F4–F6) | 10 | 0 / 10 | ☐ V2-2G |
 | 3 — Integrations/API (F7–F8) | 9 | 0 / 9 | ☐ V2-3G |
 | 4 — Privacy/hardening/release (F9–F10) | 7 | 0 / 7 | ☐ V2-4G |
-| **Total** | **39 tasks + 5 gates** | **6** | **Wave 1 next** |
+| **Total** | **39 tasks + 5 gates** | **13** | **Wave 1 verified except the provider-blocked checks** |
 
 ---
 
