@@ -2,6 +2,7 @@ import {
   DeleteOutlined,
   EditOutlined,
   PlusOutlined,
+  RedoOutlined,
   ThunderboltOutlined,
 } from '@ant-design/icons';
 import {
@@ -24,12 +25,19 @@ import {
 import type { ColumnsType } from 'antd/es/table';
 import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
-import type { IntegrationItem, IntegrationPayload, IntegrationType } from '../types/api';
+import type {
+  DeliveryItem,
+  IntegrationItem,
+  IntegrationPayload,
+  IntegrationType,
+} from '../types/api';
 import {
   createIntegration,
   deleteIntegration,
   getApiErrorMessage,
+  getIntegrationDeliveries,
   getIntegrations,
+  resendIntegrationDelivery,
   testIntegration,
   updateIntegration,
 } from '../utils/api';
@@ -101,6 +109,10 @@ export function Integrations() {
   const [saving, setSaving] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [formType, setFormType] = useState<IntegrationType>('webhook');
+  const [deliveries, setDeliveries] = useState<DeliveryItem[]>([]);
+  const [deliveryCount, setDeliveryCount] = useState({ pending: 0, dead: 0 });
+  const [deliveriesLoading, setDeliveriesLoading] = useState(false);
+  const [resendingId, setResendingId] = useState<string | null>(null);
 
   const fetchItems = useCallback(async () => {
     if (!isAuthenticated) return;
@@ -116,9 +128,27 @@ export function Integrations() {
     }
   }, [isAuthenticated]);
 
+  const fetchDeliveries = useCallback(async () => {
+    if (!isAuthenticated) return;
+    setDeliveriesLoading(true);
+    try {
+      const response = await getIntegrationDeliveries();
+      setDeliveries(response.data?.items || []);
+      setDeliveryCount({
+        pending: response.data?.pending || 0,
+        dead: response.data?.dead || 0,
+      });
+    } catch (error) {
+      console.error('Fetch deliveries error', error);
+    } finally {
+      setDeliveriesLoading(false);
+    }
+  }, [isAuthenticated]);
+
   useEffect(() => {
     fetchItems();
-  }, [fetchItems]);
+    fetchDeliveries();
+  }, [fetchItems, fetchDeliveries]);
 
   const openCreate = () => {
     setEditing(null);
@@ -209,6 +239,25 @@ export function Integrations() {
     }
   };
 
+  const resend = async (delivery: DeliveryItem) => {
+    setResendingId(delivery.id);
+    try {
+      const response = await resendIntegrationDelivery(delivery.id);
+      if (response.data.delivered) {
+        message.success('Event delivered');
+      } else {
+        message.warning(
+          `Still failing: ${response.data.last_error || 'unknown error'} — queued for retry`,
+        );
+      }
+      await fetchDeliveries();
+    } catch (error) {
+      message.error(getApiErrorMessage(error, 'Failed to resend the event'));
+    } finally {
+      setResendingId(null);
+    }
+  };
+
   const remove = (item: IntegrationItem) => {
     Modal.confirm({
       title: `Delete "${item.name}"?`,
@@ -290,6 +339,92 @@ export function Integrations() {
             Delete
           </Button>
         </Space>
+      ),
+    },
+  ];
+
+  const STATUS_COLOR: Record<DeliveryItem['status'], string> = {
+    delivered: 'green',
+    pending: 'gold',
+    dead: 'red',
+  };
+
+  const deliveryColumns: ColumnsType<DeliveryItem> = [
+    {
+      title: 'When',
+      key: 'created_at',
+      width: 170,
+      render: (_, item) => (
+        <Text type='secondary' style={{ fontSize: 12 }}>
+          {new Date(item.created_at).toLocaleString()}
+        </Text>
+      ),
+    },
+    {
+      title: 'Event',
+      key: 'event',
+      render: (_, item) => (
+        <Space direction='vertical' size={0}>
+          <Text>{item.event_type}</Text>
+          <Text type='secondary' style={{ fontSize: 11 }} code>
+            {item.event_id.slice(0, 8)}
+          </Text>
+        </Space>
+      ),
+    },
+    {
+      title: 'Integration',
+      key: 'integration',
+      render: (_, item) => (
+        <Space direction='vertical' size={0}>
+          <Text>{item.integration_name}</Text>
+          <Tag>{item.integration_type}</Tag>
+        </Space>
+      ),
+    },
+    {
+      title: 'Status',
+      key: 'status',
+      width: 150,
+      render: (_, item) => (
+        <Space direction='vertical' size={0}>
+          <Tag color={STATUS_COLOR[item.status]}>{item.status}</Tag>
+          <Text type='secondary' style={{ fontSize: 11 }}>
+            {item.attempts}/{item.max_attempts} attempts
+          </Text>
+          {item.status === 'pending' && item.next_attempt_at && (
+            <Text type='secondary' style={{ fontSize: 11 }}>
+              next: {new Date(item.next_attempt_at).toLocaleTimeString()}
+            </Text>
+          )}
+        </Space>
+      ),
+    },
+    {
+      title: 'Last error',
+      key: 'last_error',
+      render: (_, item) =>
+        item.last_error ? (
+          <Text type='danger' style={{ fontSize: 12 }} ellipsis={{ tooltip: item.last_error }}>
+            {item.last_error}
+          </Text>
+        ) : (
+          <Text type='secondary'>—</Text>
+        ),
+    },
+    {
+      title: 'Action',
+      key: 'action',
+      width: 120,
+      render: (_, item) => (
+        <Button
+          size='small'
+          icon={<RedoOutlined />}
+          loading={resendingId === item.id}
+          onClick={() => resend(item)}
+        >
+          Resend
+        </Button>
       ),
     },
   ];
@@ -391,12 +526,38 @@ export function Integrations() {
         </Paragraph>
       </Modal>
 
+      <Card
+        style={{ marginTop: 16 }}
+        title='Recent deliveries'
+        extra={
+          <Space size={8}>
+            {deliveryCount.pending > 0 && (
+              <Tag color='gold'>{deliveryCount.pending} pending</Tag>
+            )}
+            {deliveryCount.dead > 0 && <Tag color='red'>{deliveryCount.dead} dead</Tag>}
+            <Button size='small' onClick={fetchDeliveries} loading={deliveriesLoading}>
+              Refresh
+            </Button>
+          </Space>
+        }
+      >
+        <Table
+          columns={deliveryColumns}
+          dataSource={deliveries}
+          loading={deliveriesLoading}
+          rowKey='id'
+          size='small'
+          pagination={false}
+          locale={{ emptyText: 'No deliveries yet' }}
+        />
+      </Card>
+
       <Alert
         style={{ marginTop: 16 }}
         type='info'
         showIcon
         message='Delivery failures never break the request'
-        description='If an endpoint is down, the lead, rating, handoff or digest is still saved and the failure is logged. Use Test to check an endpoint after configuring it.'
+        description='Every event is stored before it is sent, so a lead, rating, handoff or digest is never dropped when an endpoint is down: failed sends retry with backoff and land here as dead when the attempts run out. Each event carries a stable event_id for the receiver to dedupe, and Resend retries it by hand.'
       />
     </>
   );

@@ -216,6 +216,44 @@ export interface IntegrationTestResult {
   error?: string | null;
 }
 
+export type DeliveryStatus = 'pending' | 'delivered' | 'dead';
+
+/** One tracked event → integration delivery. The payload is not exposed. */
+export interface DeliveryItem {
+  id: string;
+  integration_id: string | null;
+  integration_name: string;
+  integration_type: IntegrationType;
+  /** Stable across retries, so a receiver can drop duplicates. */
+  event_id: string;
+  event_type: string;
+  status: DeliveryStatus;
+  attempts: number;
+  max_attempts: number;
+  last_error: string | null;
+  last_status_code: number | null;
+  next_attempt_at: string | null;
+  delivered_at: string | null;
+  created_at: string;
+}
+
+export interface DeliveryList {
+  items: DeliveryItem[];
+  total: number;
+  pending: number;
+  dead: number;
+  delivered: number;
+}
+
+export interface DeliveryAttempt {
+  id: string;
+  status: DeliveryStatus;
+  attempts: number;
+  delivered: boolean;
+  last_error: string | null;
+  next_attempt_at: string | null;
+}
+
 export interface DigestTopic {
   term: string;
   count: number;

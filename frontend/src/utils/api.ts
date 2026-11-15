@@ -1,5 +1,5 @@
 import axios, { AxiosInstance } from 'axios';
-import type { AnalyticsSummary, ApiKeyCreated, ApiKeyItem, ApiKeyPayload, ChatResponse, ContactList, ConversationList, ConversationMessages, DashboardStats, DigestPreview, DigestSendResult, FeedbackItem, FeedbackList, FeedbackRequest, FeedbackReview, HandoffList, HandoffUpdate, IntegrationItem, IntegrationPayload, IntegrationTestResult, LoginResponse, RecentConversations, RegisterRequest, Setting, Website, WebsiteQuota, WidgetConfig } from '../types/api';
+import type { AnalyticsSummary, ApiKeyCreated, ApiKeyItem, ApiKeyPayload, ChatResponse, ContactList, ConversationList, ConversationMessages, DashboardStats, DeliveryAttempt, DeliveryList, DeliveryStatus, DigestPreview, DigestSendResult, FeedbackItem, FeedbackList, FeedbackRequest, FeedbackReview, HandoffList, HandoffUpdate, IntegrationItem, IntegrationPayload, IntegrationTestResult, LoginResponse, RecentConversations, RegisterRequest, Setting, Website, WebsiteQuota, WidgetConfig } from '../types/api';
 
 // Base API instance with proxy /api -> backend
 const api: AxiosInstance = axios.create({
@@ -116,6 +116,16 @@ export const deleteIntegration = (id: string) =>
 
 export const testIntegration = (id: string) =>
   api.post<IntegrationTestResult>(`/integrations/${id}/test`);
+
+// Tracked deliveries: every event is stored before it is sent, retried with
+// backoff, and parked as `dead` when the attempts run out.
+export const getIntegrationDeliveries = (params?: {
+  integration_id?: string;
+  status?: DeliveryStatus;
+}) => api.get<DeliveryList>('/integrations/deliveries', { params });
+
+export const resendIntegrationDelivery = (id: string) =>
+  api.post<DeliveryAttempt>(`/integrations/deliveries/${id}/resend`);
 
 // Analytics and the weekly digest (F6).
 export const getAnalyticsSummary = (days = 7) =>
