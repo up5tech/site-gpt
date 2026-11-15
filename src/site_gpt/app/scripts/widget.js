@@ -217,10 +217,59 @@
     localStorage.setItem('chat_widget_session', id);
     localStorage.removeItem('chat_widget_history');
     localStorage.removeItem('chat_widget_contact');
+    // A new session gets its own token; the old one belongs to the old id.
+    localStorage.removeItem('chat_widget_session_token');
     return id;
   }
 
   let sessionId = localStorage.getItem('chat_widget_session') || newSession();
+
+  // ================= SESSION TOKEN (K4) =================
+  // The session id alone used to be enough to read a transcript. The widget now
+  // mints a per-session token and presents it as `X-Session-Token`; the server
+  // only hashes it, and it expires. Both keys live in localStorage, so they
+  // share a lifetime: clearing storage starts a new session anyway.
+  const SESSION_TOKEN_KEY = 'chat_widget_session_token';
+  let sessionToken = localStorage.getItem(SESSION_TOKEN_KEY) || '';
+  // Resolved during init before the history/contact reads use it.
+  let sessionTokenReady = Promise.resolve(sessionToken);
+
+  function sessionTokenHeaders() {
+    return sessionToken ? { 'X-Session-Token': sessionToken } : {};
+  }
+
+  function clearSessionToken() {
+    sessionToken = '';
+    localStorage.removeItem(SESSION_TOKEN_KEY);
+  }
+
+  // Mints for a new session and rotates for an existing one (the server accepts
+  // rotation only from a caller that already holds the token). A refusal is not
+  // an error: a legacy embed simply continues without history.
+  async function ensureSessionToken() {
+    if (sessionToken) return sessionToken;
+    if (!hasWebsiteId || !config.apiUrl) return '';
+    try {
+      const base = config.apiUrl.replace(/\/$/, '');
+      const res = await fetch(`${base}/api/session-token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          website_id: config.website_id,
+          session_id: sessionId,
+        }),
+      });
+      if (!res.ok) return '';
+      const data = await res.json();
+      if (!data || typeof data.token !== 'string' || !data.token) return '';
+      sessionToken = data.token;
+      localStorage.setItem(SESSION_TOKEN_KEY, sessionToken);
+      return sessionToken;
+    } catch (e) {
+      // Offline or blocked: the widget still works, just without history.
+      return '';
+    }
+  }
 
   // ================= ROOT =================
   const container = document.createElement('div');
@@ -832,12 +881,19 @@
   // Returns true when a saved contact was found and restored.
   async function loadServerContact() {
     if (!hasWebsiteId || !config.apiUrl) return false;
+    await sessionTokenReady;
     try {
       const base = config.apiUrl.replace(/\/$/, '');
-      const res = await fetch(
+      const url =
         `${base}/api/contacts/${encodeURIComponent(sessionId)}` +
-          `?website_id=${encodeURIComponent(config.website_id)}`,
-      );
+        `?website_id=${encodeURIComponent(config.website_id)}`;
+      let res = await fetch(url, { headers: sessionTokenHeaders() });
+      if (res.status === 403 && sessionToken) {
+        // Expired or stale (another tab rotated it): retry once without it, and
+        // only while the server still allows a tokenless read.
+        clearSessionToken();
+        res = await fetch(url);
+      }
       if (!res.ok) return false;
       const data = await res.json();
       if (!data || !data.email) return false;
@@ -1266,12 +1322,17 @@
   // gate is satisfied, so this request can run in parallel with the others.
   async function fetchServerHistory() {
     if (!config.enableHistory || !hasWebsiteId || !config.apiUrl) return null;
+    await sessionTokenReady;
     try {
       const base = config.apiUrl.replace(/\/$/, '');
-      const res = await fetch(
+      const url =
         `${base}/api/conversations/${encodeURIComponent(sessionId)}` +
-          `?website_id=${encodeURIComponent(config.website_id)}`,
-      );
+        `?website_id=${encodeURIComponent(config.website_id)}`;
+      let res = await fetch(url, { headers: sessionTokenHeaders() });
+      if (res.status === 403 && sessionToken) {
+        clearSessionToken();
+        res = await fetch(url);
+      }
       if (!res.ok) return null;
       const data = await res.json();
       const items = data.items || [];
@@ -1297,8 +1358,14 @@
     // awaited one after another, so the first paint waited for three round
     // trips; issue them together and decide once they all settle.
     const contactRequired = needsContact();
-    const [, restoredContact, historyItems] = await Promise.all([
-      loadServerConfig(),
+    // The token depends on the config (apiUrl) and both reads depend on the
+    // token, so it is chained off the config request and the reads await it
+    // instead of waiting for a separate round trip.
+    const configRequest = loadServerConfig();
+    sessionTokenReady = configRequest.then(() => ensureSessionToken());
+    const [, , restoredContact, historyItems] = await Promise.all([
+      configRequest,
+      sessionTokenReady,
       contactRequired ? loadServerContact() : Promise.resolve(false),
       fetchServerHistory(),
     ]);

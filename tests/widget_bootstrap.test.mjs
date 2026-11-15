@@ -56,8 +56,14 @@ check('init issues one Promise.all', (init.match(/Promise\.all\(/g) || []).lengt
 const allMatch = init.match(/Promise\.all\(\[([\s\S]*?)\]\)/);
 const group = allMatch ? allMatch[1] : '';
 check(
-  'the parallel group starts the config request',
-  group.includes('loadServerConfig()'),
+  'the config request is started once, before the group',
+  (init.match(/loadServerConfig\(\)/g) || []).length === 1 &&
+    init.indexOf('const configRequest = loadServerConfig();') !== -1,
+  init,
+);
+check(
+  'the parallel group awaits that same config request',
+  group.includes('configRequest'),
   group,
 );
 check(
@@ -86,6 +92,27 @@ check(
   'history is not awaited on its own line',
   !/^\s*(const \w+ = )?await\s+loadServerHistory\(\);/m.test(init),
   init,
+);
+
+// K4: the session token is chained off the config request and both reads wait
+// for it, without adding a sequential round trip to the bootstrap.
+check(
+  'the session token is minted after config, inside the group',
+  /sessionTokenReady = configRequest\.then\(\(\) => ensureSessionToken\(\)\)/.test(init) &&
+    group.includes('sessionTokenReady'),
+  init,
+);
+check(
+  'both session reads wait for the token',
+  /await sessionTokenReady;/.test(body(extractFn('loadServerContact'))) &&
+    /await sessionTokenReady;/.test(fetchHistory),
+  { loadContact, fetchHistory },
+);
+check(
+  'session reads send the token header and retry once after a 403',
+  /headers: sessionTokenHeaders\(\)/.test(fetchHistory) &&
+    /headers: sessionTokenHeaders\(\)/.test(body(extractFn('loadServerContact'))),
+  { loadContact, fetchHistory },
 );
 
 // --- behaviour preserved ----------------------------------------------------
