@@ -9,7 +9,7 @@
 | Reference | <https://sitegpt.ai/features> (19 listed features) |
 | Companion | `plans/PLAN_V2.md` (**execution plan** — 39 tasks, 5 waves, 5 gates), `plans/PLAN_V1.md` (V1 baseline + stabilization), `.workbuddy-ai/memory/2026-11-14.md` (gap analysis) |
 | Supersedes | Nothing. Additive to V1; it does not rewrite V1. |
-| V1 baseline | commit `f571f95`, schema head `07f83918a289` |
+| V1 baseline | commit `e23faba` (the current `v1` tag; three commits past the original `f571f95` freeze), schema head `07f83918a289` |
 
 ---
 
@@ -27,7 +27,7 @@ and commercial deliverables, not code. §7 records what *technical* groundwork i
 in scope instead.
 
 **Language note:** this spec follows the repo's existing English documentation
-(`README.md`, `AGENTS.md`, `graft/`). No runtime UI text is changed by this
+(`README.md`, `AGENTS.md`, `.trail/`). No runtime UI text is changed by this
 document; F1 introduces localizable widget strings.
 
 ---
@@ -42,11 +42,11 @@ Legend: ✅ full · ⚠️ partial · ❌ missing · ➖ N/A (not code)
 | 2 | Q&A training | ⚠️ | `chat_feedback` table exists but is **write-only**; nothing reads it |
 | 3 | GPT-4.1-mini & GPT-4.1 | ⚠️ | `LLM_AI` / `LLM_MODEL` in `core/config.py`, 6 providers in `services/llm.py`; env-only, no runtime switch |
 | 4 | Embed on sites | ✅ | `GET /widget.js`, `window.ChatWidgetConfig`, per-site `/api/widget-config` |
-| 5 | Customize appearance | ⚠️ | 7 settings keys; no logo (hardcoded 🤖 in `addMessage`, `widget.js:342`) |
-| 6 | Quick prompts | ✅ | `suggested_questions` → `renderSuggestions()` (`widget.js:452`) |
+| 5 | Customize appearance | ⚠️ | 7 settings keys; no logo (hardcoded 🤖 in `addMessage`, `widget.js:452`) |
+| 6 | Quick prompts | ✅ | `suggested_questions` → `renderSuggestions()` (`widget.js:574`) |
 | 7 | Chat history | ✅ | `services/conversations.py`, `/api/conversations`, widget `loadServerHistory()` |
 | 8 | Escalate to a human | ❌ | no `escalate` / `handoff` / `live agent` code in backend or frontend |
-| 9 | Language support (95+) | ⚠️ | no i18n; `SYSTEM_PROMPT` (`rag.py:128`) has no language rule; English-only UI |
+| 9 | Language support (95+) | ⚠️ | no i18n; `SYSTEM_PROMPT` (`rag.py:168`) has no language rule; English-only UI |
 | 10 | Lead generation | ✅ | `showContactForm` → `POST /api/contacts` → `contacts` table → `/contacts` page |
 | 11 | Weekly email digest | ❌ | `services/mail.py::send_email` only used by `forgot_password`; only 6 `DashboardStats` counters |
 | 12 | API | ⚠️ | FastAPI auto OpenAPI + JWT REST; no API keys, versioning, webhooks or docs |
@@ -92,7 +92,7 @@ These come from `AGENTS.md` and are hard constraints on every phase:
    M1 chains from is `07f83918a289` (`07f83918a289_contacts.py`).
 10. **Docs sync** — any new env var goes into `core/config.py` **and** `.env.example`
     **and** the `README.md` env table. Any CORS change updates `README.md`.
-11. **Run `graft build`** after each phase so the context graph matches the code.
+11. **Run `trail build`** after each phase so the context graph matches the code.
 
 ---
 
@@ -100,25 +100,31 @@ These come from `AGENTS.md` and are hard constraints on every phase:
 
 ### ADR-1 — Whitelist the public widget config before adding any secret-bearing setting
 
-`GET /api/widget-config` (`api/routes.py:245-269`) is **public and unauthenticated**
-and currently returns `{s.key: s.value}` for *every* row in `settings`. This spec
-adds ~12 new keys, some of which will hold recipient addresses and integration
-config. Returning all of them would leak data.
+`GET /api/widget-config` (`api/routes.py:391-441`) is **public and
+unauthenticated**. It used to return `{s.key: s.value}` for *every* row in
+`settings`; it now filters on `WIDGET_PUBLIC_KEYS`, and the registry is split into
+`DEFAULT_SETTINGS` (appearance) and `INTERNAL_SETTINGS` (server-side). This spec
+adds **14** settings keys (7 public, 7 internal), some holding recipient
+addresses and integration config. Returning all of them would leak data.
 
-**Decision:** Phase 0 replaces the catch-all return with an explicit
-`WIDGET_PUBLIC_KEYS` allowlist. New internal keys (`digest_*`, `handoff_email`,
-`llm_*`, `privacy_*`) are never exposed. This is a prerequisite, not optional.
+**Decision (implemented during V1 stabilization):** `WIDGET_PUBLIC_KEYS` in
+`api/setting.py` is an explicit literal tuple, deliberately **not** derived from a
+registry dict, so registering a settings row can never publish it. New internal
+keys (`digest_*`, `handoff_email`, `llm_*`) live in `INTERNAL_SETTINGS` and are
+never exposed. V2 only grows the tuple with the keys that features actually need.
 
 ### ADR-2 — Single source of truth for default settings
 
-`api/setting.py` currently duplicates the default keys in
-`_default_setting_rows()` (L12-28) and again inside `create_settings()` (L80-104).
-Adding 12 keys twice guarantees drift.
+`api/setting.py` used to duplicate the default keys in `_default_setting_rows()`
+and again inside `create_settings()`. With 14 new keys that guarantees drift.
 
-**Decision:** Phase 0 introduces one `DEFAULT_SETTINGS: dict[str, str]` in
-`api/setting.py`; both paths consume it. `PUT /api/settings` already upserts
-missing keys (`setting.py:62-70`), so existing companies pick up new defaults
-lazily without a data migration.
+**Decision (implemented during V1 stabilization):** one registry —
+`DEFAULT_SETTINGS` (appearance/widget keys), `INTERNAL_SETTINGS` (server-side
+keys) and `ALL_SETTINGS` as their union (`api/setting.py:16-68`).
+`_default_setting_rows()` (`api/setting.py:70`) and `create_settings()`
+(`api/setting.py:148`) both consume it; `PUT /api/settings` upserts missing keys
+(`api/setting.py:117`), so existing companies pick up new defaults lazily without
+a data migration. `WIDGET_PUBLIC_KEYS` stays a separate explicit literal.
 
 ### ADR-3 — Q&A training reuses `ExtraDocument`, not a third embedding FK
 
@@ -147,14 +153,14 @@ honestly in the UI copy ("We'll get back to you by email").
 ### ADR-5 — Digest scheduling rides the existing worker + Redis queue
 
 `worker.py::worker()` already starts `scheduler_loop()` via `asyncio.create_task`
-(L19) and dispatches on `data["type"]` from `queue:jobs`.
+(`worker.py:109`) and dispatches on `data["type"]` from `queue:jobs`.
 
 **Decision:** add a `digest_loop()` task alongside it that enqueues
 `{"type": "digest", "company_id": ..., "period_start": ..., "period_end": ...}`;
 `worker()` gains an `elif` branch calling `handle_digest(data)`. No new scheduler,
 no cron, no extra infrastructure. A `digest_log` table with
-`UniqueConstraint(company_id, period_start)` makes sends idempotent across
-restarts and multiple workers.
+`UniqueConstraint(company_id, period_start)` on a row **claimed before** the send
+(see `PLAN_V2.md` V2-28) makes sends idempotent across restarts and workers.
 
 ### ADR-6 — Secrets are hashed or deployment-encrypted, not app-encrypted
 
@@ -182,37 +188,47 @@ vector search return any chunk). Digest/analytics query the flag. Old rows stay
 
 ## 5. Phase 0 — Foundation (blocking, do first)
 
-### P0.1 Fix email delivery (real bug)
+### P0.1 Fix email delivery — **done in V1 (S1)**
 
-`services/mail.py:29-47` calls `fm.send_message(message)` **without awaiting it**.
-Verified against the installed venv: `FastMail.send_message` is
-`async def`. The coroutine is created and discarded, so **no email is ever sent**
-— the existing password-reset flow is silently broken, and F5/F6 depend on it.
+This was a real bug: `services/mail.py` called `fm.send_message(message)`
+**without awaiting it** (`FastMail.send_message` is `async def`), so the coroutine
+was created and discarded and **no email was ever sent**.
 
-- Add `async def send_email_async(...)` that `await`s `fm.send_message(...)`.
-- Keep `send_email(...)` as a sync wrapper for `api/user.py::forgot_password`
-  using `asyncio.run(...)` when no loop is running; when a loop *is* running,
-  schedule with `create_task`. Never call `asyncio.run` inside a running loop.
-- Migrate digest/handoff callers to `send_email_async`; leave `forgot_password`
-  on the sync wrapper.
+- **Already implemented:** `async def send_email_async(...)` (`services/mail.py:65`)
+  awaits `fm.send_message(...)` (`services/mail.py:83`).
+- `send_email(...)` (`services/mail.py:86`) remains the sync wrapper for
+  `api/user.py::forgot_password`: `asyncio.run(...)` when no loop is running,
+  otherwise `create_task` with a strong reference. Never call `asyncio.run` inside
+  a running loop.
+- Remaining V2 work: new digest/handoff callers must `await send_email_async`.
 - **Acceptance:** a password reset and a digest preview both produce a delivered
   message against a test SMTP server; no `RuntimeWarning: coroutine was never
   awaited`.
 
-### P0.2 Public config allowlist (ADR-1)
+### P0.2 Public config allowlist — **done in V1 (S3), extended in V2**
 
-- `api/routes.py::widget_config` → `WIDGET_PUBLIC_KEYS` allowlist.
-- Initial allowed keys: the 7 existing appearance keys + the new widget-facing
-  keys from F1/F2/F5 (`widget_language`, `widget_ui_strings`, `widget_logo_url`,
-  `handoff_enabled`, `handoff_label`, `privacy_policy_url`, `require_consent`).
-- **Acceptance:** `GET /api/widget-config?website_id=…` never returns
-  `digest_*`, `handoff_email`, `llm_*` or any integration/API-key value.
+- **Already implemented:** `api/routes.py::widget_config` filters on
+  `WIDGET_PUBLIC_KEYS` (`api/setting.py`), an explicit literal tuple rather than a
+  view of `DEFAULT_SETTINGS`.
+- **Already implemented:** the 7 internal V2 keys are registered in
+  `INTERNAL_SETTINGS` and seeded through `ALL_SETTINGS`.
+- **Landed:** the tuple already holds all **14** entries — the 7 appearance keys
+  published in V1 plus the 7 widget-facing keys from F1/F2/F5/F9
+  (`widget_language`, `widget_ui_strings`, `widget_logo_url`, `handoff_enabled`,
+  `handoff_label`, `require_consent`, `privacy_policy_url`). What remains is the
+  widget code that reads them (§9 notes they are inert until then).
+- **Acceptance:** `GET /api/widget-config?website_id=…` returns exactly the 14
+  allowlisted keys and never `digest_*`, `handoff_email`, `llm_*` or any
+  integration/API-key value.
 
-### P0.3 Unify default settings (ADR-2)
+### P0.3 Unify default settings — **done in V1 (S3)**
 
-- `api/setting.py`: `DEFAULT_SETTINGS` dict; `_default_setting_rows()` and
-  `create_settings()` both derive from it; `POST /api/settings` becomes idempotent
-  (insert only missing keys, return `created`/`skipped`).
+- **Already implemented** (`api/setting.py:16-68`): `DEFAULT_SETTINGS` (appearance)
+  and `INTERNAL_SETTINGS` (server-side) with `ALL_SETTINGS` as the union;
+  `_default_setting_rows()` (`api/setting.py:70`) and `create_settings()`
+  (`api/setting.py:148`) both consume it, and `POST /api/settings` inserts only
+  missing keys and returns `created` / `skipped`.
+- `tests/test_settings.py` pins the registry split and the allowlist.
 
 ### P0.4 Config + env plumbing
 
@@ -237,15 +253,16 @@ this spec: `integration`, `handoff`, `digest`, `analytics`, `privacy`, `api_key`
 in the visitor's language, and widget UI strings are localizable. We do **not**
 claim to have verified 95 languages.
 
-**Gap:** no i18n; `SYSTEM_PROMPT` (`rag.py:128-134`) is English-only; widget
-strings are hardcoded (`widget.js:3-20`, `:513-567`).
+**Gap:** no i18n; `SYSTEM_PROMPT` (`rag.py:168-174`) is English-only; widget
+strings are hardcoded (`widget.js:3-20` plus the literals inside
+`showContactForm` (`widget.js:635`) and `renderSuggestions` (`widget.js:574`)).
 
 **Design**
 1. `rag.py::SYSTEM_PROMPT` gains: *"Detect the language of the user's question
    and always answer in that same language. If the context is in another
    language, translate the relevant information rather than answering in the
-   context's language."* Applied to **both** `ask` (L151) and `ask_stream` (L212)
-   so sync and SSE stay consistent.
+   context's language."* Applied to **both** `ask` (`rag.py:177`) and `ask_stream`
+   (`rag.py:224`) so sync and SSE stay consistent.
 2. `widget_language` setting (`auto` | ISO 639-1 code, default `auto`). `auto`
    resolves from `navigator.language` on the host page; explicit codes force a
    locale.
@@ -253,7 +270,7 @@ strings are hardcoded (`widget.js:3-20`, `:513-567`).
    placeholder, "Start chat", "Talk to a human", "Sources", "Send", error
    strings). Fallback to the current English literals — **no key removal**, so
    `ChatWidgetConfig` stays compatible.
-4. `loadServerConfig()` (`widget.js:692-727`) maps the two new keys; a small
+4. `loadServerConfig()` (`widget.js:851`) maps the two new keys; a small
    `t(key)` helper replaces hardcoded strings in `showContactForm`,
    `renderSuggestions`, `addMessage` error paths and the new handoff button.
 5. Admin: Appearance tab → language `Select` + a JSON/text editor for overrides.
@@ -274,7 +291,8 @@ embeds with no new keys behave exactly as before.
 **Target:** "custom logos and colors".
 
 **Gap:** colors/name/position/greeting/placeholder exist; avatar is hardcoded
-`role === 'user' ? '👤' : '🤖'` (`widget.js:340-342`) and the header is text-only.
+`role === 'user' ? '👤' : '🤖'` (`addMessage`, `widget.js:452`) and the header is
+text-only.
 
 **Design**
 - `widget_logo_url` setting (https URL, validated). `widget.js` renders an `<img>`
@@ -330,13 +348,13 @@ credentials yields a friendly chat error.
 **Target:** "use real chat history to refine and improve the chatbot".
 
 **Gap:** `ChatFeedback` (`models.py:224-234`), `POST /api/chat/feedback`
-(`routes.py:85-116`) and 👍/👎 buttons exist, but feedback has no effect on
+(`routes.py:219-252`) and 👍/👎 buttons exist, but feedback has no effect on
 answers and no admin surface.
 
 **Design**
-1. **Link a rating to the exact answer.** `save_message` (`rag.py:118-125`) is
+1. **Link a rating to the exact answer.** `save_message` (`rag.py:142`) is
    changed to return the persisted `ChatMessage`. `ChatResponse` and the SSE
-   `done` event gain `message_id`; `attachExtras` (`widget.js:372-428`) and
+   `done` event gain `message_id`; `attachExtras` (`widget.js:482`) and
    `Chat.tsx` keep that id per assistant bubble and send it in
    `FeedbackRequest.message_id` (new optional `UUID` field). The server resolves
    the question from the preceding user message in the same session — **never
@@ -556,7 +574,7 @@ certification.
   handoff rows; `DELETE /api/privacy/contacts/{session_id}`.
 - `contacts.consent_at` (nullable datetime) + settings `require_consent`
   (`false`) and `privacy_policy_url`. When on, `showContactForm`
-  (`widget.js:513-567`) renders a required checkbox with a link; the POST body
+  (`widget.js:635`) renders a required checkbox with a link; the POST body
   gains `consent: bool`, rejected with 400 when required but false.
 - Document a data-retention setting `retention_days` and a `purge` worker job as
   a **v2** item (not built here).
@@ -611,8 +629,10 @@ All new tables inherit `BaseModel` (uuid `id`, `created_at`, `updated_at`).
 `Company` / `Website` gain matching relationships where child rows are listed.
 
 **Migration order:** M1 (F5+F6+F7 signal) → M2 (F4) → M3 (F7) → M4 (F8) →
-M5 (F9). M1 chains from the frozen V1 head `07f83918a289`. Each generated with
-`uv run alembic revision --autogenerate`, diff reviewed, then
+M5 (F9). `api_keys` (M4) landed **early**, as `c41d7e8a9f20` from the frozen V1
+head `07f83918a289`, because `/api/v1` needs a key store before it can
+authenticate; the remaining migrations chain in order from the then-current head.
+Each generated with `uv run alembic revision --autogenerate`, diff reviewed, then
 `uv run alembic upgrade head`. Never edit an applied migration; keep one head.
 **No change to `EMBEDDING_DIMENSIONS`, therefore no re-ingest.**
 
@@ -638,8 +658,11 @@ Follow the existing pattern: env-only, no secret defaults, booleans parsed with
 
 ## 9. New settings keys
 
-Add to the unified `DEFAULT_SETTINGS` (ADR-2). `PUT /api/settings` upserts, so
-existing companies get them lazily.
+**14 new settings keys** in total: 7 widget-facing (✅) and 7 server-side (❌).
+Split by visibility (ADR-2): the ✅ rows go into `DEFAULT_SETTINGS`, the ❌ rows
+into `INTERNAL_SETTINGS` — never into the public allowlist. Both are seeded
+through `ALL_SETTINGS`, and `PUT /api/settings` upserts, so existing companies
+get them lazily.
 
 | Key | Default | Public to widget? | Feature |
 |---|---|---|---|
@@ -658,8 +681,24 @@ existing companies get them lazily.
 | `require_consent` | `false` | ✅ | F9 |
 | `privacy_policy_url` | `""` | ✅ | F9 |
 
-`WIDGET_PUBLIC_KEYS` (ADR-1) = the existing 7 appearance keys + all ✅ rows
-above. Everything ❌ stays server-side.
+**Public allowlist: 7 keys in V1, 14 only once the widget keys land.** The V1
+baseline (`v1` = `e23faba`) publishes **7** keys — the seven appearance rows and
+nothing else. The 7 ✅ rows above join `WIDGET_PUBLIC_KEYS` with the features that
+read them: `widget_language` and `widget_ui_strings` with F1 (V2-11/V2-12),
+`widget_logo_url` with F2 (V2-13), `handoff_enabled` and `handoff_label` with F5
+(V2-25/V2-26), and `require_consent` and `privacy_policy_url` with F9 (V2-42) —
+**14 public keys** in total at the end. Everything ❌ stays server-side, so
+`ALL_SETTINGS` finishes at **22 keys** (14 public + 8 internal, the eighth being
+the existing `daily_message_limit`).
+
+Read "14 public keys" as the target contract, not as evidence that the framework
+is already serving a working multilingual/branded/handoff/consent widget. V2-04
+has already landed the registry split and the 14-entry literal in
+`api/setting.py`, so the code serves all 14 keys with their defaults; the seven
+extra keys are **inert** until their feature ships — the V1 widget ignores
+unknown keys and a V1 embed behaves exactly as before. The gate for each wave is
+the widget (or the handoff/consent path) actually reading the key, not the key
+existing in the tuple.
 
 ---
 
@@ -708,12 +747,13 @@ New pages must be wrapped in `ProtectedRoute` like the existing ones.
 
 ## 12. Migration & rollout
 
-1. **Phase 0** (P0.1–P0.5) — no schema change. Fix email, allowlist public
-   config, unify defaults, add config/env, verify. Ship as its own commit.
-   **Note:** P0.1 (email bug), P0.2 (config allowlist) and P0.3 (unified
-   defaults) are already scheduled as V1 stabilization items S1/S3 in
-   `plans/PLAN_V1.md` §8. Complete them once in V1 and mark them done here —
-   do not implement them twice.
+1. **Phase 0** (P0.1–P0.5) — no schema change. P0.1 (email), P0.2 (public
+   allowlist) and P0.3 (unified defaults) landed as V1 stabilization S1/S3 and are
+   **already in the code**: the internal V2 keys are registered in
+   `INTERNAL_SETTINGS`, and `WIDGET_PUBLIC_KEYS` is an explicit 14-entry literal
+   (7 appearance + 7 widget keys, the latter inert until their feature ships).
+   What remains is P0.4 (config/env), P0.5 (routers) and the F1/F2/F5/F9 widget
+   code that consumes the new keys.
 2. **Phase 1** — F1, F2, F3 (settings-only, no migration). Lowest risk, highest
    visible value.
 3. **Phase 2** — F4 + F5 + F6 with migrations M1, M2. These share the feedback
@@ -721,29 +761,36 @@ New pages must be wrapped in `ProtectedRoute` like the existing ones.
 4. **Phase 3** — F7 + F8 with M3, M4 (integrations and API keys both introduce
    secrets; do them after ADR-1 is in place).
 5. **Phase 4** — F9 + F10 with M5 and the security documentation.
-6. After each phase: `graft build`, then update `README.md` (features, env vars,
+6. After each phase: `trail build`, then update `README.md` (features, env vars,
    endpoint list) and `AGENTS.md` if ownership/conventions changed.
 
 **Rollout safety:** every feature is off by default via a `Setting` row or an env
 flag. An upgraded deployment with an untouched `.env` and no new settings behaves
-byte-for-byte like today. No data backfill is required except `chat_feedback.status`
-(`pending`) and `chat_messages.answered` (leave `NULL` for old rows).
+like today, with one exception: F1's language rule changes `SYSTEM_PROMPT`
+unconditionally (it has no flag), so answers may switch to the visitor's language
+— see `PLAN_V2.md` §4 invariant 10. No data backfill is required except
+`chat_feedback.status` (`pending`) and `chat_messages.answered` (leave `NULL` for
+old rows).
 
 ---
 
 ## 13. Verification
 
-There is no test suite (`tests/` is empty). Per `AGENTS.md`, verify by
-import/compile plus smoke checks:
+`tests/` is **not** empty: it holds 29 `unittest` modules (settings registry,
+RAG search, ingest, quotas, rate limits, widget config/asset/snippet, worker, …)
+plus 4 widget tests. `AGENTS.md` documents the unittest command; the widget tests
+run on `node:test` and there is no npm `test` script.
 
 ```bash
 source .venv/bin/activate
 uv run python -c "import site_gpt.app.main"
 uv run alembic upgrade head
+uv run python -m unittest discover -s tests -v     # 29 modules / 221 tests today
+node --test tests/*.mjs                            # 4 widget tests
 uv run uvicorn site_gpt.app.main:app --reload      # :8000
-uv run python -m site_gpt.app.worker               # : ingest + digest loops
+uv run python -m site_gpt.app.worker               # ingest + digest loops
 cd frontend && npm run build && npm run lint
-graft build
+trail build
 ```
 
 End-to-end smoke per phase: register a company → add a website + sitemap →
@@ -752,10 +799,11 @@ corrected answer → re-ask → trigger a handoff → `POST /api/digest/preview`
 `send-now` → create an API key and call `/api/v1/settings` → export and delete a
 conversation → verify `GET /api/widget-config` contains no internal keys.
 
-**Recommended (not yet in repo):** add the first real tests for
-`services/digest.py`, `services/qa_training.py`, `services/integrations.py` and
-the `get_api_key_user` dependency — these are pure enough to unit test and are
-the highest-risk new code. Track as a separate task, not a blocker for this spec.
+**New tests for V2:** the suite exists, so extend it rather than seed it — unit
+test `services/digest.py`, `services/qa_training.py`, `services/integrations.py`
+and the `get_api_key_user` dependency, and keep `tests/test_settings.py` in sync
+as the allowlist grows. These are the highest-risk new code; `PLAN_V2.md` V2-46
+covers them.
 
 ---
 
