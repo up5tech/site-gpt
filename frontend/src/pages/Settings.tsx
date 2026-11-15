@@ -51,6 +51,8 @@ const APPEARANCE_KEYS = [
   'widget_logo_url',
   'handoff_enabled',
   'handoff_label',
+  'require_consent',
+  'privacy_policy_url',
 ] as const;
 
 const DEFAULT_APPEARANCE = {
@@ -66,6 +68,8 @@ const DEFAULT_APPEARANCE = {
   widget_logo_url: '',
   handoff_enabled: 'false',
   handoff_label: 'Talk to a human',
+  require_consent: 'false',
+  privacy_policy_url: '',
 };
 
 // UI mirror of `services/llm.py::ALLOWED_CHAT_MODELS`. The server resolves the
@@ -206,6 +210,8 @@ interface AppearanceFormValues {
   widget_logo_url?: string;
   handoff_enabled?: boolean;
   handoff_label?: string;
+  require_consent?: boolean;
+  privacy_policy_url?: string;
 }
 
 interface ProfileFormValues {
@@ -291,6 +297,8 @@ export function Settings() {
         widget_logo_url: map.widget_logo_url || '',
         handoff_enabled: (map.handoff_enabled || 'false') === 'true',
         handoff_label: map.handoff_label || 'Talk to a human',
+        require_consent: (map.require_consent || 'false') === 'true',
+        privacy_policy_url: map.privacy_policy_url || '',
       };
       appearanceForm.setFieldsValue(values);
       setPreview(buildPreview(values));
@@ -743,6 +751,21 @@ export function Settings() {
                   tooltip='English fallback; the label catalogue or UI string overrides take precedence.'
                 >
                   <Input placeholder='Talk to a human' />
+                </Form.Item>
+                <Form.Item
+                  name='require_consent'
+                  label='Require privacy consent'
+                  valuePropName='checked'
+                  tooltip='Adds a required consent checkbox to the contact form and rejects contact details posted without consent. Only turn this on once a privacy policy URL is set.'
+                >
+                  <Switch />
+                </Form.Item>
+                <Form.Item
+                  name='privacy_policy_url'
+                  label='Privacy policy URL'
+                  tooltip='Linked from the consent checkbox. Only absolute http(s) URLs render; anything else is ignored by the widget.'
+                >
+                  <Input placeholder='https://example.com/privacy' />
                 </Form.Item>
                 <Form.Item
                   name='widget_language'

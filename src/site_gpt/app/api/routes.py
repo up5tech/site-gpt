@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import json
 import os
+from datetime import UTC, datetime
 from uuid import UUID as _UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -223,6 +224,26 @@ def upsert_contact(
         )
     ensure_website_active(website)
     ensure_embed_allowed(request, db, website)
+    # Consent (F9) is enforced here, not only in the widget: a form that forgets
+    # the checkbox, or a caller posting straight to the API, must not store a
+    # lead the owner said they need consent for.
+    consent_setting = (
+        db.query(models.Setting)
+        .filter(
+            models.Setting.company_id == website.company_id,
+            models.Setting.key == "require_consent",
+        )
+        .first()
+    )
+    requires_consent = bool(
+        consent_setting
+        and (consent_setting.value or "").strip().lower() == "true"
+    )
+    if requires_consent and body.consent is not True:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Consent is required to save contact details",
+        )
     contact = (
         db.query(models.Contact)
         .filter(
@@ -244,6 +265,10 @@ def upsert_contact(
             email=body.email.strip(),
         )
         db.add(contact)
+    # Stamped only on an actual yes; a later submission that omits `consent`
+    # leaves the recorded timestamp alone rather than erasing the proof.
+    if body.consent is True:
+        contact.consent_at = datetime.now(UTC)
     db.commit()
     db.refresh(contact)
     # Integration hook (F7): the lead is stored before this runs, so a failing

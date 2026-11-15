@@ -18,6 +18,9 @@
     enableHistory: true,
     suggestedQuestions: [],
     requireContactInfo: true,
+    // F9: off by default, so a V1 embed renders exactly the same form.
+    requireConsent: false,
+    privacyPolicyUrl: '',
   };
 
   // ================= SANITIZE CONFIG =================
@@ -146,6 +149,9 @@
       talkToHuman: 'Nói chuyện với người thật',
       handoffThanks: 'Đã gửi yêu cầu, chúng tôi sẽ liên hệ lại sớm.',
       handoffFailed: 'Không gửi được yêu cầu. Vui lòng thử lại.',
+      consentAgree: 'Tôi đồng ý với',
+      privacyPolicy: 'chính sách bảo mật',
+      consentRequired: 'Vui lòng đồng ý với chính sách bảo mật để tiếp tục.'
     },
   };
 
@@ -375,6 +381,26 @@
         outline: none;
         width: 100%;
         box-sizing: border-box;
+      }
+
+      /* The consent row is a label like the others, but laid out as one line:
+         a tick box followed by the sentence that links the policy. */
+      .contact-form label.consent {
+        flex-direction: row;
+        align-items: flex-start;
+        gap: 6px;
+        line-height: 1.4;
+      }
+
+      .contact-form label.consent input {
+        width: auto;
+        margin: 1px 0 0;
+        flex: 0 0 auto;
+      }
+
+      .contact-form label.consent a {
+        color: inherit;
+        text-decoration: underline;
       }
 
       .contact-form .error {
@@ -836,11 +862,24 @@
     form.className = 'contact-form';
     // The English copy at each call site is the fallback: `t()` swaps in the
     // language catalogue or the owner's `widget_ui_strings` when present.
+    // F9: only rendered when the owner turned consent on. `safeUrl` drops
+    // javascript:/data: so the policy link can never be anything but http(s).
+    const policyUrl = config.requireConsent
+      ? safeUrl(config.privacyPolicyUrl)
+      : null;
+    const policyTarget = policyUrl
+      ? `<a href="${escapeHtml(policyUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(t('privacyPolicy', 'privacy policy'))}</a>`
+      : escapeHtml(t('privacyPolicy', 'privacy policy'));
+    const consentRow = config.requireConsent
+      ? `<label class="consent"><input name="consent" type="checkbox" />` +
+        `<span>${escapeHtml(t('consentAgree', 'I agree to the'))} ${policyTarget}</span></label>`
+      : '';
     form.innerHTML = `
       <p><b>${escapeHtml(config.botName)}</b>${escapeHtml(t('contactIntro', ' — please introduce yourself to start chatting.'))}</p>
       <label>${escapeHtml(t('firstName', 'First name'))}<input name="first_name" autocomplete="given-name" /></label>
       <label>${escapeHtml(t('lastName', 'Last name'))}<input name="last_name" autocomplete="family-name" /></label>
       <label>${escapeHtml(t('email', 'Email'))}<input name="email" type="email" autocomplete="email" /></label>
+      ${consentRow}
       <div class="error"></div>
       <button class="submit" type="submit">${escapeHtml(t('startChat', 'Start chat'))}</button>
     `;
@@ -857,6 +896,13 @@
         );
         return;
       }
+      if (config.requireConsent && !(form.consent && form.consent.checked)) {
+        errEl.textContent = t(
+          'consentRequired',
+          'Please accept the privacy policy to continue.',
+        );
+        return;
+      }
       const btn = form.querySelector('.submit');
       btn.disabled = true;
       try {
@@ -870,6 +916,9 @@
             first_name,
             last_name,
             email,
+            // Only sent when the owner requires it; JSON.stringify drops the
+            // key entirely otherwise, so a V1 embed posts the same body.
+            ...(config.requireConsent ? { consent: true } : {}),
           }),
         });
         if (res.status === 403) {
@@ -1175,6 +1224,15 @@
           config.handoffLabel || 'Talk to a human',
           40,
         );
+      }
+      // Consent (F9): both keys are optional, so an older server answer leaves
+      // the V1 form untouched.
+      if (cfg.require_consent !== undefined) {
+        config.requireConsent =
+          String(cfg.require_consent).trim().toLowerCase() === 'true';
+      }
+      if (typeof cfg.privacy_policy_url === 'string') {
+        config.privacyPolicyUrl = safeUrl(cfg.privacy_policy_url) || '';
       }
 
       // Apply dynamic styles / labels now that config is loaded.
