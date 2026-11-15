@@ -297,9 +297,11 @@ so `EMBEDDING_DIMENSIONS` must equal that model's native size.
   a broken sitemap silently.
 - **One ingest per website at a time.** `POST /api/ingest` returns `409` while the website is
   already `processing`, so a double click can no longer queue a second crawl that re-embeds the
-  same pages concurrently with the first. A finished or failed ingest can be retried normally;
-  a website left `processing` by a dead worker is recovered by `requeue_stuck_ingests`
-  (`STUCK_INGEST_AFTER`, 6h).
+  same pages concurrently with the first. A finished or failed ingest can be retried normally, and
+  a website left `processing` by a dead worker can be re-indexed manually once
+  `websites.updated_at` is older than `STUCK_INGEST_AFTER` (6h, the same window
+  `requeue_stuck_ingests` uses) — the take-over resets the timestamp so an immediate second click
+  is refused again.
 - **Settings are scoped per company** — `GET/PUT /api/settings` no longer leaks or edits
   other companies' settings.
 - **Upload safety** — files are stored under a UUID name (collision- and path-traversal-safe)

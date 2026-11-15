@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import json
 import os
+from datetime import UTC, datetime
 from uuid import UUID as _UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -55,6 +56,7 @@ from site_gpt.app.services.quota import (
 from site_gpt.app.services.rag import ask, ask_stream
 from site_gpt.app.services.ratelimit import rate_limit
 from site_gpt.app.services.redis import enqueue_job, redis_client
+from site_gpt.app.worker import _is_stuck as _ingest_is_stuck
 
 router = APIRouter()
 
@@ -145,13 +147,21 @@ async def ingest(
         )
     _ensure_website_active(website)
     # One ingest per website at a time: a double click used to enqueue a second
-    # crawl that re-embedded the same pages concurrently with the first.
-    if (website.ingest_status or "") == "processing":
+    # crawl that re-embedded the same pages concurrently with the first. A
+    # `processing` row older than STUCK_INGEST_AFTER belongs to a worker that
+    # died (the scheduler only re-crawls `completed` sites), so a manual retry
+    # must still be possible.
+    if (website.ingest_status or "") == "processing" and not _ingest_is_stuck(
+        website
+    ):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="An ingest is already running for this website.",
         )
     website.ingest_status = "processing"
+    # Reset the start timestamp, even when the status is already `processing`:
+    # a stale take-over must not look stale again on the next request.
+    website.updated_at = datetime.now(UTC)
     db.commit()
     await enqueue_job({"type": "ingest", "website_id": website_id})
     return {"status": "ok"}
