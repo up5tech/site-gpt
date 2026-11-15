@@ -141,15 +141,26 @@ def format_history(messages):
 
 
 def save_message(
-    db: Session, website_id: UUID, session_id: str, role: str, message: str
+    db: Session,
+    website_id: UUID,
+    session_id: str,
+    role: str,
+    message: str,
+    answered: bool | None = None,
 ) -> models.ChatMessage:
     """Persist one message and return it.
 
     The assistant row's id is what the widget sends back with a rating (F4), so
     callers need the refreshed row — `created_at` is a server default.
+    `answered` is the digest's signal (F6): True/False only for a complete
+    answer, left NULL for a partial one and for pre-V2 rows.
     """
     msg = models.ChatMessage(
-        session_id=session_id, role=role, message=message, website_id=website_id
+        session_id=session_id,
+        role=role,
+        message=message,
+        website_id=website_id,
+        answered=answered,
     )
     db.add(msg)
     db.commit()
@@ -170,7 +181,7 @@ def _no_context_answer(db: Session, website_id: UUID, session_id: str, question:
     """Persist the exchange and return the canned "no information" reply."""
     save_message(db, website_id, session_id, "user", question)
     answer = save_message(
-        db, website_id, session_id, "assistant", NO_CONTEXT_ANSWER
+        db, website_id, session_id, "assistant", NO_CONTEXT_ANSWER, False
     )
     return {
         "answer": NO_CONTEXT_ANSWER,
@@ -226,7 +237,14 @@ def ask(db: Session, website_id: UUID, session_id: str, question: str):
     save_message(db, website_id, session_id, "user", question)
     # save response
     content = answer.content if hasattr(answer, "content") else str(answer)
-    saved = save_message(db, website_id, session_id, "assistant", str(content))
+    saved = save_message(
+        db,
+        website_id,
+        session_id,
+        "assistant",
+        str(content),
+        bool(results),
+    )
     return {
         "answer": content,
         "sources": collect_sources(results),
@@ -278,6 +296,7 @@ async def ask_stream(db: Session, website_id: UUID, session_id: str, question: s
                 session_id,
                 "assistant",
                 NO_CONTEXT_ANSWER,
+                False,
             )
             yield f"data: {json.dumps({'done': True, 'sources': [], 'message_id': str(saved.id)})}\n\n"
             return
@@ -316,7 +335,13 @@ async def ask_stream(db: Session, website_id: UUID, session_id: str, question: s
 
         answer_text = "".join(full)
         saved = await asyncio.to_thread(
-            save_message, db, website_id, session_id, "assistant", answer_text
+            save_message,
+            db,
+            website_id,
+            session_id,
+            "assistant",
+            answer_text,
+            bool(results),
         )
         yield f"data: {json.dumps({'done': True, 'sources': sources, 'message_id': str(saved.id)})}\n\n"
 

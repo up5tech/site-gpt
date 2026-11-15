@@ -41,6 +41,20 @@ def flag(db: Session, company_id: UUID, key: str) -> bool:
     return value(db, company_id, key, "false").strip().lower() in TRUE_VALUES
 
 
+def team_emails(db: Session, company_id: UUID) -> list[str]:
+    """Active admins/managers, used when a feature has no recipients set."""
+    rows = (
+        db.query(models.User.email)
+        .filter(
+            models.User.company_id == company_id,
+            models.User.status == "active",
+            models.User.role.in_(("admin", "manager")),
+        )
+        .all()
+    )
+    return [email for (email,) in rows if email]
+
+
 def emails(db: Session, company_id: UUID, configured: str) -> list[str]:
     """Recipients from a comma/semicolon separated setting.
 

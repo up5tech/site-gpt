@@ -70,18 +70,7 @@ def _recipients(db: Session, company_id: UUID) -> list[str]:
         company_id,
         company_settings.value(db, company_id, "handoff_email"),
     )
-    if configured:
-        return configured
-    rows = (
-        db.query(models.User.email)
-        .filter(
-            models.User.company_id == company_id,
-            models.User.status == "active",
-            models.User.role.in_(("admin", "manager")),
-        )
-        .all()
-    )
-    return [email for (email,) in rows if email]
+    return configured or company_settings.team_emails(db, company_id)
 
 
 def _render_email(

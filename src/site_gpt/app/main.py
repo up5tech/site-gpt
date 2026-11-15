@@ -5,6 +5,8 @@ from site_gpt.app.api.api_key import router as api_key_router
 from site_gpt.app.api.company import router as company_router
 from site_gpt.app.api.document import router as document_router
 from site_gpt.app.api.extra_document import router as extra_document_router
+from site_gpt.app.api.analytics import router as analytics_router
+from site_gpt.app.api.digest import router as digest_router
 from site_gpt.app.api.feedback import router as feedback_router
 from site_gpt.app.api.handoff import router as handoff_router
 from site_gpt.app.api.routes import router
@@ -47,4 +49,6 @@ app.include_router(feedback_router, prefix="/api/feedback")
 # The handoff router carries its own paths (/api/handoff for the public POST,
 # /api/handoffs for the admin list).
 app.include_router(handoff_router)
+app.include_router(digest_router)
+app.include_router(analytics_router)
 app.include_router(v1_router, prefix="/api/v1")
