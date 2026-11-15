@@ -13,7 +13,7 @@ import {
   Typography,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import api from '../utils/api';
 
@@ -142,7 +142,7 @@ export function Users() {
     },
   ];
 
-  const fetchUsers = async () => {
+  const fetchUsers = useCallback(async () => {
     if (!isAuthenticated) return;
     setLoading(true);
     try {
@@ -163,11 +163,11 @@ export function Users() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [isAuthenticated, nameFilter, emailFilter, roleFilter, page, limit]);
 
   useEffect(() => {
     fetchUsers();
-  }, [page, nameFilter, emailFilter, roleFilter, isAuthenticated]);
+  }, [fetchUsers]);
 
   const handleModalOk = async () => {
     try {

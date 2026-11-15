@@ -19,7 +19,7 @@ import {
   Typography,
 } from 'antd';
 import useApp from 'antd/es/app/useApp';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { Website } from '../types/api';
 import api from '../utils/api';
@@ -51,34 +51,75 @@ const DEFAULT_APPEARANCE = {
   suggested_questions: '',
 };
 
+type ColorLike = {
+  toHexString?: () => string;
+  toRgbString?: () => string;
+  toCss?: () => string;
+};
+
 // Normalise a value coming from a ColorPicker (string | Color object) into a CSS color.
-function colorToCss(v: any): string {
+function colorToCss(v: unknown): string {
   if (!v) return '';
   if (typeof v === 'string') return v;
-  if (typeof v.toHexString === 'function') return v.toHexString();
-  if (typeof v.toRgbString === 'function') return v.toRgbString();
-  if (typeof v.toCss === 'function') return v.toCss();
+  if (typeof v === 'object') {
+    const color = v as ColorLike;
+    if (typeof color.toHexString === 'function') return color.toHexString();
+    if (typeof color.toRgbString === 'function') return color.toRgbString();
+    if (typeof color.toCss === 'function') return color.toCss();
+  }
   return String(v);
 }
 
-function buildPreview(values: Record<string, any>) {
+const asText = (v: unknown, fallback: string): string =>
+  typeof v === 'string' && v.trim() ? v : fallback;
+
+function buildPreview(values: Record<string, unknown>) {
   return {
-    assistantName: values.assistant_name ?? DEFAULT_APPEARANCE.assistant_name,
+    assistantName: asText(
+      values.assistant_name,
+      DEFAULT_APPEARANCE.assistant_name,
+    ),
     headerColor:
       colorToCss(values.widget_header_color) ||
       DEFAULT_APPEARANCE.widget_header_color,
     footerColor:
       colorToCss(values.widget_footer_color) ||
       DEFAULT_APPEARANCE.widget_footer_color,
-    position: (values.widget_position ??
-      DEFAULT_APPEARANCE.widget_position) as 'bottom-left' | 'bottom-right',
-    greetingMessage:
-      values.greeting_message ?? DEFAULT_APPEARANCE.greeting_message,
-    placeholderText:
-      values.placeholder_text ?? DEFAULT_APPEARANCE.placeholder_text,
-    suggestedQuestions:
-      values.suggested_questions ?? DEFAULT_APPEARANCE.suggested_questions,
+    position: asText(
+      values.widget_position,
+      DEFAULT_APPEARANCE.widget_position,
+    ) as 'bottom-left' | 'bottom-right',
+    greetingMessage: asText(
+      values.greeting_message,
+      DEFAULT_APPEARANCE.greeting_message,
+    ),
+    placeholderText: asText(
+      values.placeholder_text,
+      DEFAULT_APPEARANCE.placeholder_text,
+    ),
+    suggestedQuestions: asText(
+      values.suggested_questions,
+      DEFAULT_APPEARANCE.suggested_questions,
+    ),
   };
+}
+
+interface AppearanceFormValues {
+  [key: string]: unknown;
+  assistant_name?: string;
+  widget_header_color?: unknown;
+  widget_footer_color?: unknown;
+  widget_position?: string;
+  greeting_message?: string;
+  placeholder_text?: string;
+  suggested_questions?: string;
+}
+
+interface ProfileFormValues {
+  first_name: string;
+  last_name: string;
+  email: string;
+  phone?: string;
 }
 
 export function Settings() {
@@ -98,7 +139,7 @@ export function Settings() {
     'loading' | 'ok' | 'missing'
   >('loading');
 
-  const loadWidgetVersion = async () => {
+  const loadWidgetVersion = useCallback(async () => {
     const apiUrl = import.meta.env.VITE_BACKEND_URL || window.location.origin;
     const cleanApiUrl = apiUrl.replace(/\/+$/, '');
     setWidgetVersionState('loading');
@@ -124,29 +165,9 @@ export function Settings() {
 
     setWidgetVersion('');
     setWidgetVersionState('missing');
-  };
-
-  useEffect(() => {
-    if (user) {
-      profileForm.setFieldsValue({
-        first_name: user.first_name,
-        last_name: user.last_name,
-        email: user.email,
-        phone: user.phone,
-      });
-    }
-    fetchWebsites();
-    fetchAppearance();
-  }, [user]);
-
-  // Ask the API for the current widget.js hash so the install snippet carries a
-  // ?v= token that busts its cache as soon as a new widget is deployed.
-  useEffect(() => {
-    loadWidgetVersion();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const fetchAppearance = async () => {
+  const fetchAppearance = useCallback(async () => {
     try {
       const response = await api.get('/settings');
       const map: Record<string, string> = {};
@@ -172,9 +193,9 @@ export function Settings() {
     } catch (error) {
       console.error('Fetch settings error', error);
     }
-  };
+  }, [appearanceForm]);
 
-  const handleAppearanceSubmit = async (values: any) => {
+  const handleAppearanceSubmit = async (values: AppearanceFormValues) => {
     setAppearanceLoading(true);
     try {
       const payload = APPEARANCE_KEYS.map((key) => ({
@@ -199,20 +220,39 @@ export function Settings() {
     }
   };
 
-  const fetchWebsites = async () => {
+  const fetchWebsites = useCallback(async () => {
     try {
       const response = await api.get('/websites');
       const items = response.data.items || [];
       setWebsites(items);
-      if (items.length > 0 && !selectedWebsiteId) {
-        setSelectedWebsiteId(items[0].id);
+      if (items.length > 0) {
+        setSelectedWebsiteId((prev) => prev || items[0].id);
       }
     } catch (error) {
       console.error('Fetch websites error', error);
     }
-  };
+  }, []);
 
-  const handleProfileSubmit = async (values: any) => {
+  useEffect(() => {
+    if (user) {
+      profileForm.setFieldsValue({
+        first_name: user.first_name,
+        last_name: user.last_name,
+        email: user.email,
+        phone: user.phone,
+      });
+    }
+    fetchWebsites();
+    fetchAppearance();
+  }, [user, profileForm, fetchWebsites, fetchAppearance]);
+
+  // Ask the API for the current widget.js hash so the install snippet carries a
+  // ?v= token that busts its cache as soon as a new widget is deployed.
+  useEffect(() => {
+    loadWidgetVersion();
+  }, [loadWidgetVersion]);
+
+  const handleProfileSubmit = async (values: ProfileFormValues) => {
     setLoading(true);
     try {
       await api.put('/users/me', values);

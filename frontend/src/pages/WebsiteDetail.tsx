@@ -25,7 +25,7 @@ import {
 import { DatabaseOutlined } from '@ant-design/icons';
 import useApp from 'antd/es/app/useApp';
 import type { ColumnsType } from 'antd/es/table';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Website, WebsitePage } from '../types/api';
 import api from '../utils/api';
@@ -59,7 +59,7 @@ export function WebsiteDetail() {
     !!website?.updated_at &&
     Date.now() - new Date(website.updated_at).getTime() <= STUCK_INGEST_AFTER_MS;
 
-  const fetchWebsiteDetail = async () => {
+  const fetchWebsiteDetail = useCallback(async () => {
     try {
       const response = await api.get(`/websites/${id}`);
       setWebsite(response.data);
@@ -67,9 +67,9 @@ export function WebsiteDetail() {
       console.error('Fetch website detail error', error);
       message.error('Failed to load website details');
     }
-  };
+  }, [id, message]);
 
-  const fetchPages = async () => {
+  const fetchPages = useCallback(async () => {
     setPagesLoading(true);
     try {
       const response = await api.get(`/websites/${id}/pages`, {
@@ -83,7 +83,7 @@ export function WebsiteDetail() {
     } finally {
       setPagesLoading(false);
     }
-  };
+  }, [id, limit, page, message]);
 
   useEffect(() => {
     if (id) {
@@ -91,7 +91,7 @@ export function WebsiteDetail() {
       fetchPages();
     }
     setLoading(false);
-  }, [id, page]);
+  }, [id, fetchWebsiteDetail, fetchPages]);
 
   const handleLoadSitemap = async () => {
     try {

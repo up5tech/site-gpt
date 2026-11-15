@@ -1,5 +1,5 @@
 import axios, { AxiosInstance } from 'axios';
-import type { ChatResponse, ContactList, ConversationList, ConversationMessages, DashboardStats, FeedbackRequest, LoginResponse, RecentConversations, Website, WebsiteQuota, WidgetConfig } from '../types/api';
+import type { ChatResponse, ContactList, ConversationList, ConversationMessages, DashboardStats, FeedbackRequest, LoginResponse, RecentConversations, RegisterRequest, Website, WebsiteQuota, WidgetConfig } from '../types/api';
 
 // Base API instance with proxy /api -> backend
 const api: AxiosInstance = axios.create({
@@ -30,8 +30,24 @@ export const getAuthToken = (): string | null => {
   return localStorage.getItem('access_token');
 };
 
+/**
+ * Human-readable message for a failed API call: the backend's `detail` when it
+ * sent one, otherwise the caller's fallback text. Keeps `catch` blocks typed
+ * without reaching into `error.response` untyped.
+ */
+export const getApiErrorMessage = (
+  error: unknown,
+  fallback: string,
+): string => {
+  if (axios.isAxiosError(error)) {
+    const data = error.response?.data as { detail?: string } | undefined;
+    if (typeof data?.detail === 'string' && data.detail) return data.detail;
+  }
+  return fallback;
+};
+
 // API functions
-export const register = (data: any) => api.post('/register', data);
+export const register = (data: RegisterRequest) => api.post('/register', data);
 
 export const login = (email: string, password: string) =>
   api.post<LoginResponse>('/token', { email: email, password });

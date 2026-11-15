@@ -23,8 +23,9 @@ import {
   Typography,
   Upload,
 } from 'antd';
+import type { UploadFile, UploadProps } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import api from '../utils/api';
 import {
@@ -38,6 +39,14 @@ const { Title, Text } = Typography;
 // user can still paste a publicly-shared Drive link (no token needed).
 const DRIVE_CLIENT_ID = import.meta.env.VITE_GOOGLE_DRIVE_CLIENT_ID || '';
 
+interface Attachment {
+  id: string;
+  filename: string;
+  file_size: number;
+  file_type: string;
+  source?: string;
+}
+
 interface ExtraDocument {
   id: string;
   created_at: string;
@@ -46,14 +55,22 @@ interface ExtraDocument {
   content: string;
   company_id: string;
   website_id?: string;
-  attachments?: Array<{
-    id: string;
-    filename: string;
-    file_size: number;
-    file_type: string;
-    source?: string;
-  }>;
+  attachments?: Attachment[];
 }
+
+/** Body returned by POST /uploads, /uploads/url and /uploads/google-drive. */
+interface UploadedFileResponse {
+  filename?: string;
+  file_id?: string;
+  file_size?: number;
+  source?: string;
+}
+
+/** An antd upload row plus the attachment id/source the API assigns. */
+type UploadItem = UploadFile<UploadedFileResponse> & {
+  file_id?: string;
+  source?: string;
+};
 
 export function ExtraDocuments() {
   const [data, setData] = useState<ExtraDocument[]>([]);
@@ -61,7 +78,7 @@ export function ExtraDocuments() {
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [limit] = useState(10);
-  const [nameFilter, setNameFilter] = useState('');
+  const [, setNameFilter] = useState('');
   const { isAuthenticated } = useAuth();
 
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -69,7 +86,7 @@ export function ExtraDocuments() {
     null,
   );
   const [form] = Form.useForm();
-  const [fileList, setFileList] = useState<any[]>([]);
+  const [fileList, setFileList] = useState<UploadItem[]>([]);
   const [uploading, setUploading] = useState(false);
   const [deletedFileIds, setDeletedFileIds] = useState<string[]>([]);
 
@@ -129,7 +146,7 @@ export function ExtraDocuments() {
         if (!attachments || attachments.length === 0) return '—';
         return (
           <Space size='small'>
-            {attachments.map((att: any) => (
+            {attachments.map((att: Attachment) => (
               <span key={att.id} style={{ fontSize: '12px' }}>
                 📎 {att.filename}
                 {renderSourceTag(att.source)}
@@ -185,7 +202,7 @@ export function ExtraDocuments() {
     );
   };
 
-  const fetchDocuments = async () => {
+  const fetchDocuments = useCallback(async () => {
     if (!isAuthenticated) return;
     setLoading(true);
     try {
@@ -203,9 +220,9 @@ export function ExtraDocuments() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [isAuthenticated, page, limit]);
 
-  const fetchWebsites = async () => {
+  const fetchWebsites = useCallback(async () => {
     if (!isAuthenticated) return;
     setLoadingWebsites(true);
     try {
@@ -222,17 +239,17 @@ export function ExtraDocuments() {
     } finally {
       setLoadingWebsites(false);
     }
-  };
+  }, [isAuthenticated]);
 
   useEffect(() => {
     fetchDocuments();
-  }, [page, nameFilter, isAuthenticated]);
+  }, [fetchDocuments]);
 
   useEffect(() => {
     if (isAuthenticated) {
       fetchWebsites();
     }
-  }, [isAuthenticated]);
+  }, [isAuthenticated, fetchWebsites]);
 
   const handleDelete = async (id: string) => {
     try {
@@ -276,11 +293,11 @@ export function ExtraDocuments() {
       const values = await form.validateFields();
 
       // Get file IDs from uploaded files
-      const fileIds: string[] = fileList
-        .filter((f: any) => f.response && f.response.file_id)
-        .map((f: any) => f.response.file_id);
+      const fileIds: string[] = fileList.flatMap((f) =>
+        f.response?.file_id ? [f.response.file_id] : [],
+      );
 
-      const payload: any = {
+      const payload: Record<string, unknown> & { delete_file_ids?: string[] } = {
         ...values,
         file_ids: fileIds,
         website_id: values.website_id || null, // Ensure null if not selected
@@ -313,10 +330,11 @@ export function ExtraDocuments() {
     setDeletedFileIds([]); // Reset deleted file IDs
   };
 
-  const onRemove = (file: any) => {
+  const onRemove: UploadProps['onRemove'] = (file) => {
     // If file has file_id (existing file from database), add to deletedFileIds
-    if (file.file_id) {
-      setDeletedFileIds((prev) => [...prev, file.file_id]);
+    const fileId = (file as UploadItem).file_id;
+    if (fileId) {
+      setDeletedFileIds((prev) => [...prev, fileId]);
     }
 
     const newFileList = fileList.filter((f) => f.uid !== file.uid);
@@ -326,21 +344,22 @@ export function ExtraDocuments() {
 
   // --- Source-agnostic import helpers -------------------------------------
 
-  const addFetchedFile = (resp: any, source: string) => {
+  const addFetchedFile = (resp: UploadedFileResponse, source: string) => {
     setFileList((prev) => [
       ...prev,
       {
-        uid: resp.file_id,
-        name: resp.filename,
+        uid: resp.file_id ?? '',
+        name: resp.filename ?? '',
         status: 'done',
         size: resp.file_size,
         response: { ...resp, source },
+        file_id: resp.file_id,
         source,
       },
     ]);
   };
 
-  const handleBeforeUpload = async (file: any) => {
+  const handleBeforeUpload: UploadProps['beforeUpload'] = async (file) => {
     // Validate file type
     const allowedTypes = [
       'application/pdf',
@@ -366,10 +385,11 @@ export function ExtraDocuments() {
       });
 
       // Add file to list with response
-      const newFile = {
+      const newFile: UploadItem = {
         ...file,
         uid: response.data.file_id,
         response: response.data,
+        file_id: response.data.file_id,
         source: 'local',
       };
       setFileList((prev) => [...prev, newFile]);
@@ -445,9 +465,13 @@ export function ExtraDocuments() {
         message.success(`Added ${docs.length} file(s) from Google Drive`);
         setDriveModalOpen(false);
       }
-    } catch (error: any) {
+    } catch (error) {
       console.error('Drive picker error', error);
-      message.error(error?.message || 'Google Drive picker failed');
+      message.error(
+        error instanceof Error && error.message
+          ? error.message
+          : 'Google Drive picker failed',
+      );
     } finally {
       setDriveLoading(false);
     }
@@ -583,7 +607,7 @@ export function ExtraDocuments() {
                 {fileList.map((file) => (
                   <Space key={file.uid}>
                     <FileTextOutlined />
-                    {file.name || file.filename || file.response?.filename}
+                    {file.name || file.response?.filename}
                     {renderSourceTag(file.source || file.response?.source)}
                     <Button
                       type='link'

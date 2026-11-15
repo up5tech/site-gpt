@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import type { RegisterRequest } from '../types/api';
-import api from '../utils/api';
+import api, { getApiErrorMessage } from '../utils/api';
 
 const { Title, Text } = Typography;
 
@@ -24,8 +24,8 @@ export function Register() {
       await api.post('/register', values);
       message.success('Registration successful! Please login.');
       navigate('/login');
-    } catch (error: any) {
-      message.error(error.response?.data?.detail || 'Registration failed');
+    } catch (error) {
+      message.error(getApiErrorMessage(error, 'Registration failed'));
     } finally {
       setLoading(false);
     }

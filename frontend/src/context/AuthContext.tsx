@@ -5,11 +5,12 @@ import {
   useEffect,
   useState,
 } from 'react';
+import type { User } from '../types/api';
 import api, { clearAuthToken, getAuthToken, setAuthToken } from '../utils/api';
 
 interface AuthContextType {
   token: string | null;
-  user: any | null;
+  user: User | null;
   login: (token: string) => void;
   logout: () => void;
   fetchUser: () => Promise<void>;
@@ -33,7 +34,7 @@ interface Props {
 
 export default function AuthProvider({ children }: Props) {
   const [token, setToken] = useState<string | null>(null);
-  const [user, setUser] = useState<any | null>(null);
+  const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {

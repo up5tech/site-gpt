@@ -169,7 +169,7 @@ export function Chat() {
       }>('/websites');
       // console.log('Fetch websites response', response.data);
       setWebsites(response.data.items || []);
-    } catch (error) {
+    } catch {
       message.error('Failed to load websites');
     } finally {
       setLoadingWebsites(false);
@@ -341,7 +341,7 @@ export function Chat() {
                     {conv.title || 'Chat'}
                   </Text>
                   <DeleteOutlined
-                    onClick={(e: any) => {
+                    onClick={(e) => {
                       e.stopPropagation();
                       removeConversation(conv);
                     }}

@@ -2,7 +2,7 @@ import { useAuth } from '@/context/AuthContext';
 import { User } from '@/types/api';
 import { getCompanyUsers } from '@/utils/api';
 import Table, { ColumnsType } from 'antd/es/table';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 interface UserTableProps {
   /** Compact preview mode for the dashboard: paginated, fewer columns. */
@@ -13,24 +13,24 @@ export function UserTable({ compact = false }: UserTableProps) {
   const { isAuthenticated } = useAuth();
 
   const [loading, setLoading] = useState<boolean>(false);
-  const [users, setUsers] = useState<any>([]);
+  const [users, setUsers] = useState<User[]>([]);
 
-  const fetchUsers = async () => {
+  const fetchUsers = useCallback(async () => {
     setLoading(true);
     try {
       const res = await getCompanyUsers({ page: 1, limit: 100 });
-      setUsers(res.data?.items);
+      setUsers(res.data?.items || []);
     } catch (error) {
       console.error('Fetch users error', error);
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     if (!isAuthenticated) return;
     fetchUsers();
-  }, []);
+  }, [isAuthenticated, fetchUsers]);
 
   const columns: ColumnsType<User> = [
     {

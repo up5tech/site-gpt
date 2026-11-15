@@ -187,7 +187,7 @@ export const ChatProvider = ({ children }: Props) => {
     try {
       await api.post('/ingest', { sitemap_url: url });
       message.success('Site ingested successfully!');
-    } catch (error) {
+    } catch {
       message.error('Ingest error');
     } finally {
       setLoading(false);

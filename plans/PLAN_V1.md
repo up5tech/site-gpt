@@ -218,8 +218,14 @@ All FKs use `ondelete` plus cascading relationships. Every table inherits
 | Frontend | React 18, Vite 5, TypeScript 5.6, Ant Design 5, axios, react-router 6, Less |
 | Tooling | ESLint, `graft` context graph (`graft/`) |
 
-**No test suite exists** (`tests/` is empty). Verification is by import/compile
-and manual smoke — see §6.
+**A `unittest` suite covers the pure service logic** (`tests/`, 219 tests at the
+freeze: `split_text`, `extract_text_from_file`, `collect_sources`,
+`format_history`, `_client_ip`, the settings registry/allowlist, plus regression
+tests for the K-items in §7 — SSRF, widget XSS/sanitisation, quotas, website
+status, sitemap sync/errors, ingest deduplication, upload limits, `embed_guard`,
+`/health`, the worker and the widget JS). Run it with
+`uv run python -m unittest discover -s tests -v`. There are still no
+browser/end-to-end tests, so manual smoke is needed too — see §6.
 
 ### 3.5 Configuration (V1 env keys)
 
@@ -321,13 +327,14 @@ uv run python -m site_gpt.app.worker                # worker, separate terminal
 cd frontend && npm install && npm run dev           # UI :5173
 ```
 
-### 6.3 Verify (there is no test suite)
+### 6.3 Verify
 
 ```bash
+uv run python -m unittest discover -s tests -v     # 219 tests, no extra deps
 uv run python -c "import site_gpt.app.main"
-cd frontend && npm run build && npm run lint
+cd frontend && npm run build && npm run lint       # tsc+vite build, ESLint 9 flat config
 curl http://localhost:8000/health                  # {"status":"ok","db":true,"redis":true}
-graft build                                        # after any significant code change
+trail build                                        # after any significant code change
 ```
 
 Manual smoke: register → add website → sitemap sync → select pages →
@@ -376,7 +383,7 @@ These are verified against the code, not inferred from docs.
 | K4 | Several read endpoints are public by design: `GET /api/conversations/{sid}`, `GET /api/contacts/{sid}` — a guessed `session_id` + known `website_id` yields full history or PII. | Medium | `api/routes.py:212-241`, `:346-381` | Document; breaking fix deferred (would break the widget) | SPEC F8 follow-up |
 | K5 | `rate_limit` is an in-memory fixed window per process/IP — not shared across workers or restarts. | Medium | `services/ratelimit.py` | Document | SPEC §14 |
 | K6 | `JWT_SECRET_KEY` has a hardcoded dev fallback and `CORS_ORIGINS` defaults to `*`. Both are unsafe if deployed as-is. | **High on deploy** | `core/config.py:8-10`, `:44` | Deployment checklist §9 | SPEC F10 |
-| K7 | No automated tests; `tests/` is empty. Only import/compile + manual smoke. | Medium | `tests/` | Add a minimal harness in §8/S5 | SPEC §13 |
+| K7 | **No automated tests.** `tests/` was empty; verification was import/compile + manual smoke only. | Medium | `tests/` | Fixed in §8/S5 and grown since: `tests/` now holds a plain-`unittest` suite (219 tests) covering the pure services plus the §7 regressions; browser/end-to-end tests still do not exist | SPEC §13 |
 | K8 | `chat_feedback` is write-only — 👍/👎 is stored but never influences answers, and there is no admin review screen. | Low (intentional in V1) | `models.py:224-234` | Leave as-is; V1 scope boundary | SPEC F4 |
 | K9 | Default `settings` keys are duplicated in `_default_setting_rows()` and `create_settings()`. | Low | `api/setting.py:12-28`, `:80-104` | Fix in §8/S3 | SPEC ADR-2 |
 | K10 | `api/setting.py::create_settings` is not idempotent (see K2) — repeated calls stack duplicate rows. | Medium | `api/setting.py:105-107` | Fix in §8/S3 | SPEC P0.3 |
@@ -519,14 +526,19 @@ key.
 
 ## 9. Definition of done — V1 freeze checklist
 
-- [x] S1–S9 merged; `git status` clean apart from intentional untracked files.
+- [x] S1–S10 merged; `git status` clean apart from intentional untracked files.
 - [x] `uv run python -c "import site_gpt.app.main"` succeeds.
+- [x] `uv run python -m unittest discover -s tests -v` passes — 219 tests, run
+      against the tagged HEAD.
 - [x] `uv run alembic upgrade head` applies cleanly from an empty DB with
-      `pgvector` installed; head is `07f83918a289`.
-- [ ] `cd frontend && npm run build && npm run lint` pass. — **build passes;
-      lint FAILS**: `frontend/` has no ESLint config at all, and ESLint 9 refuses
-      to run without a flat `eslint.config.js`, so the script has never linted
-      anything. Tracked as follow-up work, not a V1 code defect.
+      `pgvector` installed; head is `07f83918a289` (`alembic heads` reports a
+      single head).
+- [x] `cd frontend && npm run build && npm run lint` pass. — `frontend/` now
+      ships `eslint.config.js` (ESLint 9 flat config on the already-installed
+      typescript-eslint / react-hooks / react-refresh packages) and the 39
+      findings it raised (30 `no-explicit-any`, 9 `exhaustive-deps`, empty
+      interface/pattern, unused `catch` bindings) were fixed in source, so both
+      scripts exit 0 with `--max-warnings 0`.
 - [x] `GET /health` returns `{"status":"ok","db":true,"redis":true}`
       (see the S10 fix: it used to poison the shared Redis client).
 - [ ] End-to-end smoke: register → sitemap sync → ingest → status `completed`
@@ -537,7 +549,9 @@ key.
       question got the canned reply, SSE streamed chunks + `sources`, lead on
       `/contacts`, 👍 row in `chat_feedback`, conversation restored; **not
       verified**: opening `_widget-demo.html` in a browser.
-- [ ] Password reset delivers a real email. — not exercised in the freeze run.
+- [ ] Password reset delivers a real email. — **not exercised**: no SMTP server
+      was available, so S1 is verified by `send_email_async` being awaited and by
+      review of the sync wrapper, not by a delivered message.
 - [x] `GET /api/widget-config` exposes only the 7 appearance keys.
 - [x] With the default `RAG_MAX_DISTANCE`, an out-of-scope question returns the
       canned “no information” reply with no LLM call, and an in-scope one still
@@ -545,13 +559,15 @@ key.
       showed the old `0.5` default rejecting real questions (0.48–0.55), so the
       default is now `0.6` (off-topic measured at 0.67–0.75).
 - [ ] Rotating `X-Forwarded-For` on a direct connection does not reset a
-      rate-limit window. — covered by `tests/test_ratelimit.py`, not re-run
-      against a live proxy in the freeze run.
+      rate-limit window. — covered by `tests/test_ratelimit.py`, **not re-run
+      against a live proxy**.
 - [ ] `README.md` and `AGENTS.md` match the code. — updated for every change in
       S1–S10, not audited end to end.
 - [x] `graft build` run; graph matches the code. — `graft` is now `trail`;
       `trail build` run (94 files parsed, 706 nodes).
-- [x] Commit tagged `v1`.
+- [x] Commit tagged `v1` (annotated, message "SiteGPT V1 freeze") — the tag is
+      on HEAD, so `git describe --tags --always` reports `v1` and
+      `git log v1..HEAD` is empty.
 
 Once tagged, **V1 receives only security fixes**. All other work goes through
 `plans/SPEC.md`.

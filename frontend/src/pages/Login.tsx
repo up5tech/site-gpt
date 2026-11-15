@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import type { Location } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { login, setAuthToken } from '../utils/api';
+import { getApiErrorMessage, login, setAuthToken } from '../utils/api';
 
 const { Title, Text } = Typography;
 
@@ -29,8 +29,8 @@ export function Login() {
       setToken(response.data.access_token);
       message.success('Login successful!');
       navigate(from, { replace: true });
-    } catch (error: any) {
-      message.error(error.response?.data?.detail || 'Login failed');
+    } catch (error) {
+      message.error(getApiErrorMessage(error, 'Login failed'));
     } finally {
       setLoading(false);
     }

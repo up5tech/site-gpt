@@ -3,7 +3,61 @@
 // user select files. The selected file id + access token are returned to the
 // caller, which forwards them to the backend /uploads/google-drive endpoint.
 //
-// TypeScript can't see the global `google` object, so we treat it as `any`.
+// TypeScript can't see the global `google` object, so the small part of it this
+// module uses is declared below instead of being cast to `any`.
+
+/** Response of the GIS token client callback. */
+interface GoogleTokenResponse {
+  access_token?: string;
+  error?: string;
+}
+
+interface GooglePickerDoc {
+  id: string;
+  name: string;
+}
+
+interface GooglePickerData {
+  action: string;
+  docs?: GooglePickerDoc[];
+}
+
+interface GooglePickerInstance {
+  setVisible: (visible: boolean) => void;
+}
+
+interface GooglePickerBuilder {
+  addView: (view: unknown) => GooglePickerBuilder;
+  setOAuthToken: (token: string) => GooglePickerBuilder;
+  setDeveloperKey: (key: string) => GooglePickerBuilder;
+  setCallback: (cb: (data: GooglePickerData) => void) => GooglePickerBuilder;
+  build: () => GooglePickerInstance;
+}
+
+interface GoogleDocsView {
+  setIncludeFolders: (value: boolean) => GoogleDocsView;
+  setMimeTypes: (value: string) => GoogleDocsView;
+  setSelectFolderEnabled: (value: boolean) => GoogleDocsView;
+}
+
+interface GoogleNamespace {
+  accounts?: {
+    oauth2?: {
+      initTokenClient: (config: {
+        client_id: string;
+        scope: string;
+        callback: (resp: GoogleTokenResponse) => void;
+      }) => { requestAccessToken: (opts: { prompt: string }) => void };
+    };
+  };
+  gapi?: { load: (api: string, callback: () => void) => void };
+  picker?: {
+    DocsView: new (viewId: unknown) => GoogleDocsView;
+    ViewId: { DOCS: unknown };
+    PickerBuilder: new () => GooglePickerBuilder;
+    Action: { PICKED: string; SELECTED: string; CANCEL: string };
+  };
+}
 
 const GSI_SRC = 'https://accounts.google.com/gsi/client';
 const GAPI_SRC = 'https://apis.google.com/js/api.js';
@@ -49,17 +103,17 @@ export async function pickGoogleDriveFiles(
   await loadScript(GSI_SRC);
   await loadScript(GAPI_SRC);
 
-  const google = (window as any).google;
+  const google = (window as unknown as { google?: GoogleNamespace }).google;
   if (!google || !google.accounts || !google.accounts.oauth2) {
     throw new Error('Google Identity Services failed to load');
   }
 
   // 1) Get an access token via the GIS token client.
-  const tokenResponse = await new Promise<any>((resolve, reject) => {
-    const client = google.accounts.oauth2.initTokenClient({
+  const tokenResponse = await new Promise<GoogleTokenResponse>((resolve, reject) => {
+    const client = google.accounts!.oauth2!.initTokenClient({
       client_id: clientId,
       scope: 'https://www.googleapis.com/auth/drive.file',
-      callback: (resp: any) => {
+      callback: (resp) => {
         if (resp.error) reject(new Error(resp.error));
         else resolve(resp);
       },
@@ -67,36 +121,37 @@ export async function pickGoogleDriveFiles(
     client.requestAccessToken({ prompt: '' });
   });
 
-  const accessToken = tokenResponse.access_token;
+  const accessToken = tokenResponse.access_token ?? '';
 
   // 2) Load the Picker and show it.
-  await new Promise<void>((resolve) => google.gapi.load('picker', resolve));
+  await new Promise<void>((resolve) => google.gapi!.load('picker', resolve));
 
   return new Promise<Array<{ id: string; name: string; token: string }>>(
     (resolve) => {
-      const docsView = new google.picker.DocsView(google.picker.ViewId.DOCS)
+      const pickerApi = google.picker!;
+      const docsView = new pickerApi.DocsView(pickerApi.ViewId.DOCS)
         .setIncludeFolders(false)
         .setMimeTypes(
           'application/pdf,text/plain,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document',
         )
         .setSelectFolderEnabled(false);
 
-      const picker = new google.picker.PickerBuilder()
+      const picker = new pickerApi.PickerBuilder()
         .addView(docsView)
         .setOAuthToken(accessToken)
         .setDeveloperKey('')
-        .setCallback((data: any) => {
+        .setCallback((data) => {
           if (
-            data.action === google.picker.Action.PICKED ||
-            data.action === google.picker.Action.SELECTED
+            data.action === pickerApi.Action.PICKED ||
+            data.action === pickerApi.Action.SELECTED
           ) {
-            const docs = (data.docs || []).map((d: any) => ({
+            const docs = (data.docs || []).map((d) => ({
               id: d.id,
               name: d.name,
               token: accessToken,
             }));
             resolve(docs);
-          } else if (data.action === google.picker.Action.CANCEL) {
+          } else if (data.action === pickerApi.Action.CANCEL) {
             resolve([]);
           }
         })

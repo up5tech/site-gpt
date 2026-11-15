@@ -15,7 +15,7 @@ import {
   Typography,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Website } from '../types/api';
@@ -121,7 +121,7 @@ export function Websites() {
     },
   ];
 
-  const fetchWebsites = async () => {
+  const fetchWebsites = useCallback(async () => {
     if (!isAuthenticated) return;
     setLoading(true);
     try {
@@ -141,11 +141,11 @@ export function Websites() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [isAuthenticated, nameFilter, urlFilter, page, limit]);
 
   useEffect(() => {
     fetchWebsites();
-  }, [page, nameFilter, urlFilter, isAuthenticated]);
+  }, [fetchWebsites]);
 
   const handleDelete = async (id: string) => {
     try {

@@ -1,15 +1,13 @@
 import { Input, Pagination, Table, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { Company } from '../types/api';
 import { getCompanies } from '../utils/api';
 
 const { Text } = Typography;
 
-interface Props {}
-
-export function CompanyTable({}: Props) {
+export function CompanyTable() {
   const [data, setData] = useState<Company[]>([]);
   const [loading, setLoading] = useState(false);
   const [total, setTotal] = useState(0);
@@ -41,7 +39,7 @@ export function CompanyTable({}: Props) {
     },
   ];
 
-  const fetchCompanies = async () => {
+  const fetchCompanies = useCallback(async () => {
     if (!isAuthenticated) return;
     setLoading(true);
     try {
@@ -57,11 +55,11 @@ export function CompanyTable({}: Props) {
     } finally {
       setLoading(false);
     }
-  };
+  }, [isAuthenticated, nameFilter, page, limit]);
 
   useEffect(() => {
     fetchCompanies();
-  }, [page, nameFilter, isAuthenticated]);
+  }, [fetchCompanies]);
 
   return (
     <>
