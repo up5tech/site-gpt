@@ -1,5 +1,5 @@
 import axios, { AxiosInstance } from 'axios';
-import type { AnalyticsSummary, ChatResponse, ContactList, ConversationList, ConversationMessages, DashboardStats, DigestPreview, DigestSendResult, FeedbackItem, FeedbackList, FeedbackRequest, FeedbackReview, HandoffList, HandoffUpdate, LoginResponse, RecentConversations, RegisterRequest, Setting, Website, WebsiteQuota, WidgetConfig } from '../types/api';
+import type { AnalyticsSummary, ChatResponse, ContactList, ConversationList, ConversationMessages, DashboardStats, DigestPreview, DigestSendResult, FeedbackItem, FeedbackList, FeedbackRequest, FeedbackReview, HandoffList, HandoffUpdate, IntegrationItem, IntegrationPayload, IntegrationTestResult, LoginResponse, RecentConversations, RegisterRequest, Setting, Website, WebsiteQuota, WidgetConfig } from '../types/api';
 
 // Base API instance with proxy /api -> backend
 const api: AxiosInstance = axios.create({
@@ -91,6 +91,22 @@ export const getHandoffs = (
 
 export const updateHandoff = (id: string, payload: HandoffUpdate) =>
   api.patch(`/handoffs/${id}`, payload);
+
+// Outbound integrations (F7). Reads are masked server-side.
+export const getIntegrations = () =>
+  api.get<IntegrationItem[]>('/integrations/');
+
+export const createIntegration = (payload: IntegrationPayload) =>
+  api.post<IntegrationItem>('/integrations/', payload);
+
+export const updateIntegration = (id: string, payload: IntegrationPayload) =>
+  api.patch<IntegrationItem>(`/integrations/${id}`, payload);
+
+export const deleteIntegration = (id: string) =>
+  api.delete(`/integrations/${id}`);
+
+export const testIntegration = (id: string) =>
+  api.post<IntegrationTestResult>(`/integrations/${id}/test`);
 
 // Analytics and the weekly digest (F6).
 export const getAnalyticsSummary = (days = 7) =>

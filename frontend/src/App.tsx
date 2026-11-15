@@ -12,6 +12,7 @@ import { Login } from './pages/Login';
 import { Register } from './pages/Register';
 import { Analytics } from './pages/Analytics';
 import { Handoffs } from './pages/Handoffs';
+import { Integrations } from './pages/Integrations';
 import { Settings } from './pages/Settings';
 import { Training } from './pages/Training';
 import { Users } from './pages/Users';
@@ -79,6 +80,14 @@ function App() {
                 element={
                   <ProtectedRoute>
                     <ExtraDocuments />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path='/integrations'
+                element={
+                  <ProtectedRoute>
+                    <Integrations />
                   </ProtectedRoute>
                 }
               />

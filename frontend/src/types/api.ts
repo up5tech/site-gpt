@@ -164,6 +164,37 @@ export interface Setting {
   updated_at?: string;
 }
 
+export type IntegrationType = 'webhook' | 'slack' | 'zendesk' | 'crisp';
+
+export interface IntegrationItem {
+  id: string;
+  type: IntegrationType;
+  name: string;
+  /** Credentials come back masked as "***" — never the stored value. */
+  config: Record<string, string>;
+  events: string[];
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+  /** Config keys that hold a secret, so the form can show a placeholder. */
+  secret_fields: string[];
+}
+
+export interface IntegrationPayload {
+  type?: IntegrationType;
+  name?: string;
+  config?: Record<string, string>;
+  events?: string[];
+  enabled?: boolean;
+}
+
+export interface IntegrationTestResult {
+  type: string;
+  delivered: boolean;
+  status_code?: number | null;
+  error?: string | null;
+}
+
 export interface DigestTopic {
   term: string;
   count: number;
