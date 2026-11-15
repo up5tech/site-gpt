@@ -50,7 +50,7 @@ EVENT_TYPES = (
 _pending_tasks: set[asyncio.Task] = set()
 
 
-def _config_dict(integration: models.Integration) -> dict[str, Any]:
+def config_of(integration: models.Integration) -> dict[str, Any]:
     """The stored JSON config, tolerating a malformed row."""
     try:
         value = json.loads(integration.config or "{}")
@@ -240,7 +240,7 @@ def _deliveries(
                 "integration %s has unknown type %r; skipping", row.id, row.type
             )
             continue
-        deliveries.append((provider, _config_dict(row)))
+        deliveries.append((provider, config_of(row)))
     return deliveries
 
 

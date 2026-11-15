@@ -9,6 +9,7 @@ from site_gpt.app.api.analytics import router as analytics_router
 from site_gpt.app.api.digest import router as digest_router
 from site_gpt.app.api.feedback import router as feedback_router
 from site_gpt.app.api.handoff import router as handoff_router
+from site_gpt.app.api.integration import router as integration_router
 from site_gpt.app.api.routes import router
 from site_gpt.app.api.setting import router as setting_router
 from site_gpt.app.api.upload import router as upload_router
@@ -51,4 +52,5 @@ app.include_router(feedback_router, prefix="/api/feedback")
 app.include_router(handoff_router)
 app.include_router(digest_router)
 app.include_router(analytics_router)
+app.include_router(integration_router, prefix="/api/integrations")
 app.include_router(v1_router, prefix="/api/v1")
