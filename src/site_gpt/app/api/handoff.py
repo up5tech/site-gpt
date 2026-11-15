@@ -19,7 +19,7 @@ from site_gpt.app.db.session import get_db
 from site_gpt.app.schemas.app import PaginatedResponse
 from site_gpt.app.schemas.handoff import HandoffCreate, HandoffItem, HandoffUpdate
 from site_gpt.app.services import company_settings
-from site_gpt.app.services.integrations import emit_event
+from site_gpt.app.services.integrations import emit_event_async
 from site_gpt.app.services.mail import send_email_async
 from site_gpt.app.services.rag import get_chat_history
 from site_gpt.app.services.ratelimit import rate_limit
@@ -130,7 +130,7 @@ async def _notify(db: Session, website: models.Website, request: models.HandoffR
     except Exception:
         logger.exception("handoff %s could not be emailed", request.id)
 
-    emit_event(
+    await emit_event_async(
         db,
         website.company_id,
         "handoff.requested",

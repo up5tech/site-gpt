@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 from site_gpt.app import models
 from site_gpt.app.core.config import FRONTEND_URL
 from site_gpt.app.services import company_settings
+from site_gpt.app.services.integrations import emit_event_async
 from site_gpt.app.services.mail import send_email_async
 
 logger = logging.getLogger(__name__)
@@ -406,6 +407,23 @@ async def send_period(
     claim.sent_at = datetime.now(UTC)
     claim.recipient_count = sent
     db.commit()
+
+    # Integration hook (F7): the digest really went out, so the owner's tools can
+    # announce it. Delivered after the claim is stamped, so a failure here can
+    # neither resend nor break the send that already happened.
+    await emit_event_async(
+        db,
+        company_id,
+        "digest.generated",
+        {
+            "period_start": period_start.isoformat(),
+            "period_end": period_end.isoformat(),
+            "recipients": sent,
+            "conversation_volume": data["conversation_volume"],
+            "message_count": data["message_count"],
+            "new_contacts": data["new_contacts"],
+        },
+    )
     return {
         "status": "sent",
         "recipients": sent,

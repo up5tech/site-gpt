@@ -33,6 +33,7 @@ from site_gpt.app.schemas.chat import (
     RecentConversationsResponse,
 )
 from site_gpt.app.schemas.company import CompanyRegister
+from site_gpt.app.services.integrations import emit_event
 from site_gpt.app.schemas.contact import (
     ContactCreate,
     ContactListResponse,
@@ -178,6 +179,20 @@ def chat_feedback(
     )
     db.add(feedback)
     db.commit()
+    # Integration hook (F7). `emit_event` never raises, so a dead webhook can
+    # never turn a visitor's rating into an error.
+    emit_event(
+        db,
+        website.company_id,
+        "feedback.received",
+        {
+            "website_id": str(website.id),
+            "website_name": website.name,
+            "session_id": body.session_id,
+            "rating": rating,
+            "comment": body.comment or "",
+        },
+    )
     return {"status": "ok"}
 
 
@@ -231,6 +246,21 @@ def upsert_contact(
         db.add(contact)
     db.commit()
     db.refresh(contact)
+    # Integration hook (F7): the lead is stored before this runs, so a failing
+    # integration cannot cost the owner the contact.
+    emit_event(
+        db,
+        website.company_id,
+        "lead.captured",
+        {
+            "website_id": str(website.id),
+            "website_name": website.name,
+            "session_id": contact.session_id,
+            "email": contact.email,
+            "first_name": contact.first_name,
+            "last_name": contact.last_name,
+        },
+    )
     return ContactRes.model_validate(contact)
 
 
