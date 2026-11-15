@@ -5,6 +5,7 @@ from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
+    DateTime,
     ForeignKey,
     Index,
     String,
@@ -246,6 +247,18 @@ class ChatFeedback(BaseModel):
     session_id: Mapped[str] = mapped_column(String(255), nullable=False)
     rating: Mapped[str] = mapped_column(String(20), nullable=False)  # "up" | "down"
     comment: Mapped[str] = mapped_column(Text, nullable=True)
+    # The assistant message this rating refers to (F4). NULL for ratings made
+    # before the widget sent one: still reviewable, but not trainable, because
+    # the question cannot be resolved unambiguously.
+    message_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("chat_messages.id", ondelete="SET NULL"), nullable=True
+    )
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="pending"
+    )  # "pending" | "approved" | "rejected"
+    # The admin's corrected answer, written together with status="approved" and
+    # rendered into the Q&A training document.
+    reviewed_answer: Mapped[str] = mapped_column(Text, nullable=True)
 
 
 class HandoffRequest(BaseModel):
@@ -289,9 +302,18 @@ class DigestLog(BaseModel):
     company_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
     )
-    period_start: Mapped[datetime] = mapped_column(nullable=False)
-    period_end: Mapped[datetime] = mapped_column(nullable=False)
-    sent_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    # Explicitly timezone-aware, like the migration and db/base.py. The rest of
+    # the models rely on inference (naive DateTime), which is why autogenerate
+    # keeps proposing ALTERs they deliberately do not take.
+    period_start: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    period_end: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    sent_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     recipient_count: Mapped[int] = mapped_column(nullable=False, default=0)
 
 
