@@ -358,8 +358,10 @@ so `EMBEDDING_DIMENSIONS` must equal that model's native size.
   calling the LLM or embedding the question. `0` disables the cap, and a Redis outage fails open
   (chat keeps working, the error is logged) rather than taking the widget down. The counter is spent
   before the LLM call and never refunded, and flushing Redis resets today's counts.
-- **`websites.status` disables a bot.** Anything other than `active` (case-insensitive) now
-  returns `403 {"detail": "This website is disabled."}` from `POST /api/chat`,
+- **`websites.status` disables a bot.** Only an *explicit* other value disables the bot; a NULL/empty
+  status means "never set" and stays enabled, so a row created before the switch existed cannot be
+  silently killed. Create and update normalise the value (` ACTIVE ` → `active`, the form sends
+  `active`/`inactive`). A non-active status now returns `403 {"detail": "This website is disabled."}` from `POST /api/chat`,
   `POST /api/chat/stream`, `GET /api/widget-config`, both `/api/contacts` endpoints and
   `POST /api/ingest`. The worker also skips an ingest job for a disabled website and the
   refresh scheduler only picks `active` ones, so disabling a site stops its crawl and

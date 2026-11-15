@@ -84,8 +84,14 @@ def _ensure_website_active(website: models.Website) -> None:
 
     `status` used to be written by the API and never read, so disabling a bot
     meant deleting the website and losing its documents, history and leads.
+
+    Only an explicit other value disables the bot. `websites.status` is
+    nullable, so a row created before the switch existed (or written by an old
+    form that sent nothing) can hold NULL/empty — that means "never set", and
+    treating it as disabled would silently kill a working bot.
     """
-    if (website.status or "").strip().lower() != "active":
+    current = (website.status or "").strip().lower()
+    if current and current != "active":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="This website is disabled.",

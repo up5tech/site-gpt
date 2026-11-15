@@ -141,7 +141,9 @@ def create_website(
             description=website_in.description,
             site_map_url=website_in.site_map_url,
             company_id=user.company_id,
-            status=website_in.status or "active",
+            # The form sends 'active'/'inactive'; normalise so a stray case or
+            # space (' Active ') cannot silently disable the bot.
+            status=(website_in.status or "").strip().lower() or "active",
         )
         db.add(website)
         db.commit()
@@ -170,7 +172,9 @@ def update_website(
         website.name = website_in.name or website.name
         website.description = website_in.description or website.description
         website.site_map_url = website_in.site_map_url or website.site_map_url
-        website.status = website_in.status or website.status
+        website.status = (
+            website_in.status or ""
+        ).strip().lower() or website.status
         db.commit()
         db.refresh(website)
         return WebsiteRes.model_validate(website)

@@ -149,8 +149,21 @@ class EndpointStatusTests(unittest.TestCase):
         enqueue.assert_not_called()
         self.assertNotEqual(self.site.ingest_status, "processing")
 
+    def test_a_missing_status_does_not_disable_a_working_bot(self):
+        # `websites.status` is nullable and predates the switch: NULL/empty
+        # means "never set", not "disabled".
+        for status in (None, "", "   "):
+            with self.subTest(status=status):
+                self.site.status = status
+                with patch.object(
+                    routes, "ask", return_value={"answer": "hi", "sources": []}
+                ) as ask:
+                    response = self.chat()
+                self.assertEqual(response.status_code, 200, response.text)
+                ask.assert_called_once()
+
     def test_every_non_active_status_is_refused(self):
-        for status in ("paused", "disabled", "inactive", "", None, "Inactive"):
+        for status in ("paused", "disabled", "inactive", "Inactive", "ARCHIVED"):
             with self.subTest(status=status):
                 self.site.status = status
                 with patch.object(routes, "ask") as ask:
