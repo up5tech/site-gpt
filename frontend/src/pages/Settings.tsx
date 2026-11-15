@@ -22,7 +22,7 @@ import useApp from 'antd/es/app/useApp';
 import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { Website } from '../types/api';
-import api from '../utils/api';
+import api, { getSettings, updateSettings } from '../utils/api';
 import { WidgetPreview } from '../components/WidgetPreview';
 import {
   WIDGET_VERSION_PLACEHOLDER,
@@ -169,9 +169,9 @@ export function Settings() {
 
   const fetchAppearance = useCallback(async () => {
     try {
-      const response = await api.get('/settings');
+      const response = await getSettings();
       const map: Record<string, string> = {};
-      (response.data || []).forEach((s: { key: string; value: string }) => {
+      (response.data || []).forEach((s) => {
         map[s.key] = s.value;
       });
       const values = {
@@ -210,7 +210,7 @@ export function Settings() {
                 : DEFAULT_APPEARANCE.widget_footer_color)
             : String(values[key] ?? ''),
       }));
-      await api.put('/settings', payload);
+      await updateSettings(payload);
       message.success('Appearance updated successfully');
     } catch (error) {
       console.error('Update appearance error', error);

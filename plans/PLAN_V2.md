@@ -142,9 +142,9 @@ user-visible. **Entry:** §3 pre-flight complete.
 
 - [x] **V2-06 · Shared frontend contracts** — `M`, depends: V2-04, migration: —
   - Files: `frontend/src/types/api.ts`, `frontend/src/utils/api.ts`, `frontend/src/components/Layout.tsx`.
-  - Do: add TS interfaces for the new settings keys, `WidgetConfig` extension, and typed API helpers as each endpoint appears (stub helpers are fine); add disabled/nav placeholders for `/training`, `/handoffs`, `/analytics`, `/integrations` that are wired only when their pages exist. Do not create pages yet.
+  - Do: add the TS types the next wave actually reads and typed API helpers for endpoints that already exist; each V2 page adds its own nav entry in the task that creates it (no disabled placeholders — a nav item for a page that does not exist is dead weight). Do not create pages yet.
   - Done when: `npm run build` passes and no dead links are rendered.
-  - Done: `types/api.ts` gains `Setting`, `WidgetSettings` and a `WidgetConfig` that intersects the known keys with the free-form map; `utils/api.ts` gains typed `getSettings` / `updateSettings`. `Layout.tsx` renders `/training`, `/handoffs`, `/analytics` and `/integrations` as disabled text (not links) so nothing is a dead link until its page exists. `npm run build` and `npm run lint` both exit 0.
+  - Done: `types/api.ts` gains `Setting` (mirrors `SettingRes`); `utils/api.ts` gains typed `getSettings` / `updateSettings`, and `pages/Settings.tsx` uses them instead of raw `api.get` / `api.put`, so nothing is added unused. Deliberately **not** added: a `WidgetSettings` key map (nothing narrows on it — `WidgetConfig` stays the free-form `Record<string, string>` V1 shipped) and the four nav placeholders (Wave 1 creates no page; each page adds its own nav entry when it lands). `npm run build` and `npm run lint` both exit 0.
 
 #### Gate V2-0G
 

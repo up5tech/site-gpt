@@ -19,21 +19,13 @@ export function LayoutComponent({ children }: Props) {
   const location = useLocation();
   const navigate = useNavigate();
 
-  const menuItems: { key: string; label: string; disabled?: boolean }[] = [
+  const menuItems = [
     { key: '/', label: 'Dashboard' },
     { key: '/websites', label: 'Websites' },
     { key: '/playground', label: 'Playground' },
     { key: '/contacts', label: 'Contacts' },
     { key: '/users', label: 'Users' },
     { key: '/documents', label: 'Documents' },
-    // V2 pages (plans/PLAN_V2.md). The nav slots exist up front so the header
-    // does not jump when each page lands; they render disabled because a link
-    // to a route that does not exist yet would be a dead link. Each one is
-    // switched back on in the task that creates its page.
-    { key: '/training', label: 'Training', disabled: true },
-    { key: '/handoffs', label: 'Handoffs', disabled: true },
-    { key: '/analytics', label: 'Analytics', disabled: true },
-    { key: '/integrations', label: 'Integrations', disabled: true },
   ];
 
   const dropdownItems: MenuProps['items'] = [
@@ -76,34 +68,22 @@ export function LayoutComponent({ children }: Props) {
         <Space size='large' wrap>
           {isAuthenticated ? (
             <>
-              {menuItems.map((item) =>
-                item.disabled ? (
-                  <Text
-                    key={item.key}
-                    type='secondary'
-                    title='Coming soon'
-                    style={{ cursor: 'not-allowed' }}
-                  >
-                    {item.label}
-                  </Text>
-                ) : (
-                  <Link
-                    key={item.key}
-                    to={item.key}
-                    style={{
-                      fontWeight:
-                        location.pathname === item.key ? '600' : '400',
-                      borderBottom:
-                        location.pathname === item.key
-                          ? '2px solid #000'
-                          : 'none',
-                      paddingBottom: '4px',
-                    }}
-                  >
-                    {item.label}
-                  </Link>
-                ),
-              )}
+              {menuItems.map((item) => (
+                <Link
+                  key={item.key}
+                  to={item.key}
+                  style={{
+                    fontWeight: location.pathname === item.key ? '600' : '400',
+                    borderBottom:
+                      location.pathname === item.key
+                        ? '2px solid #000'
+                        : 'none',
+                    paddingBottom: '4px',
+                  }}
+                >
+                  {item.label}
+                </Link>
+              ))}
               <Dropdown menu={{ items: dropdownItems }} placement='bottomRight'>
                 <Text
                   style={{
