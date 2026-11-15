@@ -152,8 +152,43 @@ export interface ContactList {
   offset: number;
 }
 
+/** One row of a company's settings registry (`GET`/`PUT /api/settings`). */
+export interface Setting {
+  id?: string;
+  company_id?: string;
+  key: string;
+  value: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+/**
+ * Known keys of the public widget config. Every field is optional: the endpoint
+ * only returns allowlisted keys the company actually has a row for, and each V2
+ * feature ships off/empty by default.
+ */
+export interface WidgetSettings {
+  // V1 appearance keys.
+  assistant_name?: string;
+  widget_header_color?: string;
+  widget_footer_color?: string;
+  widget_position?: 'bottom-left' | 'bottom-right';
+  greeting_message?: string;
+  placeholder_text?: string;
+  suggested_questions?: string;
+  // V2 widget-facing keys (`plans/SPEC.md` §9). Booleans are strings here,
+  // like every other setting value.
+  widget_language?: string; // 'auto' or a BCP-47 code
+  widget_ui_strings?: string; // JSON overrides for the widget's own labels
+  widget_logo_url?: string;
+  handoff_enabled?: 'true' | 'false';
+  handoff_label?: string;
+  require_consent?: 'true' | 'false';
+  privacy_policy_url?: string;
+}
+
 /** Public widget config fetched by the embeddable widget (key/value map). */
-export type WidgetConfig = Record<string, string>;
+export type WidgetConfig = Record<string, string> & Partial<WidgetSettings>;
 
 export interface RegisterRequest {
   company_name: string;

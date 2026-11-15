@@ -1,5 +1,5 @@
 import axios, { AxiosInstance } from 'axios';
-import type { ChatResponse, ContactList, ConversationList, ConversationMessages, DashboardStats, FeedbackRequest, LoginResponse, RecentConversations, RegisterRequest, Website, WebsiteQuota, WidgetConfig } from '../types/api';
+import type { ChatResponse, ContactList, ConversationList, ConversationMessages, DashboardStats, FeedbackRequest, LoginResponse, RecentConversations, RegisterRequest, Setting, Website, WebsiteQuota, WidgetConfig } from '../types/api';
 
 // Base API instance with proxy /api -> backend
 const api: AxiosInstance = axios.create({
@@ -72,6 +72,13 @@ export const getWidgetConfig = (websiteId: string) =>
 
 export const ingest = (websiteId: string) =>
   api.post('/ingest', null, { params: { website_id: websiteId } });
+
+// Company settings. `PUT` upserts, so a key added after the company was created
+// still persists; internal keys never come back through the widget config.
+export const getSettings = () => api.get<Setting[]>('/settings');
+
+export const updateSettings = (settings: Pick<Setting, 'key' | 'value'>[]) =>
+  api.put('/settings', settings);
 
 // Conversation history (admin panel)
 export const getConversations = (websiteId: string, params: { limit?: number; offset?: number } = {}) =>
