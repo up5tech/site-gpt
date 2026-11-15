@@ -249,6 +249,85 @@ class PurgeTests(unittest.TestCase):
         self.assertEqual(result["retention_days"], 7)
         self.assertEqual(result["total"], 10)
 
+    def _count_commits(self):
+        """Count commits so batching is observable, not just "it worked"."""
+        counter = {"n": 0}
+        real_commit = self.db.commit
+
+        def commit():
+            counter["n"] += 1
+            real_commit()
+
+        self.db.commit = commit
+        return counter
+
+    def test_deletes_run_in_bounded_batches(self):
+        # Two more expired rows per table (four in total), then one row per
+        # commit: a large tenant must never do one unbounded DELETE.
+        for index, tag in enumerate(("s4", "s5"), start=1):
+            # A slightly different timestamp per seed: `digest_log` is unique on
+            # (company_id, period_start) and these rows must all stay expired.
+            _seed(
+                self.db,
+                self.website,
+                self.company,
+                self.old - timedelta(minutes=index),
+                session_id=tag,
+            )
+        commits = self._count_commits()
+
+        result = retention.purge_company(
+            self.db,
+            self.company.id,
+            days=7,
+            dry_run=False,
+            now=NOW,
+            batch_size=1,
+        )
+
+        self.assertEqual(result["deleted"]["chat_messages"], 4)
+        self.assertEqual(result["total"], 20)
+        # five tables x four rows, one commit each
+        self.assertEqual(commits["n"], 20)
+        # everything expired went, the fresh and the other tenant's rows stayed
+        self.assertEqual(_counts(self.db)["chat_messages"], 2)
+
+    def test_a_larger_batch_takes_fewer_commits_and_deletes_the_same_rows(self):
+        commits = self._count_commits()
+
+        result = retention.purge_company(
+            self.db,
+            self.company.id,
+            days=7,
+            dry_run=False,
+            now=NOW,
+            batch_size=100,
+        )
+
+        self.assertEqual(result["total"], 10)
+        # one batch per table: fewer than the batch size was returned
+        self.assertEqual(commits["n"], 5)
+
+    def test_a_zero_batch_size_falls_back_to_one_row(self):
+        commits = self._count_commits()
+
+        result = retention.purge_company(
+            self.db, self.company.id, days=7, dry_run=False, now=NOW, batch_size=0
+        )
+
+        self.assertEqual(result["total"], 10)
+        self.assertEqual(commits["n"], 10)
+
+    def test_dry_run_never_commits(self):
+        commits = self._count_commits()
+
+        retention.purge_company(
+            self.db, self.company.id, days=7, dry_run=True, now=NOW, batch_size=1
+        )
+
+        self.assertEqual(commits["n"], 0)
+        self.assertEqual(_counts(self.db)["chat_messages"], 4)
+
     def test_only_companies_with_a_policy_are_scheduled(self):
         self.db.add_all(
             [

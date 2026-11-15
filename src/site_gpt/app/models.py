@@ -225,7 +225,13 @@ class Embedding(BaseModel):
 class ChatMessage(BaseModel):
     __tablename__ = "chat_messages"
 
-    __table_args__ = (Index("idx_chat_messages_session_id", "session_id"),)
+    __table_args__ = (
+        Index("idx_chat_messages_session_id", "session_id"),
+        # Retention always filters by website + age, so one composite index serves
+        # the purge (`website_id IN (...) AND created_at < cutoff`) and
+        # website-scoped history reads.
+        Index("idx_chat_messages_website_id_created_at", "website_id", "created_at"),
+    )
 
     session_id: Mapped[str] = mapped_column(String(255), nullable=False)
     message: Mapped[str] = mapped_column(Text, nullable=False)
@@ -242,7 +248,10 @@ class ChatMessage(BaseModel):
 class ChatFeedback(BaseModel):
     __tablename__ = "chat_feedback"
 
-    __table_args__ = (Index("idx_chat_feedback_website_id", "website_id"),)
+    __table_args__ = (
+        Index("idx_chat_feedback_website_id", "website_id"),
+        Index("idx_chat_feedback_website_id_created_at", "website_id", "created_at"),
+    )
 
     website_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("websites.id", ondelete="CASCADE"), nullable=False
@@ -272,6 +281,7 @@ class HandoffRequest(BaseModel):
     __table_args__ = (
         Index("idx_handoff_requests_website_id", "website_id"),
         Index("idx_handoff_requests_status", "status"),
+        Index("idx_handoff_requests_website_id_created_at", "website_id", "created_at"),
     )
 
     website_id: Mapped[uuid.UUID] = mapped_column(
@@ -300,7 +310,11 @@ class DigestLog(BaseModel):
 
     __tablename__ = "digest_log"
 
-    __table_args__ = (UniqueConstraint("company_id", "period_start"),)
+    __table_args__ = (
+        UniqueConstraint("company_id", "period_start"),
+        # The purge filters on `company_id` + `created_at`.
+        Index("idx_digest_log_company_id_created_at", "company_id", "created_at"),
+    )
 
     company_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
@@ -459,6 +473,7 @@ class Contact(BaseModel):
 
     __table_args__ = (
         Index("idx_contacts_website_id", "website_id"),
+        Index("idx_contacts_website_id_created_at", "website_id", "created_at"),
         UniqueConstraint("website_id", "session_id"),
     )
 

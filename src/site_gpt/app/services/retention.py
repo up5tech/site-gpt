@@ -33,6 +33,12 @@ logger = logging.getLogger(__name__)
 # row from making the purge a no-op that looks like it ran.
 MAX_RETENTION_DAYS = 3650
 
+# Rows deleted (and committed) per statement. A tenant with millions of old rows
+# would otherwise hold one transaction — and its locks — for the whole delete,
+# blocking writes and bloating the WAL. Small enough to stay short, large enough
+# that a normal purge is one round trip.
+RETENTION_BATCH_SIZE = 1000
+
 # Tables scoped through the company's websites.
 SCOPED_BY_WEBSITE: tuple[tuple[str, type], ...] = (
     ("chat_messages", models.ChatMessage),
@@ -74,12 +80,53 @@ def company_retention_days(db: Session, company_id: UUID) -> int:
     )
 
 
+def _delete_batch(
+    db: Session,
+    model,
+    filters: list,
+    batch_size: int,
+    dry_run: bool,
+) -> int:
+    """Count what matches (dry run) or delete it a bounded batch at a time.
+
+    Each batch is selected by id and deleted by id, then committed: a tenant with
+    millions of expired rows never holds one long transaction. Postgres has no
+    `DELETE ... LIMIT`, so the id round-trip is how a batch is scoped.
+    """
+    query = db.query(model).filter(*filters)
+    if dry_run:
+        return query.count()
+
+    deleted = 0
+    while True:
+        ids = [
+            row_id
+            for (row_id,) in db.query(model.id)
+            .filter(*filters)
+            .order_by(model.created_at.asc())
+            .limit(batch_size)
+            .all()
+        ]
+        if not ids:
+            break
+        deleted += (
+            db.query(model)
+            .filter(model.id.in_(ids))
+            .delete(synchronize_session=False)
+        )
+        db.commit()
+        if len(ids) < batch_size:
+            break
+    return deleted
+
+
 def purge_company(
     db: Session,
     company_id: UUID,
     days: int | None = None,
     dry_run: bool = True,
     now: datetime | None = None,
+    batch_size: int = RETENTION_BATCH_SIZE,
 ) -> dict:
     """Delete (or count) this company's rows older than `days`.
 
@@ -89,6 +136,7 @@ def purge_company(
     """
     if days is None:
         days = company_retention_days(db, company_id)
+    batch_size = max(1, int(batch_size or 0))
     cutoff = cutoff_for(days, now)
     deleted: dict[str, int] = {name: 0 for name, _ in SCOPED_BY_WEBSITE + SCOPED_BY_COMPANY}
 
@@ -100,23 +148,20 @@ def purge_company(
             .all()
         ]
         for name, model in SCOPED_BY_WEBSITE:
-            query = db.query(model).filter(model.created_at < cutoff)
+            filters = [model.created_at < cutoff]
             if website_ids:
-                query = query.filter(model.website_id.in_(website_ids))
+                filters.append(model.website_id.in_(website_ids))
             else:
                 # No websites means no rows in these tables; an empty `IN ()`
                 # would still be a query, so short-circuit instead.
-                query = query.filter(false())
-            deleted[name] = query.count() if dry_run else query.delete(synchronize_session=False)
+                filters.append(false())
+            deleted[name] = _delete_batch(db, model, filters, batch_size, dry_run)
 
         for name, model in SCOPED_BY_COMPANY:
-            query = db.query(model).filter(
-                model.company_id == company_id, model.created_at < cutoff
-            )
-            deleted[name] = query.count() if dry_run else query.delete(synchronize_session=False)
+            filters = [model.company_id == company_id, model.created_at < cutoff]
+            deleted[name] = _delete_batch(db, model, filters, batch_size, dry_run)
 
         if not dry_run:
-            db.commit()
             logger.info(
                 "retention purge for company %s: %s (cutoff %s)",
                 company_id,

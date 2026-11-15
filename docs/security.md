@@ -173,7 +173,11 @@ the default for every company created before the setting existed). The worker
 queues one purge per such company daily (`RETENTION_CHECK_SECONDS`), and the purge
 deletes rows **strictly older than** `now - retention_days` from `chat_messages`,
 `chat_feedback`, `handoff_requests`, `contacts` and `digest_log`, always through
-that company's websites. Deletion is hard, like the erasure endpoints.
+that company's websites. Deletion is hard, like the erasure endpoints, and runs in
+bounded batches (`RETENTION_BATCH_SIZE`, 1000 rows per statement, each committed
+separately) so a large tenant cannot hold one long transaction. Each of those
+tables carries a `(website_id, created_at)` index (`(company_id, created_at)` for
+`digest_log`) so a batch is an index scan rather than a full-table one.
 
 **Delivery rows.** `integration_deliveries` holds a copy of the event payload so a
 failed send can be retried, so it is cleaned on its own schedule

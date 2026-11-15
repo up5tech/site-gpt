@@ -200,7 +200,7 @@ same registry are seeded for every company but never published.
 | `handoff_email` | **no** | Where handoff requests are emailed; empty means every active admin/manager. |
 | `digest_enabled`, `digest_hour`, `digest_day` | **no** | Weekly digest switch, UTC send hour and week start (default `false` / `9` / `monday`). The worker also needs the global `DIGEST_ENABLED`. |
 | `digest_recipients` | **no** | Comma-separated digest recipients; empty means every active admin/manager. |
-| `retention_days` | **no** | How long visitor data is kept (default `0` = for ever). The worker's daily retention job deletes `chat_messages`, `chat_feedback`, `handoff_requests`, `contacts` and `digest_log` rows older than this, per company. `POST /api/privacy/retention` previews it (`dry_run` defaults to `true`) or applies it on demand. |
+| `retention_days` | **no** | How long visitor data is kept (default `0` = for ever). The worker's daily retention job deletes `chat_messages`, `chat_feedback`, `handoff_requests`, `contacts` and `digest_log` rows older than this, per company, in batches of 1000 rows per transaction. `POST /api/privacy/retention` previews it (`dry_run` defaults to `true`) or applies it on demand. |
 | `llm_provider`, `llm_model` | **no** | Chat model pair, written from **Settings → Model**. Only pairs listed in `services/llm.py::ALLOWED_CHAT_MODELS` are honoured (`fast` = GPT-4.1 mini, `accurate` = GPT-4.1, empty = the `LLM_AI` / `LLM_MODEL` defaults); anything else silently falls back to the environment. Embeddings are not switched here. |
 
 Keys understood by `widget_ui_strings`: `clear`, `send`, `thinking`, `sources`,
