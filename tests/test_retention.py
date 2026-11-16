@@ -11,6 +11,7 @@ import shutil
 import tempfile
 import unittest
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from unittest.mock import patch
 from uuid import uuid4
 
@@ -236,6 +237,43 @@ class DeleteInBatchesTests(unittest.TestCase):
 
         self.assertEqual(deleted, 0)
         self.assertEqual(commits["n"], 0)
+
+
+class RetentionIndexTests(unittest.TestCase):
+    """The purge's filters must stay backed by an index, not just work."""
+
+    def test_attachments_created_at_is_indexed(self):
+        # `purge_attachments` filters and orders by this column, so without the
+        # index every batch reads the whole upload table.
+        index = next(
+            (
+                item
+                for item in models.Attachment.__table__.indexes
+                if item.name == "idx_attachments_created_at"
+            ),
+            None,
+        )
+
+        self.assertIsNotNone(index, "Attachment must declare idx_attachments_created_at")
+        self.assertEqual(
+            [column.name for column in index.columns], ["created_at"]
+        )
+
+    def test_the_index_migration_builds_it_concurrently(self):
+        # A plain CREATE INDEX locks writes on the upload table for the whole
+        # build; the retention indexes are all built CONCURRENTLY.
+        path = (
+            Path(__file__).resolve().parent.parent
+            / "alembic"
+            / "versions"
+            / "a4c1e9d7f320_v2_attachment_created_at_index.py"
+        )
+        source = path.read_text(encoding="utf-8")
+
+        self.assertIn("idx_attachments_created_at", source)
+        self.assertIn("postgresql_concurrently=True", source)
+        self.assertIn("autocommit_block()", source)
+        self.assertIn("down_revision: Union[str, Sequence[str], None] = 'e7b3c94a1d52'", source)
 
 
 class UploadRetentionTests(unittest.TestCase):
