@@ -565,12 +565,71 @@ def payload_purged(delivery: models.IntegrationDelivery) -> bool:
     return not (delivery.payload or "").strip()
 
 
+# Rows changed per statement by the retention pass. The same reason as the
+# visitor-data purge: a single delete over years of deliveries holds one
+# transaction (and its locks) for the whole sweep and grows the WAL with it.
+DELIVERY_PURGE_BATCH_SIZE = 1000
+
+
+def _batch_ids(db: Session, filters: list, batch_size: int) -> list:
+    """The next batch of ids, oldest first. Postgres has no `DELETE ... LIMIT`."""
+    return [
+        row_id
+        for (row_id,) in db.query(models.IntegrationDelivery.id)
+        .filter(*filters)
+        .order_by(models.IntegrationDelivery.created_at.asc())
+        .limit(batch_size)
+        .all()
+    ]
+
+
+def _clear_dead_payloads(
+    db: Session, filters: list, batch_size: int
+) -> int:
+    """Blank the payload of each dead row, one bounded batch at a time."""
+    cleared = 0
+    while True:
+        ids = _batch_ids(db, filters, batch_size)
+        if not ids:
+            break
+        cleared += (
+            db.query(models.IntegrationDelivery)
+            .filter(models.IntegrationDelivery.id.in_(ids))
+            .update(
+                {models.IntegrationDelivery.payload: ""}, synchronize_session=False
+            )
+        )
+        db.commit()
+        if len(ids) < batch_size:
+            break
+    return cleared
+
+
+def _delete_settled(db: Session, filters: list, batch_size: int) -> int:
+    """Delete each batch of settled rows and commit it before the next."""
+    deleted = 0
+    while True:
+        ids = _batch_ids(db, filters, batch_size)
+        if not ids:
+            break
+        deleted += (
+            db.query(models.IntegrationDelivery)
+            .filter(models.IntegrationDelivery.id.in_(ids))
+            .delete(synchronize_session=False)
+        )
+        db.commit()
+        if len(ids) < batch_size:
+            break
+    return deleted
+
+
 def purge_deliveries(
     db: Session,
     days: int | None = None,
     now: datetime | None = None,
     dry_run: bool = False,
     company_id: UUID | None = None,
+    batch_size: int = DELIVERY_PURGE_BATCH_SIZE,
 ) -> dict[str, Any]:
     """Drop the visitor data that delivery rows carry.
 
@@ -584,9 +643,13 @@ def purge_deliveries(
       `created_at < cutoff`). `pending` rows are never deleted — they are work
       that has not happened yet. A window of 0 disables deletion only; the payload
       clear still runs.
+
+    Both steps run in `DELIVERY_PURGE_BATCH_SIZE` batches, each committed before the
+    next, so a big backfill cannot hold one long transaction.
     """
     days = config.DELIVERY_RETENTION_DAYS if days is None else days
     now = now or datetime.now(UTC)
+    batch_size = max(1, int(batch_size or 0))
     cutoff = delivery_retention_cutoff(days, now)
 
     def rows(model):
@@ -597,24 +660,31 @@ def purge_deliveries(
             query = query.filter(model.company_id == company_id)
         return query
 
-    dead = rows(models.IntegrationDelivery).filter(
-        models.IntegrationDelivery.status == "dead"
-    )
-    carried = dead.filter(models.IntegrationDelivery.payload != "")
-    cleared = carried.count() if dry_run else carried.update(
-        {models.IntegrationDelivery.payload: ""}, synchronize_session=False
+    dead_filters = [models.IntegrationDelivery.status == "dead"]
+    if company_id is not None:
+        dead_filters.append(models.IntegrationDelivery.company_id == company_id)
+    carried = dead_filters + [models.IntegrationDelivery.payload != ""]
+    cleared = (
+        rows(models.IntegrationDelivery).filter(*carried).count()
+        if dry_run
+        else _clear_dead_payloads(db, carried, batch_size)
     )
 
     deleted = 0
     if cutoff is not None:
-        settled = rows(models.IntegrationDelivery).filter(
+        settled_filters = [
             models.IntegrationDelivery.status.in_(("delivered", "dead")),
             models.IntegrationDelivery.created_at < cutoff,
+        ]
+        if company_id is not None:
+            settled_filters.append(models.IntegrationDelivery.company_id == company_id)
+        deleted = (
+            rows(models.IntegrationDelivery).filter(*settled_filters).count()
+            if dry_run
+            else _delete_settled(db, settled_filters, batch_size)
         )
-        deleted = settled.count() if dry_run else settled.delete(synchronize_session=False)
 
     if not dry_run:
-        db.commit()
         if cleared or deleted:
             logger.info(
                 "delivery retention: cleared %s dead payload(s), deleted %s settled row(s)",

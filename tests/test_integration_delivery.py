@@ -695,6 +695,65 @@ class DeliveryRetentionTests(unittest.TestCase):
         self.assertEqual(caught.exception.status_code, 409)
         self.assertIn("purged", caught.exception.detail)
 
+    def _count_commits(self):
+        counter = {"n": 0}
+        real_commit = self.db.commit
+
+        def commit():
+            counter["n"] += 1
+            real_commit()
+
+        self.db.commit = commit
+        return counter
+
+    def test_settled_rows_are_deleted_in_bounded_batches(self):
+        for age in range(40, 45):
+            self._delivery(self.integration, "delivered", age)
+        commits = self._count_commits()
+
+        result = integrations.purge_deliveries(
+            self.db, days=30, now=self.now, batch_size=2
+        )
+
+        self.assertEqual(result["deleted"], 5)
+        # 2 + 2 + 1: every batch commits before the next one starts.
+        self.assertEqual(commits["n"], 3)
+        self.assertEqual(self.db.query(models.IntegrationDelivery).count(), 0)
+
+    def test_dead_payloads_are_cleared_in_bounded_batches(self):
+        for _ in range(5):
+            self._delivery(self.integration, "dead", 0)
+        commits = self._count_commits()
+
+        result = integrations.purge_deliveries(
+            self.db, days=30, now=self.now, batch_size=2
+        )
+
+        self.assertEqual(result["cleared_payloads"], 5)
+        self.assertEqual(result["deleted"], 0)
+        self.assertEqual(commits["n"], 3)
+        self.assertTrue(
+            all(
+                row.payload == ""
+                for row in self.db.query(models.IntegrationDelivery).all()
+            )
+        )
+
+    def test_a_zero_batch_size_falls_back_to_one_row(self):
+        for age in (40, 41, 42):
+            self._delivery(self.integration, "dead", age)
+        commits = self._count_commits()
+
+        result = integrations.purge_deliveries(
+            self.db, days=30, now=self.now, batch_size=0
+        )
+
+        # Three payload clears plus three deletes, one row each.
+        self.assertEqual(result["cleared_payloads"], 3)
+        self.assertEqual(result["deleted"], 3)
+        self.assertEqual(commits["n"], 6)
+        self.assertEqual(self.db.query(models.IntegrationDelivery).count(), 0)
+
     def test_bad_window_values_mean_keep_for_ever(self):
         for raw in (None, "", "0", "-3", "soon"):
             self.assertEqual(integrations.parse_delivery_retention_days(raw), 0, raw)
