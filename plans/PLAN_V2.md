@@ -3,12 +3,12 @@
 | | |
 |---|---|
 | Version | **V2** — implements `plans/SPEC.md` |
-| Status | Waves 0–3 complete (gates V2-0G … V2-3G); Wave 4 next |
+| Status | **V2 complete** — 39/39 tasks, 5/5 gates signed off; tagged `v2` = `179a112` (2026-11-15). Post-tag hardening **V2.1** then landed on `feat/v2` (§14) |
 | Created | 2026-11-14 |
 | Derived from | `plans/SPEC.md` (requirements + design), `plans/PLAN_V1.md` (V1 baseline) |
 | V1 baseline | commit `e23faba` (the existing `v1` tag: three commits past the original `f571f95` freeze — atomic ingest claim, 409 UI, ESLint 9 lint script), Alembic head `07f83918a289` |
 | Scope | 10 features (F1–F10), 7 ADRs, 5 migrations (M1–M5), 5 waves, 39 tasks + 5 gates |
-| Out of scope | SOC 2 / HIPAA / DPA certification, trial & pricing, live-agent inbox, retention purge, LLM topic clustering, Redis rate limiter, signed session tokens |
+| Out of scope | SOC 2 / HIPAA / DPA certification, trial & pricing, live-agent inbox, LLM topic clustering, Redis rate limiter. Retention purge and signed session tokens were out of *V2*'s scope and shipped afterwards as **V2.1** (§14) |
 
 ---
 
@@ -461,6 +461,16 @@ a key store before it can authenticate anything. It chains directly from the V1
 head `07f83918a289`, so the remaining migrations must chain from whatever the
 current head is (autogenerate does this) rather than from the IDs listed here.
 
+**Post-tag (V2.1) revisions — not part of the V2 ledger.** Ten further revisions
+continue the chain from `94ca756068a7` to the current head `c9d3e5a71b28`:
+`5fbe6ce28d9b` (M6, `session_tokens`), `b7d41c9e2f10` (`integration_deliveries`),
+`d2f5a81c9b74` and `e7b3c94a1d52` (retention and delivery-retention indexes, built
+`CONCURRENTLY`), `a4c1e9d7f320`, `c3f8a2b91d47` and `e2a7c5d913f6` (single-column
+and composite retention indexes), `d5b9c4e2a87f` and `f7c1d84b2e39` (drop the
+indexes a composite now covers), ending with `c9d3e5a71b28`
+(`extra_documents(website_id, name)`). All are additive or index-only and none
+touches `embeddings`, so the no-re-ingest rule still holds. See §14.
+
 For **each** migration:
 
 ```bash
@@ -567,18 +577,58 @@ internal keys; `DIGEST_ENABLED=false` → no digest loop.
 | 3 — Integrations/API (F7–F8) | 9 | 9 / 9 | ☑ V2-3G |
 | 4 — Privacy/hardening/release (F9–F10) | 7 | 7 / 7 | ☑ V2-4G |
 | **Total** | **39 tasks + 5 gates** | **39 / 39** | **V2 complete — `v2` tagged; provider/browser-blocked checks recorded per task** |
+| **V2.1 — post-tag hardening** | **46 commits / 10 revisions** | **complete on `feat/v2`** | ☐ not tagged yet — release steps in §14 |
+
+**Release sign-off, stated honestly.** Four gate items could not be executed in
+the environment V2 was verified in — no reachable LLM/embedding provider (Ollama
+answered `502`), no SMTP server, no browser. They therefore stay unticked in the
+wave text, and the `v2` tag records that they were *reviewed and accepted as
+environment-blocked*, not that they passed: V2-0G (a live chat and SSE stream on
+a V1 embed), V2-1G (the legacy embed and V1 regression checks in a browser) and
+V2-2G (the full end-to-end smoke, which needs a real answer). Run them where a
+provider and a browser exist before calling V2 verified end to end.
 
 ---
 
 ## 13. Definition of done — V2
 
-- [x] All 39 tasks ticked and all 5 gates passed.
-- [x] 10/10 SPEC features F1–F10 implemented; 7 ADRs honoured; 5 migrations applied. — M1–M5 all applied, single head `94ca756068a7`.
+- [x] All 39 tasks ticked and all 5 gates signed off — the four provider/browser-blocked items are accepted as such (§12), not silently passed.
+- [x] 10/10 SPEC features F1–F10 implemented; 7 ADRs honoured; 5 migrations applied. — M1–M5 all applied, single head `94ca756068a7` at the tag, `c9d3e5a71b28` after the V2.1 revisions (§14).
 - [x] 15/19 SiteGPT features at full parity; the remaining 4 documented as legal/commercial N/A in `docs/security.md`. — features 2, 3, 5, 8, 9, 11, 12, 13, 17 moved to ✅; 15 is technical-only; 14/16/19 are legal N/A.
 - [x] Zero widget backward-compatibility breaks; zero changes to `EMBEDDING_DIMENSIONS`; zero re-ingest required.
 - [x] Every feature off by default (settings row or env flag); with all flags off, behaviour matches V1 except the intended unconditional `SYSTEM_PROMPT` language rule (V2-10, §4.10). — checked on a fresh company in the release gate.
 - [x] Both suites green (`unittest discover` + `node --test tests/*.mjs`); builds green; `trail build` run; docs consistent.
 - [x] `git tag v2` created and `README.md` describes V2 as the current version.
+- [x] Post-tag hardening shipped as **V2.1** (§14): K4 session tokens (M6), K5 delivery retry/dead-letter with retention, K6 per-company retention purge, plus six index revisions; 35 modules / 406 tests and 24 widget checks green, single head `c9d3e5a71b28`.
+
+---
+
+## 14. Post-tag hardening — V2.1
+
+`v2` closed the planned scope; **46 commits after the tag** close the risks V2 had
+only documented. They are **V2.1**, not V3:
+
+- no V2 scope item changes and no shipped V2 feature is reworked — each commit
+  closes an accepted risk (K4, K5, K6) or makes an existing query cheaper;
+- the schema continues from the V2 head `94ca756068a7` instead of starting a new
+  baseline, and every feature keeps its off-by-default rule;
+- V3 stays reserved for what V2 deferred *by decision*: Redis rate limiting, LLM
+  topic clustering, the live-agent inbox and the SOC 2 work.
+
+| Item | What shipped | Revisions |
+|---|---|---|
+| K4 / M6 | `session_tokens`: mint, rotate, an absolute `SESSION_TOKEN_MAX_LIFETIME_SECONDS` ceiling rotation cannot move, `POST /api/session-token`, widget sends `X-Session-Token`; refusals carry a `reason` (`session_expired`, `session_claimed`, `invalid_token`, `token_required`) and the widget resets and re-mints only on `session_expired` | `5fbe6ce28d9b` |
+| K5a/b/c | `integration_deliveries`: every event becomes a row *before* the first send, each retry claims one row with `FOR UPDATE SKIP LOCKED`, backoff then `dead`, resend from `/integrations` claim-first (the loser gets 409) | `b7d41c9e2f10` |
+| K5d | delivery retention: a dead row's payload is cleared at once, settled rows are deleted after `DELIVERY_RETENTION_DAYS` in 1000-row batches, hourly | `e7b3c94a1d52` |
+| K6 | per-company `retention_days` purge of messages, feedback, handoffs, contacts, digest log, expired documents and their uploads, with a dry-run preview and **Apply purge now** in Settings → Privacy | `d2f5a81c9b74`, `a4c1e9d7f320`, `c3f8a2b91d47`, `e2a7c5d913f6`, `d5b9c4e2a87f`, `f7c1d84b2e39` |
+| Perf | retention batch selects answered from their indexes (built `CONCURRENTLY`), `extra_documents(website_id, name)` for the worker ingest and the QA lookup | `c9d3e5a71b28` |
+
+**State:** 46 commits on `feat/v2` (HEAD `e5d8f94`), 10 revisions, single head
+`c9d3e5a71b28`; `unittest discover` 406 tests, `node --test tests/*.mjs` 24
+checks, frontend build + lint and both imports green; `README.md`, `AGENTS.md`,
+`docs/security.md`, `plans/SPEC.md` and this section agree with the code.
+**Still open, and not code:** push `feat/v2`, merge it into `master` (a
+fast-forward — `master` is `a1073fe`, an ancestor of this branch), tag `v2.1`.
 
 ---
 

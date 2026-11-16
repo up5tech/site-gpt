@@ -211,7 +211,7 @@ Keys understood by `widget_ui_strings`: `clear`, `send`, `thinking`, `sources`,
 `talkToHuman`, `handoffThanks`, `handoffFailed`, `consentAgree`,
 `privacyPolicy`, `consentRequired`.
 
-### V2 highlights
+### V2 / V2.1 highlights
 
 - **Replies in the visitor's language** — the chat prompt detects the question's
   language and answers in it, translating retrieved context when needed. Works on
@@ -263,6 +263,14 @@ Keys understood by `widget_ui_strings`: `clear`, `send`, `thinking`, `sources`,
   contact (`consent_at`) when `require_consent` is on. What is **not** provided is
   stated plainly in [`docs/security.md`](docs/security.md): no SOC 2 Type II, no
   HIPAA BAA, no signed DPA, no GDPR certification.
+- **Session tokens (K4)** — the widget mints a per-session token
+  (`POST /api/session-token`) and sends it as `X-Session-Token` when it restores
+  history or contact details, so the session id alone reads nothing once a session
+  is claimed. Only a hash is stored; a value expires after
+  `SESSION_TOKEN_TTL_SECONDS` and the whole chain after
+  `SESSION_TOKEN_MAX_LIFETIME_SECONDS`. `SESSION_TOKEN_MODE=compat` (the default)
+  keeps older embeds working; `enforce` requires the token everywhere. See
+  [`docs/security.md`](docs/security.md) §5.1.
 - **Admin pages** — `/websites`, `/documents`, `/contacts`, `/handoffs`,
   `/feedback`, `/analytics`, `/integrations`, `/users` and `/settings` (with the
   API keys tab). The widget itself has no separate build step: `GET /widget.js`.
@@ -338,34 +346,42 @@ Run uvicorn behind nginx/Caddy/Traefik terminating **TLS 1.2+**:
 ```bash
 # fresh database: create it and install the extension first
 # CREATE EXTENSION IF NOT EXISTS vector;
-uv run alembic upgrade head      # head is 07f83918a289 (contacts)
+uv run alembic upgrade head      # head is c9d3e5a71b28 (extra_documents website index)
 ```
 
 The migration chain is linear from that head; never edit an already-applied revision.
 
-### 4. Accepted V1 limitations
+### 4. Known limitations
 
-These are known, documented and deliberately not fixed in V1 (see `plans/PLAN_V1.md` §7):
+These are the known limitations. K4 was mitigated and K8 closed in V2/V2.1; K5 and
+K18 remain accepted. [`docs/security.md`](docs/security.md) §5 carries the same
+list with the residual risk spelled out:
 
 | ID | Limitation | Impact / mitigation |
 |---|---|---|
-| K4 | `GET /api/conversations/{session_id}` and `GET /api/contacts/{session_id}` are **public by design** — the widget restores history and lead details without a login. A guessed `session_id` combined with a known `website_id` exposes that session's transcript or contact details. | Session ids are random UUIDs; treat transcripts and captured leads as non-secret. Requiring auth here would break the widget, so the fix is deferred to V2. |
+| K4 | `GET /api/conversations/{session_id}` and `GET /api/contacts/{session_id}` are **public by design** — the widget restores history and lead details without a login. A guessed `session_id` combined with a known `website_id` used to expose that session's transcript or contact details. | **Mitigated in V2.1** by a per-session token (`X-Session-Token`, stored only as a hash): once a session is claimed, its id alone reads nothing. Residual: `SESSION_TOKEN_MODE=compat` (the default) still allows a tokenless read of an *unclaimed* session so older embed snippets keep working, and sessions that already had data before the change can never be claimed — switch to `enforce` once your embeds ship the new snippet. See [`docs/security.md`](docs/security.md) §5.1. |
 | K5 | `services/ratelimit.py` is an in-memory fixed window, **per process**. Limits reset on restart and are not shared across workers. | Run one API process, or put a real limiter (Redis / edge) in front before scaling horizontally. |
-| K18 | The widget's Origin/Referer check is **soft**: requests with no `Origin`/`Referer` (non-browser clients, forged headers, `referrerpolicy="no-referrer"`) are still accepted, and loopback origins are always allowed so local demos work. | It blocks ordinary cross-site embedding (copying a `website_id` into another page), not a determined API caller. A signed per-website embed token would close it and needs a schema change, so it is deferred to V2. |
-| K8 | 👍/👎 feedback is stored in `chat_feedback` and nothing else: it never influences answers and there is no review screen. | Inspect rows in the DB. Feeding approved answers back into RAG is a V2 feature. |
+| K18 | The widget's Origin/Referer check is **soft**: requests with no `Origin`/`Referer` (non-browser clients, forged headers, `referrerpolicy="no-referrer"`) are still accepted, and loopback origins are always allowed so local demos work. | It blocks ordinary cross-site embedding (copying a `website_id` into another page), not a determined API caller. A signed per-website embed token would close it and needs a schema change; it is still open after V2 and V2.1 (the session token of K4 is per session, not per website). |
+| K8 | 👍/👎 feedback is stored in `chat_feedback` and never influences answers on its own. | Closed in V2: an admin reviews it in `/training`, corrects an answer and approves the pair; approved pairs are re-embedded into one `__qa_training__` document per website (`POST /api/feedback/rebuild`). Nothing changes without approval. |
 
 Also note `/docs` and `/openapi.json` are enabled and unauthenticated (FastAPI default) —
 restrict them at the proxy if that matters to you.
 
-## Upgrading from V1 to V2
+## Upgrading from V1 (V2 and V2.1)
 
-1. `uv run alembic upgrade head` — five migrations, chain
-   `07f83918a289 → c41d7e8a9f20 (api_keys) → 2f95a35b9d5d → 5fe07e597f12 → bebd929605ed → 94ca756068a7`.
+1. `uv run alembic upgrade head` — 15 new revisions on top of the V1 head, ending
+   at `c9d3e5a71b28`:
+   `07f83918a289 → c41d7e8a9f20 (api_keys) → 2f95a35b9d5d → 5fe07e597f12 → bebd929605ed → 94ca756068a7 (V2) → 5fbe6ce28d9b (session tokens) → b7d41c9e2f10 (deliveries) → d2f5a81c9b74 → e7b3c94a1d52 → a4c1e9d7f320 → c3f8a2b91d47 → d5b9c4e2a87f → e2a7c5d913f6 → f7c1d84b2e39 → c9d3e5a71b28`.
    They only add tables, columns and indexes; no data migration and **no re-ingest**
-   (the embedded `EMBEDDING_DIMENSIONS` is unchanged).
+   (the embedded `EMBEDDING_DIMENSIONS` is unchanged). The index revisions build
+   `CONCURRENTLY`, so they are not atomic — an interrupted build leaves an invalid
+   index: drop it with `DROP INDEX CONCURRENTLY` and re-run (`AGENTS.md`).
 2. Set `API_KEY_PEPPER` before minting any key, `INTEGRATION_WEBHOOK_SECRET`
    before enabling a webhook, and `JWT_SECRET_KEY` + `CORS_ORIGINS` as before —
-   see [`docs/security.md`](docs/security.md).
+   see [`docs/security.md`](docs/security.md). Leave `SESSION_TOKEN_MODE` at
+   `compat` until your embed snippets carry the token; `DELIVERY_RETENTION_DAYS`
+   and `RETENTION_CHECK_SECONDS` only matter once retries or a `retention_days`
+   policy are in use.
 3. Every V2 feature is off by default (a `settings` row or an env flag), so an
    untouched deployment behaves like V1. The one deliberate exception is the
    prompt's reply-in-the-question's-language rule.

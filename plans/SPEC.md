@@ -2,8 +2,8 @@
 
 | | |
 |---|---|
-| Version | **V2** — the next version. The current code is **V1** (`plans/PLAN_V1.md`). |
-| Status | Draft — awaiting review |
+| Version | **V2** — implemented and released as tag `v2` (`179a112`, 2026-11-15); post-tag hardening **V2.1** shipped after it (`plans/PLAN_V2.md` §14). |
+| Status | Implemented — F1–F10 delivered in V2, K4/K5/K6 closed in V2.1; this document is the reference for both |
 | Created | 2026-11-14 |
 | Scope | `site-gpt` monorepo (FastAPI backend + React admin + embeddable `widget.js`) |
 | Reference | <https://sitegpt.ai/features> (19 listed features) |
@@ -776,18 +776,19 @@ old rows).
 
 ## 13. Verification
 
-`tests/` is **not** empty: it holds 31 `unittest` modules (settings registry,
+`tests/` is **not** empty: it holds 35 `unittest` modules (settings registry,
 RAG search, ingest, quotas, rate limits, widget config/asset/snippet, worker,
-and the V2 services: digest, Q&A training, integrations, API keys) running 277
-tests, plus 5 widget `.mjs` files with 18 `node:test` checks. `AGENTS.md`
+and the V2/V2.1 services: digest, Q&A training, integrations, API keys, session
+tokens, retention) running 406 tests, plus 6 widget `.mjs` files with 24
+`node:test` checks. `AGENTS.md`
 documents both commands; there is no npm `test` script.
 
 ```bash
 source .venv/bin/activate
 uv run python -c "import site_gpt.app.main"
 uv run alembic upgrade head
-uv run python -m unittest discover -s tests -v     # 31 modules / 277 tests today
-node --test tests/*.mjs                            # 5 widget files / 18 checks
+uv run python -m unittest discover -s tests -v     # 35 modules / 406 tests today
+node --test tests/*.mjs                            # 6 widget files / 24 checks
 uv run uvicorn site_gpt.app.main:app --reload      # :8000
 uv run python -m site_gpt.app.worker               # ingest + digest loops
 cd frontend && npm run build && npm run lint
