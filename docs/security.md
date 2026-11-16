@@ -169,7 +169,7 @@ an *unclaimed* session is allowed; see §5 for the trade-off.
 | `integrations` | Provider config **including credentials** | Credentials, not personal data |
 | `integration_deliveries` | Event payload (may contain a lead's name/email), status, attempts, scrubbed error | Personal data copied out of `contacts` for retry. A **dead** row's payload is cleared by the worker; settled rows are deleted after `DELIVERY_RETENTION_DAYS` (default 30). Not governed by the per-company `retention_days` |
 | `digest_log` | Which weekly period was sent to whom | Recipient personal data |
-| `uploads/` | Imported source files | Depends on the file |
+| `uploads/` | Imported source files, one per `attachments` row | Depends on the file. An expired upload loses both its row and its file under the company's `retention_days` |
 
 **Retention.** A company can set `retention_days` (0 or unset = keep for ever,
 the default for every company created before the setting existed). The worker
@@ -215,7 +215,18 @@ never deletes, so a policy can be tried before it is saved or ever applied; the
 same call accepts an arbitrary `retention_days`, so an owner can ask "what would 7
 days keep?" without changing the stored policy.
 
-What a policy does *not* cover yet: uploaded files under `uploads/`.
+**Uploads.** A file under `uploads/` is only reachable through its `attachments`
+row, so the same policy removes both: `purge_attachments` deletes rows older than
+the cutoff and then unlinks their files, in the same bounded batches as the rest of
+the purge. The row is scoped through its `extra_documents` owner, or — for an
+upload that was never attached — through the user who uploaded it. Order matters
+and is deliberate: the file is removed **after** the batch commits, so a failed
+commit never leaves a row pointing at bytes that are already gone; a file that is
+missing or cannot be removed is logged and skipped rather than failing the purge,
+and a `file_url` containing `..` is refused so a purge cannot touch anything
+outside `uploads/`. Both cases show up as `attachments` in the preview's per-table
+counts. Uploads with neither a document nor a user are left alone: guessing their
+tenant would risk deleting another company's data.
 
 ## 5. Accepted risks
 

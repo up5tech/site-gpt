@@ -201,7 +201,7 @@ same registry are seeded for every company but never published.
 | `handoff_email` | **no** | Where handoff requests are emailed; empty means every active admin/manager. |
 | `digest_enabled`, `digest_hour`, `digest_day` | **no** | Weekly digest switch, UTC send hour and week start (default `false` / `9` / `monday`). The worker also needs the global `DIGEST_ENABLED`. |
 | `digest_recipients` | **no** | Comma-separated digest recipients; empty means every active admin/manager. |
-| `retention_days` | **no** | How long visitor data is kept (default `0` = for ever). The worker's daily retention job deletes `chat_messages`, `chat_feedback`, `handoff_requests`, `contacts` and `digest_log` rows older than this, per company, in batches of 1000 rows per transaction. Set it, and press **Preview purge** to see the per-table counts first, in Settings → Privacy; the same preview is `POST /api/privacy/retention` (`dry_run` defaults to `true`). |
+| `retention_days` | **no** | How long visitor data is kept (default `0` = for ever). The worker's daily retention job deletes `chat_messages`, `chat_feedback`, `handoff_requests`, `contacts`, `digest_log` and `attachments` rows older than this, per company, in batches of 1000 rows per transaction — an expired attachment takes its file under `uploads/` with it. Set it, and press **Preview purge** to see the per-table counts first, in Settings → Privacy; the same preview is `POST /api/privacy/retention` (`dry_run` defaults to `true`). |
 | `llm_provider`, `llm_model` | **no** | Chat model pair, written from **Settings → Model**. Only pairs listed in `services/llm.py::ALLOWED_CHAT_MODELS` are honoured (`fast` = GPT-4.1 mini, `accurate` = GPT-4.1, empty = the `LLM_AI` / `LLM_MODEL` defaults); anything else silently falls back to the environment. Embeddings are not switched here. |
 
 Keys understood by `widget_ui_strings`: `clear`, `send`, `thinking`, `sources`,
@@ -256,8 +256,8 @@ Keys understood by `widget_ui_strings`: `clear`, `send`, `thinking`, `sources`,
   stores for one website (`GET /api/privacy/export`) and erase a session for real:
   `DELETE /api/privacy/conversations/{sid}` removes its messages, ratings and
   handoffs,   `DELETE /api/privacy/contacts/{sid}` removes the lead and its handoffs.
-  A retention policy (`retention_days`) makes the worker delete expired rows
-  daily; `POST /api/privacy/retention` previews the same purge with `dry_run`
+  A retention policy (`retention_days`) makes the worker delete expired rows and
+  their uploaded files daily; `POST /api/privacy/retention` previews the same purge with `dry_run`
   before anything is removed.
   Both are company-scoped and 404 on a foreign website. Consent is recorded per
   contact (`consent_at`) when `require_consent` is on. What is **not** provided is
