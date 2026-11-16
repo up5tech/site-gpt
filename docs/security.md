@@ -196,9 +196,15 @@ failed send can be retried, so it is cleaned on its own schedule
   preview or trigger it with `POST /api/integrations/deliveries/purge`
   (`dry_run` defaults to true, company-scoped).
 
-What a policy does *not* cover yet: uploaded files under `uploads/`. `POST /api/privacy/retention` with `dry_run: true` (the default)
-counts what would go without deleting anything, and accepts `retention_days` as an
-override for a what-if preview.
+Both values are set from the dashboard: **Settings → Privacy** has the
+`retention_days` field and a **Preview purge** button, which calls
+`POST /api/privacy/retention` with `dry_run: true` (the default) and the day count
+currently in the form, then shows the per-table counts and the cutoff. The preview
+never deletes, so a policy can be tried before it is saved or ever applied; the
+same call accepts an arbitrary `retention_days`, so an owner can ask "what would 7
+days keep?" without changing the stored policy.
+
+What a policy does *not* cover yet: uploaded files under `uploads/`.
 
 ## 5. Accepted risks
 
