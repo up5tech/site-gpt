@@ -142,10 +142,6 @@ def delete_in_batches(
     return deleted
 
 
-# Kept as the local name this module's purge was written against.
-_delete_batch = delete_in_batches
-
-
 def _attachment_scope(db: Session, company_id: UUID, cutoff: datetime):
     """This company's attachments older than the cutoff.
 
@@ -364,11 +360,15 @@ def purge_company(
                 # No websites means no rows in these tables; an empty `IN ()`
                 # would still be a query, so short-circuit instead.
                 filters.append(false())
-            deleted[name] = _delete_batch(db, model, filters, batch_size, dry_run)
+            deleted[name] = delete_in_batches(
+                db, model, filters, batch_size, dry_run
+            )
 
         for name, model in SCOPED_BY_COMPANY:
             filters = [model.company_id == company_id, model.created_at < cutoff]
-            deleted[name] = _delete_batch(db, model, filters, batch_size, dry_run)
+            deleted[name] = delete_in_batches(
+                db, model, filters, batch_size, dry_run
+            )
 
         # Uploaded files and the rows that point at them, then the documents
         # themselves: an expired upload must stop answering questions, not just
