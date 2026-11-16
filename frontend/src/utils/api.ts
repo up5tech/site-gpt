@@ -167,6 +167,14 @@ export const previewRetentionPurge = (retentionDays: number) =>
     retention_days: retentionDays,
   });
 
+// The destructive half of the same call: `dry_run: false` deletes now instead of
+// waiting for the daily worker. The UI only reaches this behind a confirmation.
+export const applyRetentionPurge = (retentionDays: number) =>
+  api.post<RetentionPurgeResult>('/privacy/retention', {
+    dry_run: false,
+    retention_days: retentionDays,
+  });
+
 // Conversation history (admin panel)
 export const getConversations = (websiteId: string, params: { limit?: number; offset?: number } = {}) =>
   api.get<ConversationList>('/conversations', {

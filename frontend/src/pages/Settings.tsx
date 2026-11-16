@@ -29,6 +29,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { RetentionPurgeResult, Website } from '../types/api';
 import api, {
+  applyRetentionPurge,
   getApiErrorMessage,
   getSettings,
   previewRetentionPurge,
@@ -236,7 +237,7 @@ interface RetentionFormValues {
 
 export function Settings() {
   const { user, fetchUser } = useAuth();
-  const { message } = useApp();
+  const { message, modal } = useApp();
   const [profileForm] = Form.useForm();
   const [appearanceForm] = Form.useForm();
   const [modelForm] = Form.useForm();
@@ -248,6 +249,9 @@ export function Settings() {
   const [retentionPreviewing, setRetentionPreviewing] = useState(false);
   const [retentionPreview, setRetentionPreview] =
     useState<RetentionPurgeResult | null>(null);
+  const [retentionApplied, setRetentionApplied] =
+    useState<RetentionPurgeResult | null>(null);
+  const [retentionApplying, setRetentionApplying] = useState(false);
   const [websites, setWebsites] = useState<Website[]>([]);
   const [selectedWebsiteId, setSelectedWebsiteId] = useState<string>('');
   const [preview, setPreview] = useState(buildPreview(DEFAULT_APPEARANCE));
@@ -438,6 +442,44 @@ export function Settings() {
     } finally {
       setRetentionPreviewing(false);
     }
+  };
+
+  // Deleting is irreversible, so it goes through a confirmation that names the
+  // policy being applied; the counts after it come from the same response shape
+  // as the preview.
+  const handleRetentionApply = () => {
+    const days = Number(retentionForm.getFieldValue('retention_days') ?? 0);
+    if (!Number.isFinite(days) || days < 0) {
+      message.error('Enter a number of days first');
+      return;
+    }
+    modal.confirm({
+      title: 'Delete expired data now?',
+      content:
+        days > 0
+          ? `Every chat message, rating, handoff, contact, digest row and uploaded file older than ${days} days will be permanently deleted. This cannot be undone.`
+          : 'The policy is 0 (keep for ever), so this would delete nothing.',
+      okText: 'Delete now',
+      okButtonProps: { danger: true },
+      cancelText: 'Cancel',
+      onOk: async () => {
+        setRetentionApplying(true);
+        try {
+          const response = await applyRetentionPurge(days);
+          setRetentionApplied(response.data);
+          setRetentionPreview(null);
+          message.success(
+            `${response.data.total} row(s) deleted`,
+          );
+        } catch (error) {
+          message.error(
+            getApiErrorMessage(error, 'Failed to apply the retention purge'),
+          );
+        } finally {
+          setRetentionApplying(false);
+        }
+      },
+    });
   };
 
   const fetchWebsites = useCallback(async () => {
@@ -686,9 +728,47 @@ export function Settings() {
                 >
                   Preview purge
                 </Button>
+                <Button
+                  danger
+                  icon={<DeleteOutlined />}
+                  loading={retentionApplying}
+                  onClick={handleRetentionApply}
+                >
+                  Apply purge now
+                </Button>
               </Space>
             </Form.Item>
           </Form>
+
+          {retentionApplied && (
+            <div style={{ maxWidth: 520, marginBottom: 24 }}>
+              <Alert
+                type='success'
+                showIcon
+                message={`Purge applied — ${retentionApplied.total} row(s) deleted`}
+                description={
+                  retentionApplied.cutoff
+                    ? `Everything created before ${new Date(
+                        retentionApplied.cutoff,
+                      ).toLocaleString()} was removed.`
+                    : 'The policy was 0 (keep for ever), so nothing was removed.'
+                }
+                style={{ marginBottom: 16 }}
+              />
+              <Descriptions column={1} size='small' bordered>
+                {Object.entries(retentionApplied.deleted).map(
+                  ([table, count]) => (
+                    <Descriptions.Item key={table} label={table}>
+                      {count}
+                    </Descriptions.Item>
+                  ),
+                )}
+                <Descriptions.Item label='Total'>
+                  <Text strong>{retentionApplied.total}</Text>
+                </Descriptions.Item>
+              </Descriptions>
+            </div>
+          )}
 
           {retentionPreview && (
             <div style={{ maxWidth: 520 }}>
