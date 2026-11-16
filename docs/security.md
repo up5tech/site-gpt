@@ -231,6 +231,12 @@ never deletes, so a policy can be tried before it is saved or ever applied; the
 same call accepts an arbitrary `retention_days`, so an owner can ask "what would 7
 days keep?" without changing the stored policy.
 
+The **Apply purge now** button sends the same day count with `dry_run: false`,
+which deletes immediately instead of waiting for the worker. It is behind an
+explicit confirmation naming the window ("everything older than N days will be
+permanently deleted"), and it reports the counts it removed. Both buttons use the
+same endpoint and the same scoping: an admin can only purge their own company.
+
 **Uploads.** A file under `uploads/` is only reachable through its `attachments`
 row, so the same policy removes both: `purge_attachments` deletes rows older than
 the cutoff and then unlinks their files, in the same bounded batches as the rest of
