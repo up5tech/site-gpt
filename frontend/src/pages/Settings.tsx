@@ -1,5 +1,7 @@
 import {
   CopyOutlined,
+  DeleteOutlined,
+  EyeOutlined,
   KeyOutlined,
   SaveOutlined,
   SettingOutlined,
@@ -11,8 +13,10 @@ import {
   Card,
   Col,
   ColorPicker,
+  Descriptions,
   Form,
   Input,
+  InputNumber,
   Row,
   Select,
   Space,
@@ -23,10 +27,11 @@ import {
 import useApp from 'antd/es/app/useApp';
 import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { Website } from '../types/api';
+import { RetentionPurgeResult, Website } from '../types/api';
 import api, {
   getApiErrorMessage,
   getSettings,
+  previewRetentionPurge,
   updateSettings,
 } from '../utils/api';
 import { ApiKeysPanel } from '../components/ApiKeysPanel';
@@ -225,6 +230,10 @@ interface ModelFormValues {
   model?: string;
 }
 
+interface RetentionFormValues {
+  retention_days?: number;
+}
+
 export function Settings() {
   const { user, fetchUser } = useAuth();
   const { message } = useApp();
@@ -234,6 +243,11 @@ export function Settings() {
   const [loading, setLoading] = useState(false);
   const [appearanceLoading, setAppearanceLoading] = useState(false);
   const [modelSaving, setModelSaving] = useState(false);
+  const [retentionForm] = Form.useForm();
+  const [retentionSaving, setRetentionSaving] = useState(false);
+  const [retentionPreviewing, setRetentionPreviewing] = useState(false);
+  const [retentionPreview, setRetentionPreview] =
+    useState<RetentionPurgeResult | null>(null);
   const [websites, setWebsites] = useState<Website[]>([]);
   const [selectedWebsiteId, setSelectedWebsiteId] = useState<string>('');
   const [preview, setPreview] = useState(buildPreview(DEFAULT_APPEARANCE));
@@ -371,6 +385,61 @@ export function Settings() {
     }
   };
 
+  // `retention_days` is an internal setting (it never reaches the widget), so it
+  // comes back through the same key/value endpoint as the appearance ones.
+  const fetchRetention = useCallback(async () => {
+    try {
+      const response = await getSettings();
+      const map: Record<string, string> = {};
+      (response.data || []).forEach((s) => {
+        map[s.key] = s.value;
+      });
+      retentionForm.setFieldsValue({
+        retention_days: Number(map.retention_days || 0),
+      });
+    } catch (error) {
+      console.error('Fetch retention error', error);
+    }
+  }, [retentionForm]);
+
+  const handleRetentionSubmit = async (values: RetentionFormValues) => {
+    setRetentionSaving(true);
+    try {
+      await updateSettings([
+        {
+          key: 'retention_days',
+          value: String(values.retention_days ?? 0),
+        },
+      ]);
+      message.success('Retention policy updated');
+      setRetentionPreview(null);
+    } catch (error) {
+      message.error(
+        getApiErrorMessage(error, 'Failed to update the retention policy'),
+      );
+    } finally {
+      setRetentionSaving(false);
+    }
+  };
+
+  // Always a dry run: this answers "what would go?" for the value in the form,
+  // so a policy can be tried before it is saved or ever applied.
+  const handleRetentionPreview = async () => {
+    setRetentionPreviewing(true);
+    try {
+      const days = Number(retentionForm.getFieldValue('retention_days') ?? 0);
+      const response = await previewRetentionPurge(Number.isFinite(days) ? days : 0);
+      setRetentionPreview(response.data);
+    } catch (error) {
+      setRetentionPreview(null);
+      message.error(
+        getApiErrorMessage(error, 'Failed to preview the retention purge'),
+      );
+    } finally {
+      setRetentionPreviewing(false);
+    }
+  };
+
   const fetchWebsites = useCallback(async () => {
     try {
       const response = await api.get('/websites');
@@ -396,7 +465,15 @@ export function Settings() {
     fetchWebsites();
     fetchAppearance();
     fetchModel();
-  }, [user, profileForm, fetchWebsites, fetchAppearance, fetchModel]);
+    fetchRetention();
+  }, [
+    user,
+    profileForm,
+    fetchWebsites,
+    fetchAppearance,
+    fetchModel,
+    fetchRetention,
+  ]);
 
   // Ask the API for the current widget.js hash so the install snippet carries a
   // ?v= token that busts its cache as soon as a new widget is deployed.
@@ -552,6 +629,96 @@ export function Settings() {
             message='Provider API keys'
             description='Fast and Accurate run on OpenAI, so OPENAI_API_KEY must be set on the server. Default keeps whatever LLM_AI / LLM_MODEL are configured for. Embeddings still come from EMBEDDING_AI and are not switched here.'
           />
+        </Card>
+      ),
+    },
+    {
+      key: 'privacy',
+      label: (
+        <span>
+          <DeleteOutlined />
+          Privacy
+        </span>
+      ),
+      children: (
+        <Card variant='borderless' className='premium-card'>
+          <Title level={4}>Data retention</Title>
+          <Paragraph type='secondary'>
+            How long visitor data is kept. The worker checks once a day and
+            deletes chat messages, feedback, handoff requests, contacts and
+            digest rows older than this. <Text strong>0</Text> keeps everything.
+          </Paragraph>
+          <Form
+            form={retentionForm}
+            layout='vertical'
+            onFinish={handleRetentionSubmit}
+            style={{ maxWidth: 480, marginTop: 24 }}
+          >
+            <Form.Item
+              name='retention_days'
+              label='Keep data for (days)'
+              rules={[
+                { required: true, message: 'Enter a number of days' },
+              ]}
+            >
+              <InputNumber
+                min={0}
+                max={3650}
+                precision={0}
+                style={{ width: '100%' }}
+                placeholder='0'
+              />
+            </Form.Item>
+            <Form.Item>
+              <Space wrap>
+                <Button
+                  type='primary'
+                  htmlType='submit'
+                  icon={<SaveOutlined />}
+                  loading={retentionSaving}
+                >
+                  Save policy
+                </Button>
+                <Button
+                  icon={<EyeOutlined />}
+                  loading={retentionPreviewing}
+                  onClick={handleRetentionPreview}
+                >
+                  Preview purge
+                </Button>
+              </Space>
+            </Form.Item>
+          </Form>
+
+          {retentionPreview && (
+            <div style={{ maxWidth: 520 }}>
+              <Alert
+                type='info'
+                showIcon
+                message='Preview only — nothing has been deleted'
+                description={
+                  retentionPreview.cutoff
+                    ? `Rows created before ${new Date(
+                        retentionPreview.cutoff,
+                      ).toLocaleString()} would be removed.`
+                    : 'This policy keeps everything, so nothing would be removed.'
+                }
+                style={{ marginBottom: 16 }}
+              />
+              <Descriptions column={1} size='small' bordered>
+                {Object.entries(retentionPreview.deleted).map(
+                  ([table, count]) => (
+                    <Descriptions.Item key={table} label={table}>
+                      {count}
+                    </Descriptions.Item>
+                  ),
+                )}
+                <Descriptions.Item label='Total'>
+                  <Text strong>{retentionPreview.total}</Text>
+                </Descriptions.Item>
+              </Descriptions>
+            </div>
+          )}
         </Card>
       ),
     },

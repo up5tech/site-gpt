@@ -156,6 +156,16 @@ export interface ContactList {
 
 /** One row of a company's settings registry, mirroring `SettingRes`.
  * `PUT /api/settings` only reads `key` and `value` from each entry. */
+export interface RetentionPurgeResult {
+  retention_days: number;
+  /** Rows strictly older than this go; null when the policy is "keep for ever". */
+  cutoff: string | null;
+  dry_run: boolean;
+  /** Rows that were (or, in a dry run, would be) deleted, per table. */
+  deleted: Record<string, number>;
+  total: number;
+}
+
 export interface Setting {
   id?: string;
   key: string;

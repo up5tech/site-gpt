@@ -1,5 +1,5 @@
 import axios, { AxiosInstance } from 'axios';
-import type { AnalyticsSummary, ApiKeyCreated, ApiKeyItem, ApiKeyPayload, ChatResponse, ContactList, ConversationList, ConversationMessages, DashboardStats, DeliveryAttempt, DeliveryList, DeliveryStatus, DigestPreview, DigestSendResult, FeedbackItem, FeedbackList, FeedbackRequest, FeedbackReview, HandoffList, HandoffUpdate, IntegrationItem, IntegrationPayload, IntegrationTestResult, LoginResponse, RecentConversations, RegisterRequest, Setting, Website, WebsiteQuota, WidgetConfig } from '../types/api';
+import type { AnalyticsSummary, ApiKeyCreated, ApiKeyItem, ApiKeyPayload, ChatResponse, ContactList, ConversationList, ConversationMessages, DashboardStats, DeliveryAttempt, DeliveryList, DeliveryStatus, DigestPreview, DigestSendResult, FeedbackItem, FeedbackList, FeedbackRequest, FeedbackReview, HandoffList, HandoffUpdate, IntegrationItem, IntegrationPayload, IntegrationTestResult, LoginResponse, RecentConversations, RegisterRequest, RetentionPurgeResult, Setting, Website, WebsiteQuota, WidgetConfig } from '../types/api';
 
 // Base API instance with proxy /api -> backend
 const api: AxiosInstance = axios.create({
@@ -158,6 +158,14 @@ export const getSettings = () => api.get<Setting[]>('/settings');
 
 export const updateSettings = (settings: Pick<Setting, 'key' | 'value'>[]) =>
   api.put('/settings', settings);
+
+// Retention preview: asks what the purge would delete, without deleting it. The
+// days override lets an owner try a policy before saving it.
+export const previewRetentionPurge = (retentionDays: number) =>
+  api.post<RetentionPurgeResult>('/privacy/retention', {
+    dry_run: true,
+    retention_days: retentionDays,
+  });
 
 // Conversation history (admin panel)
 export const getConversations = (websiteId: string, params: { limit?: number; offset?: number } = {}) =>
