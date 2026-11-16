@@ -250,6 +250,12 @@ outside `uploads/`. Both cases show up as `attachments` in the preview's per-tab
 counts. Uploads with neither a document nor a user are left alone: guessing their
 tenant would risk deleting another company's data.
 
+Attached uploads follow their document rather than their own timestamp: a document
+kept alive by a file attached inside the window keeps the files it already had, so
+an owner who re-uses an old document does not lose half of it (and the text of the
+files that were just removed would otherwise be left behind, unreachable but still
+answerable). Standalone uploads — no document — still expire by their own date.
+
 **Imported documents.** Removing the file and the `attachments` row is not enough:
 the document's text lives in `extra_documents.content` and the assistant answers
 from the `embeddings` built out of it, so an expired upload would keep answering
@@ -263,6 +269,13 @@ behaves the same on SQLite in tests as on Postgres. A text-only document (typed 
 pasted, no file) expires the same way: the text is the document. A document created
 before the cutoff but edited since still expires — editing does not reset its
 clock. The per-table preview reports this as `extra_documents`.
+
+A document's own date is not the only test, because a document can be older than
+the window and still in use: attaching a file today to a document imported 40 days
+ago must not delete that fresh upload or the embeddings rebuilt from it. So a
+document expires only when it is past the cutoff **and** it has no attachment at or
+after the cutoff. Its remaining (older) attachments and files go with it. A
+document with no attachments at all still expires by its own date.
 
 ## 5. Accepted risks
 

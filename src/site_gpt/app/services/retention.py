@@ -32,8 +32,8 @@ import os
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import false, or_
-from sqlalchemy.orm import Session
+from sqlalchemy import and_, false, or_
+from sqlalchemy.orm import Session, aliased
 
 from site_gpt.app import models
 from site_gpt.app.services import company_settings
@@ -153,7 +153,29 @@ def _attachment_scope(db: Session, company_id: UUID, cutoff: datetime):
     (the normal case) or, for an upload that was never attached, to the user who
     uploaded it. Both paths are company-scoped here; a row with neither is left
     alone rather than guessed at.
+
+    Uploads belong to their document, not to their own timestamp: a document kept
+    alive by a file attached today keeps the files it already had, because deleting
+    half of a document the owner is still using leaves the text of the deleted
+    files behind with nothing pointing at them. Standalone uploads (no document)
+    still expire by their own `created_at`.
     """
+    same_document = aliased(models.Attachment)
+    document_has_fresh_upload = (
+        db.query(same_document.id)
+        .filter(
+            same_document.extra_document_id == models.Attachment.extra_document_id,
+            same_document.created_at >= cutoff,
+        )
+        .exists()
+    )
+    document_alive = and_(
+        models.Attachment.extra_document_id.isnot(None),
+        or_(
+            models.ExtraDocument.created_at >= cutoff,
+            document_has_fresh_upload,
+        ),
+    )
     return (
         db.query(models.Attachment)
         .outerjoin(
@@ -167,6 +189,7 @@ def _attachment_scope(db: Session, company_id: UUID, cutoff: datetime):
                 models.ExtraDocument.company_id == company_id,
                 models.User.company_id == company_id,
             ),
+            ~document_alive,
         )
     )
 
@@ -246,10 +269,26 @@ def purge_documents(
     embeddings and any remaining attachments are deleted explicitly rather than
     relying on the database cascade, so the behaviour is the same on every engine
     (and visible in the tests).
+
+    The document's age alone is the wrong test: adding a file today to a document
+    imported 40 days ago is current use of it, and deleting that fresh upload (and
+    the embeddings rebuilt from it) would destroy work the owner just did. A
+    document therefore expires only when it is past the cutoff **and** nothing was
+    attached to it at or after the cutoff. A document nobody attached anything to
+    has no such attachment, so a text-only document still expires by its own date.
     """
+    fresh_attachment = (
+        db.query(models.Attachment.id)
+        .filter(
+            models.Attachment.extra_document_id == models.ExtraDocument.id,
+            models.Attachment.created_at >= cutoff,
+        )
+        .exists()
+    )
     filters = [
         models.ExtraDocument.company_id == company_id,
         models.ExtraDocument.created_at < cutoff,
+        ~fresh_attachment,
     ]
     if dry_run:
         return db.query(models.ExtraDocument).filter(*filters).count()

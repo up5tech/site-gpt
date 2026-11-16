@@ -410,6 +410,74 @@ class UploadRetentionTests(unittest.TestCase):
         self.assertEqual(result["deleted"]["extra_documents"], 1)
         self.assertEqual(self.db.query(models.ExtraDocument).count(), 0)
 
+    def test_a_fresh_upload_keeps_an_old_document_alive(self):
+        # Imported 40 days ago, used today: the new file is current use, and
+        # deleting the document with it would throw away fresh text and embeddings.
+        document = self._old_text_document()
+        document_id = document.id
+        # The document already had an old file; the new upload must not cost it.
+        old = _upload(self.db, self.company, self.old, name="week1.txt")
+        fresh = _upload(self.db, self.company, self.fresh, name="today.txt")
+        # Re-point both at the old document; drop the documents `_upload` made.
+        orphans = [old.extra_document_id, fresh.extra_document_id]
+        old.extra_document_id = document_id
+        fresh.extra_document_id = document_id
+        self.db.query(models.ExtraDocument).filter(
+            models.ExtraDocument.id.in_(orphans)
+        ).delete(synchronize_session=False)
+        self.db.commit()
+        old_id, fresh_id = old.id, fresh.id
+        old_path = self._write(old.file_url, "week one")
+        fresh_path = self._write(fresh.file_url, "today")
+
+        result = retention.purge_company(
+            self.db, self.company.id, days=7, dry_run=False, now=NOW
+        )
+
+        self.assertEqual(result["deleted"]["extra_documents"], 0)
+        self.assertEqual(result["deleted"]["attachments"], 0)
+        self.assertEqual(
+            self.db.query(models.ExtraDocument).filter_by(id=document_id).count(), 1
+        )
+        self.assertEqual(
+            self.db.query(models.Attachment).filter_by(id=fresh_id).count(), 1
+        )
+        self.assertTrue(os.path.exists(fresh_path))
+        # The document is in use, so its earlier files stay with it.
+        self.assertEqual(
+            self.db.query(models.Attachment).filter_by(id=old_id).count(), 1
+        )
+        self.assertTrue(os.path.exists(old_path))
+
+    def test_an_old_document_still_expires_when_its_attachments_are_old(self):
+        # The guard must not turn into "never delete a document with a file".
+        document = self._old_text_document()
+        document_id = document.id
+        attachment = _upload(self.db, self.company, self.old)
+        attachment.extra_document_id = document_id
+        self.db.commit()
+
+        result = retention.purge_company(
+            self.db, self.company.id, days=7, dry_run=False, now=NOW
+        )
+
+        self.assertEqual(result["deleted"]["extra_documents"], 2)  # ours + helper's
+        self.assertEqual(
+            self.db.query(models.ExtraDocument).filter_by(id=document_id).count(), 0
+        )
+
+    def _old_text_document(self):
+        document = models.ExtraDocument(
+            name="old-notes",
+            content="pasted text",
+            company_id=self.company.id,
+            created_at=self.old,
+            updated_at=self.old,
+        )
+        self.db.add(document)
+        self.db.commit()
+        return document
+
     def test_a_fresh_document_survives_and_another_company_is_untouched(self):
         fresh = _upload(self.db, self.company, self.fresh, name="new.txt")
         theirs = _upload(self.db, self.other, self.old, name="their.txt")
