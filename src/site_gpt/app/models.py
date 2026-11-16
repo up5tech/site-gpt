@@ -181,9 +181,10 @@ class Attachment(BaseModel):
     __tablename__ = "attachments"
 
     __table_args__ = (
-        Index("idx_attachments_extra_document_id", "extra_document_id"),
         # The retention anti-join asks "does this document hold an upload from
-        # inside the window?" once per document; this answers it from the index.
+        # inside the window?" once per document; this answers it from the index, and
+        # its `extra_document_id` prefix also serves plain per-document lookups
+        # (there is no single-column index for that any more).
         Index(
             "idx_attachments_extra_document_id_created_at",
             "extra_document_id",

@@ -310,6 +310,27 @@ class RetentionIndexTests(unittest.TestCase):
         self.assertIn("autocommit_block()", source)
         self.assertIn("down_revision: Union[str, Sequence[str], None] = 'd5b9c4e2a87f'", source)
 
+    def test_the_covered_attachment_index_is_gone(self):
+        names = {item.name for item in models.Attachment.__table__.indexes}
+
+        self.assertNotIn("idx_attachments_extra_document_id", names)
+        self.assertIn("idx_attachments_extra_document_id_created_at", names)
+
+    def test_the_attachment_drop_migration_drops_it_concurrently(self):
+        path = (
+            Path(__file__).resolve().parent.parent
+            / "alembic"
+            / "versions"
+            / "f7c1d84b2e39_v2_drop_covered_attachment_index.py"
+        )
+        source = path.read_text(encoding="utf-8")
+
+        self.assertIn("drop_index", source)
+        self.assertIn("'idx_attachments_extra_document_id'", source)
+        self.assertIn("postgresql_concurrently=True", source)
+        self.assertIn("autocommit_block()", source)
+        self.assertIn("down_revision: Union[str, Sequence[str], None] = 'e2a7c5d913f6'", source)
+
     def test_the_covered_single_column_index_is_gone(self):
         # The composite's `company_id` prefix serves every lookup the old index
         # served, so keeping it would only add write cost.
