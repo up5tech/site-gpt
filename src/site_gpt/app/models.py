@@ -158,6 +158,9 @@ class ExtraDocument(BaseModel):
         Index(
             "idx_extra_documents_company_id_created_at", "company_id", "created_at"
         ),
+        # The worker ingests one website's documents and `qa_training` looks its
+        # document up by name; both filter on `website_id`, which nothing indexed.
+        Index("idx_extra_documents_website_id_name", "website_id", "name"),
     )
 
     name: Mapped[str] = mapped_column(String(255), nullable=False)

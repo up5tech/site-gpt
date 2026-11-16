@@ -310,6 +310,36 @@ class RetentionIndexTests(unittest.TestCase):
         self.assertIn("autocommit_block()", source)
         self.assertIn("down_revision: Union[str, Sequence[str], None] = 'd5b9c4e2a87f'", source)
 
+    def test_website_scoped_document_lookup_is_indexed(self):
+        # The worker's ingest and `qa_training` both filter on website_id.
+        index = next(
+            (
+                item
+                for item in models.ExtraDocument.__table__.indexes
+                if item.name == "idx_extra_documents_website_id_name"
+            ),
+            None,
+        )
+
+        self.assertIsNotNone(index, "ExtraDocument must declare the website index")
+        self.assertEqual(
+            [column.name for column in index.columns], ["website_id", "name"]
+        )
+
+    def test_the_website_index_migration_builds_it_concurrently(self):
+        path = (
+            Path(__file__).resolve().parent.parent
+            / "alembic"
+            / "versions"
+            / "c9d3e5a71b28_v2_extra_documents_website_index.py"
+        )
+        source = path.read_text(encoding="utf-8")
+
+        self.assertIn("idx_extra_documents_website_id_name", source)
+        self.assertIn("postgresql_concurrently=True", source)
+        self.assertIn("autocommit_block()", source)
+        self.assertIn("down_revision: Union[str, Sequence[str], None] = 'f7c1d84b2e39'", source)
+
     def test_the_covered_attachment_index_is_gone(self):
         names = {item.name for item in models.Attachment.__table__.indexes}
 
