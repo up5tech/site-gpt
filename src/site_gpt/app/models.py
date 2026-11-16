@@ -176,6 +176,8 @@ class Attachment(BaseModel):
     __table_args__ = (
         Index("idx_attachments_extra_document_id", "extra_document_id"),
         Index("idx_attachments_user_id", "user_id"),
+        # The retention purge selects and orders expired uploads by this column.
+        Index("idx_attachments_created_at", "created_at"),
     )
 
     extra_document_id: Mapped[uuid.UUID] = mapped_column(
