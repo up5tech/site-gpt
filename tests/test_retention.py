@@ -259,6 +259,39 @@ class RetentionIndexTests(unittest.TestCase):
             [column.name for column in index.columns], ["created_at"]
         )
 
+    def test_extra_documents_company_and_created_at_are_indexed(self):
+        # `purge_documents` filters on both columns and orders by created_at, so
+        # the single-column company_id index is not enough.
+        index = next(
+            (
+                item
+                for item in models.ExtraDocument.__table__.indexes
+                if item.name == "idx_extra_documents_company_id_created_at"
+            ),
+            None,
+        )
+
+        self.assertIsNotNone(
+            index, "ExtraDocument must declare idx_extra_documents_company_id_created_at"
+        )
+        self.assertEqual(
+            [column.name for column in index.columns], ["company_id", "created_at"]
+        )
+
+    def test_the_document_index_migration_builds_it_concurrently(self):
+        path = (
+            Path(__file__).resolve().parent.parent
+            / "alembic"
+            / "versions"
+            / "c3f8a2b91d47_v2_extra_documents_retention_index.py"
+        )
+        source = path.read_text(encoding="utf-8")
+
+        self.assertIn("idx_extra_documents_company_id_created_at", source)
+        self.assertIn("postgresql_concurrently=True", source)
+        self.assertIn("autocommit_block()", source)
+        self.assertIn("down_revision: Union[str, Sequence[str], None] = 'a4c1e9d7f320'", source)
+
     def test_the_index_migration_builds_it_concurrently(self):
         # A plain CREATE INDEX locks writes on the upload table for the whole
         # build; the retention indexes are all built CONCURRENTLY.

@@ -151,7 +151,14 @@ class Document(BaseModel):
 class ExtraDocument(BaseModel):
     __tablename__ = "extra_documents"
 
-    __table_args__ = (Index("idx_extra_documents_company_id", "company_id"),)
+    __table_args__ = (
+        Index("idx_extra_documents_company_id", "company_id"),
+        # The retention purge looks up one company's expired documents and orders
+        # them by age; the composite serves the tenant filter and the range.
+        Index(
+            "idx_extra_documents_company_id_created_at", "company_id", "created_at"
+        ),
+    )
 
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=True)
