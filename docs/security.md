@@ -192,6 +192,9 @@ failed send can be retried, so it is cleaned on its own schedule
   answers `409` because there is nothing left to send;
 - **settled** rows (`delivered`/`dead`) older than the window are deleted;
   `pending` rows are never deleted because they are work that has not happened;
+- both steps run in `DELIVERY_PURGE_BATCH_SIZE` (1000) id-scoped batches, each
+  committed before the next, so a first run over a large backlog cannot hold one
+  long transaction;
 - the worker runs this on its own clock, `DELIVERY_RETENTION_CHECK_SECONDS`
   (default hourly) rather than on every retry tick — a row only becomes deletable
   days after it settled — and an admin can preview or trigger it with

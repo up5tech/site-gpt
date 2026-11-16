@@ -118,7 +118,7 @@ npm install && npm run dev   # :5173
 | `DIGEST_ENABLED` | `false` | global switch for the worker's weekly-digest loop (each company also needs its `digest_enabled` setting) |
 | `DIGEST_CHECK_SECONDS` | `3600` | how often the digest loop looks for companies whose send hour has come |
 | `DELIVERY_CHECK_SECONDS` | `60` | how often the worker retries integration deliveries whose backoff has elapsed |
-| `DELIVERY_RETENTION_DAYS` | `30` | how long a delivered/dead delivery row is kept; a dead row's payload is cleared immediately, `0` keeps the rows |
+| `DELIVERY_RETENTION_DAYS` | `30` | how long a delivered/dead delivery row is kept; a dead row's payload is cleared immediately, `0` keeps the rows. Both steps run in batches of 1000 rows per transaction |
 | `DELIVERY_RETENTION_CHECK_SECONDS` | `3600` | how often the worker runs the delivery retention pass (the retry tick stays at `DELIVERY_CHECK_SECONDS`) |
 | `RETENTION_CHECK_SECONDS` | `86400` | how often the worker queues the retention purge for companies that set `retention_days` |
 | `DIGEST_HOUR` | `9` | default UTC send hour for a company without its own `digest_hour` setting |
