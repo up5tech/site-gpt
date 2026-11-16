@@ -240,7 +240,8 @@ Keys understood by `widget_ui_strings`: `clear`, `send`, `thinking`, `sources`,
   retries, so a receiver can dedupe. Those rows carry the lead's details, so a
   dead row's payload is cleared at once (resend then answers 409) and settled rows
   are deleted after `DELIVERY_RETENTION_DAYS`; `POST /api/integrations/deliveries/purge`
-  previews the cleanup. Reads never return a stored credential —
+  previews the cleanup. Resend claims the row with `FOR UPDATE SKIP LOCKED` while it
+  sends, so two admins clicking it at once produce one send and one `409`. Reads never return a stored credential —
   secrets come back as `***` and a PATCH echoing the mask keeps the stored value.
 - **API keys and `/api/v1`** — Settings → API keys mints scoped keys (`read`,
   `ingest:write`, `settings:write`, `chat:write`), stored only as a peppered

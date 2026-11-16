@@ -196,6 +196,14 @@ failed send can be retried, so it is cleaned on its own schedule
   preview or trigger it with `POST /api/integrations/deliveries/purge`
   (`dry_run` defaults to true, company-scoped).
 
+A manual resend is claimed the same way the worker claims its rows:
+`resend_claim` selects the delivery `FOR UPDATE SKIP LOCKED` and holds it until the
+attempt commits, so two admins pressing Resend at once cannot send the event
+twice — the second gets `409` and nothing is re-armed. The claim is deliberately
+not committed before the send (that commit is what used to release it). A crash
+mid-send therefore rolls the re-arm back and leaves the row `dead`, still
+resendable, instead of a `pending` row nobody is working on.
+
 Both values are set from the dashboard: **Settings → Privacy** has the
 `retention_days` field and a **Preview purge** button, which calls
 `POST /api/privacy/retention` with `dry_run: true` (the default) and the day count
