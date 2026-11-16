@@ -278,6 +278,38 @@ class RetentionIndexTests(unittest.TestCase):
             [column.name for column in index.columns], ["company_id", "created_at"]
         )
 
+    def test_document_expiry_probe_is_indexed(self):
+        # `document_expiry` asks per document "any attachment at/after the cutoff?";
+        # the composite lets that probe stay inside the index.
+        index = next(
+            (
+                item
+                for item in models.Attachment.__table__.indexes
+                if item.name == "idx_attachments_extra_document_id_created_at"
+            ),
+            None,
+        )
+
+        self.assertIsNotNone(index, "Attachment must declare the expiry probe index")
+        self.assertEqual(
+            [column.name for column in index.columns],
+            ["extra_document_id", "created_at"],
+        )
+
+    def test_the_expiry_probe_migration_builds_it_concurrently(self):
+        path = (
+            Path(__file__).resolve().parent.parent
+            / "alembic"
+            / "versions"
+            / "e2a7c5d913f6_v2_document_attachments_index.py"
+        )
+        source = path.read_text(encoding="utf-8")
+
+        self.assertIn("idx_attachments_extra_document_id_created_at", source)
+        self.assertIn("postgresql_concurrently=True", source)
+        self.assertIn("autocommit_block()", source)
+        self.assertIn("down_revision: Union[str, Sequence[str], None] = 'd5b9c4e2a87f'", source)
+
     def test_the_covered_single_column_index_is_gone(self):
         # The composite's `company_id` prefix serves every lookup the old index
         # served, so keeping it would only add write cost.

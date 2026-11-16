@@ -182,6 +182,13 @@ class Attachment(BaseModel):
 
     __table_args__ = (
         Index("idx_attachments_extra_document_id", "extra_document_id"),
+        # The retention anti-join asks "does this document hold an upload from
+        # inside the window?" once per document; this answers it from the index.
+        Index(
+            "idx_attachments_extra_document_id_created_at",
+            "extra_document_id",
+            "created_at",
+        ),
         Index("idx_attachments_user_id", "user_id"),
         # The retention purge selects and orders expired uploads by this column.
         Index("idx_attachments_created_at", "created_at"),
