@@ -457,7 +457,7 @@ export function Settings() {
       title: 'Delete expired data now?',
       content:
         days > 0
-          ? `Every chat message, rating, handoff, contact, digest row and uploaded file older than ${days} days will be permanently deleted. This cannot be undone.`
+          ? `Every chat message, rating, handoff, contact, digest row, imported document and uploaded file older than ${days} days will be permanently deleted. This cannot be undone.`
           : 'The policy is 0 (keep for ever), so this would delete nothing.',
       okText: 'Delete now',
       okButtonProps: { danger: true },
@@ -687,8 +687,9 @@ export function Settings() {
           <Title level={4}>Data retention</Title>
           <Paragraph type='secondary'>
             How long visitor data is kept. The worker checks once a day and
-            deletes chat messages, feedback, handoff requests, contacts and
-            digest rows older than this. <Text strong>0</Text> keeps everything.
+            deletes chat messages, feedback, handoff requests, contacts, digest
+            rows, imported documents and uploaded files older than this.{' '}
+            <Text strong>0</Text> keeps everything.
           </Paragraph>
           <Form
             form={retentionForm}

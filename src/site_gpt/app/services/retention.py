@@ -15,6 +15,12 @@ The rules this module holds:
   remove before trusting it;
 * no cascade surprises: `chat_feedback.message_id` and `handoff_requests.contact_id`
   are `ON DELETE SET NULL`, so purging messages or contacts first is safe.
+* an imported document goes as a whole. Deleting only its `attachments` row would
+  leave `extra_documents.content` and the `embeddings` built from it, so the
+  assistant would keep answering from a file the policy says is gone — the exact
+  failure this part exists to prevent. The document row, its embeddings and any
+  remaining attachments are deleted with it, and the files unlinked after the
+  commit.
 * uploaded files go with their rows: an `attachments` row is the pointer to a file
   under `uploads/`, so deleting the row without the bytes would leave personal data
   on disk with nothing tracking it. The file is removed after the batch commits, and
@@ -226,6 +232,60 @@ def purge_attachments(
     return deleted
 
 
+def purge_documents(
+    db: Session,
+    company_id: UUID,
+    cutoff: datetime,
+    batch_size: int = RETENTION_BATCH_SIZE,
+    dry_run: bool = False,
+) -> int:
+    """Delete (or count) this company's expired imported documents.
+
+    An `extra_documents` row is the document itself: its text is what the assistant
+    searches, so removing only the file would leave the answers in place. The
+    embeddings and any remaining attachments are deleted explicitly rather than
+    relying on the database cascade, so the behaviour is the same on every engine
+    (and visible in the tests).
+    """
+    filters = [
+        models.ExtraDocument.company_id == company_id,
+        models.ExtraDocument.created_at < cutoff,
+    ]
+    if dry_run:
+        return db.query(models.ExtraDocument).filter(*filters).count()
+
+    deleted = 0
+    while True:
+        ids = batch_ids(db, models.ExtraDocument, filters, batch_size)
+        if not ids:
+            break
+        file_urls = [
+            file_url
+            for (file_url,) in db.query(models.Attachment.file_url)
+            .filter(models.Attachment.extra_document_id.in_(ids))
+            .all()
+        ]
+        db.query(models.Embedding).filter(
+            models.Embedding.extra_document_id.in_(ids)
+        ).delete(synchronize_session=False)
+        db.query(models.Attachment).filter(
+            models.Attachment.extra_document_id.in_(ids)
+        ).delete(synchronize_session=False)
+        deleted += (
+            db.query(models.ExtraDocument)
+            .filter(models.ExtraDocument.id.in_(ids))
+            .delete(synchronize_session=False)
+        )
+        db.commit()
+        # After the commit, never before: a rollback must not leave rows pointing
+        # at bytes that are already gone.
+        for file_url in file_urls:
+            _remove_upload_file(file_url)
+        if len(ids) < batch_size:
+            break
+    return deleted
+
+
 def purge_company(
     db: Session,
     company_id: UUID,
@@ -248,6 +308,7 @@ def purge_company(
         name: 0 for name, _ in SCOPED_BY_WEBSITE + SCOPED_BY_COMPANY
     }
     deleted["attachments"] = 0
+    deleted["extra_documents"] = 0
 
     if cutoff is not None:
         website_ids = [
@@ -270,8 +331,13 @@ def purge_company(
             filters = [model.company_id == company_id, model.created_at < cutoff]
             deleted[name] = _delete_batch(db, model, filters, batch_size, dry_run)
 
-        # Uploaded files and the rows that point at them.
+        # Uploaded files and the rows that point at them, then the documents
+        # themselves: an expired upload must stop answering questions, not just
+        # stop having a file.
         deleted["attachments"] = purge_attachments(
+            db, company_id, cutoff, batch_size=batch_size, dry_run=dry_run
+        )
+        deleted["extra_documents"] = purge_documents(
             db, company_id, cutoff, batch_size=batch_size, dry_run=dry_run
         )
 

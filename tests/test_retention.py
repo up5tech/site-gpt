@@ -35,6 +35,8 @@ TABLES = [
     models.User.__table__,
     models.ExtraDocument.__table__,
     models.Attachment.__table__,
+    models.Document.__table__,
+    models.Embedding.__table__,
 ]
 
 
@@ -135,7 +137,13 @@ def _user(db, company, email="owner@acme.test"):
 
 def _upload(db, company, created_at, name="doc.txt", file_url=None, user=None):
     """An uploaded document plus the attachment row pointing at its file."""
-    document = models.ExtraDocument(name=name, content="text", company_id=company.id)
+    document = models.ExtraDocument(
+        name=name,
+        content="text",
+        company_id=company.id,
+        created_at=created_at,
+        updated_at=created_at,
+    )
     db.add(document)
     db.commit()
     attachment = models.Attachment(
@@ -267,6 +275,8 @@ class UploadRetentionTests(unittest.TestCase):
         )
 
         self.assertEqual(result["deleted"]["attachments"], 1)
+        self.assertEqual(result["deleted"]["extra_documents"], 1)
+        # A dry run removes nothing, files included.
         self.assertTrue(os.path.exists(path))
         self.assertEqual(self.db.query(models.Attachment).count(), 1)
 
@@ -312,6 +322,71 @@ class UploadRetentionTests(unittest.TestCase):
         self.assertEqual(result["deleted"]["attachments"], 1)
         self.assertFalse(os.path.exists(path))
         self.assertEqual(self.db.query(models.Attachment).count(), 0)
+
+    def test_the_document_text_and_its_embeddings_go_with_the_upload(self):
+        attachment = _upload(self.db, self.company, self.old)
+        document_id = attachment.extra_document_id
+        self.db.add(
+            models.Embedding(
+                extra_document_id=document_id,
+                content="the document's text",
+                created_at=self.old,
+                updated_at=self.old,
+            )
+        )
+        self.db.commit()
+
+        result = retention.purge_company(
+            self.db, self.company.id, days=7, dry_run=False, now=NOW
+        )
+
+        self.assertEqual(result["deleted"]["extra_documents"], 1)
+        # The text is gone, so the assistant cannot keep answering from it…
+        self.assertEqual(
+            self.db.query(models.ExtraDocument).filter_by(id=document_id).count(), 0
+        )
+        # …and neither can the embeddings built from it.
+        self.assertEqual(
+            self.db.query(models.Embedding)
+            .filter(models.Embedding.extra_document_id == document_id)
+            .count(),
+            0,
+        )
+
+    def test_a_text_only_document_expires_too(self):
+        # No attachment and no file: the text is the document, so it must go.
+        document = models.ExtraDocument(
+            name="notes",
+            content="pasted text",
+            company_id=self.company.id,
+            created_at=self.old,
+            updated_at=self.old,
+        )
+        self.db.add(document)
+        self.db.commit()
+
+        result = retention.purge_company(
+            self.db, self.company.id, days=7, dry_run=False, now=NOW
+        )
+
+        self.assertEqual(result["deleted"]["extra_documents"], 1)
+        self.assertEqual(self.db.query(models.ExtraDocument).count(), 0)
+
+    def test_a_fresh_document_survives_and_another_company_is_untouched(self):
+        fresh = _upload(self.db, self.company, self.fresh, name="new.txt")
+        theirs = _upload(self.db, self.other, self.old, name="their.txt")
+
+        result = retention.purge_company(
+            self.db, self.company.id, days=7, dry_run=False, now=NOW
+        )
+
+        self.assertEqual(result["deleted"]["extra_documents"], 0)
+        remaining = {
+            row.id for row in self.db.query(models.ExtraDocument).all()
+        }
+        self.assertEqual(
+            remaining, {fresh.extra_document_id, theirs.extra_document_id}
+        )
 
     def test_a_missing_file_does_not_stop_the_purge(self):
         attachment = _upload(self.db, self.company, self.old)
@@ -399,6 +474,7 @@ class PurgeTests(unittest.TestCase):
                 "contacts": 2,
                 "digest_log": 2,
                 "attachments": 0,
+                "extra_documents": 0,
             },
         )
         self.assertEqual(result["total"], 10)

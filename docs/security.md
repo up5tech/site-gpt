@@ -182,7 +182,7 @@ an *unclaimed* session is allowed; see §5 for the trade-off.
 | `integrations` | Provider config **including credentials** | Credentials, not personal data |
 | `integration_deliveries` | Event payload (may contain a lead's name/email), status, attempts, scrubbed error | Personal data copied out of `contacts` for retry. A **dead** row's payload is cleared by the worker; settled rows are deleted after `DELIVERY_RETENTION_DAYS` (default 30). Not governed by the per-company `retention_days` |
 | `digest_log` | Which weekly period was sent to whom | Recipient personal data |
-| `uploads/` | Imported source files, one per `attachments` row | Depends on the file. An expired upload loses both its row and its file under the company's `retention_days` |
+| `uploads/` | Imported source files, one per `attachments` row | Depends on the file. An expired upload loses its row, its file, its document text and the embeddings built from it under the company's `retention_days` |
 
 **Retention.** A company can set `retention_days` (0 or unset = keep for ever,
 the default for every company created before the setting existed). The worker
@@ -249,6 +249,20 @@ and a `file_url` containing `..` is refused so a purge cannot touch anything
 outside `uploads/`. Both cases show up as `attachments` in the preview's per-table
 counts. Uploads with neither a document nor a user are left alone: guessing their
 tenant would risk deleting another company's data.
+
+**Imported documents.** Removing the file and the `attachments` row is not enough:
+the document's text lives in `extra_documents.content` and the assistant answers
+from the `embeddings` built out of it, so an expired upload would keep answering
+questions after the policy said its file was gone. `purge_documents` therefore
+deletes the expired `extra_documents` rows themselves — text, embeddings and any
+remaining attachments — and only then unlinks their files. It uses the document's
+own `created_at`, which is the moment its upload arrived, and works in batches of
+`RETENTION_BATCH_SIZE` like the rest of the purge. The embeddings and attachments
+are deleted explicitly rather than through the foreign-key cascade, so the rule
+behaves the same on SQLite in tests as on Postgres. A text-only document (typed or
+pasted, no file) expires the same way: the text is the document. A document created
+before the cutoff but edited since still expires — editing does not reset its
+clock. The per-table preview reports this as `extra_documents`.
 
 ## 5. Accepted risks
 
