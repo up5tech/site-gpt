@@ -6,8 +6,9 @@
 | Status | **Planned — not started.** No task below is ticked and no migration exists yet |
 | Created | 2026-11-16 |
 | Derived from | `plans/PLAN_V2.md` (§14, §11 risk register), `plans/SPEC.md`, `docs/security.md` §5 (accepted risks K5 / K18), `README.md` §4 |
-| Baseline | tag `v2.1` = `4031b6f` (annotated); `master` = `feat/v2` = `4031b6f`; Alembic head `c9d3e5a71b28`; 35 `unittest` modules / 406 tests, 6 widget files / 24 checks |
+| Baseline | V2.1 tag `v2.1` = `4031b6f4a063e62bf5bdc6e20f3d8ac67781ae99`; current `master` HEAD `15747659e3fdd8c2e7e05c1e49e4611b48e025b5` adds the V3 plan after that tag; Alembic head `c9d3e5a71b28`; baseline suite counts are historical and must be re-run at pre-flight |
 | Scope | 4 features (F1–F4), 5 waves (W0–W4), 5 gates, 3 migrations (M7–M9), 25 tasks |
+| Review note | Pre-implementation plan review; security and data-model assumptions are clarified below before any feature work starts |
 | Out of scope | SOC 2 Type II / HIPAA BAA / signed DPA / "GDPR certification" (legal, not code — unchanged from V2), trial & pricing, the "95+ languages" claim (V2 D2), an application-level encryption layer or HSM (V2 D6), a charting library (Ant Design only), a Redis-backed **quota** rewrite (the daily message cap already counts in Redis), and any backport of V3 work into V2 |
 
 ---
@@ -17,12 +18,11 @@
 - Each task has an ID `V3-xx`, a size (`S` / `M` / `L`), a dependency, the files it
   touches, what to do, and a **Done when** condition. Tick the box only when that
   condition is met; add a `Done:` line with the evidence, as `PLAN_V2.md` does.
-- **One wave at a time.** A wave's gate must be fully ticked before the next wave
-  starts. The gates are not ceremony: Wave 3's clustering reads the settings and
-  worker conventions Wave 1 fixes, and Wave 4's inbox writes through the
-  conversation helpers Wave 0 establishes.
-- **One task ≈ one commit**, on branch `feat/v3` (branch from `master` at
-  `4031b6f`, not from an older tag). A gate is its own commit —
+- **Follow the dependency graph.** Wave 2 starts only after the Wave 1 gate
+  (`V3-1G`), then Wave 3 after `V3-2G` and Wave 4 after `V3-3G`. Do not parallelize
+  a task against a gate it depends on; §6 is authoritative.
+- **One task ≈ one commit**, on branch `feat/v3` (branch from current `master`
+  after verifying its delta from the V2.1 tag, not from an older tag). A gate is its own commit —
   `chore(v3): V3-NG gate — docs + trail build`.
 - `PLAN_V2.md` says what V2 did; this file says what V3 does and in what order.
   `plans/SPEC.md` still owns the requirement/design text for F1–F10; when a V3
@@ -35,15 +35,17 @@
 
 | V3 feature | Why it exists | PLAN_V2 pointer | Migration | Wave | Exit criterion |
 |---|---|---|---|---|---|
-| F1 Redis rate limiting | The limiter is in-memory per process, so N workers allow N× the rate and a restart resets it (accepted risk **K5**). | §11 risk register, last row ("Redis limiter is V3") | — | 1 | Two API processes share one budget; a restart does not reset it |
-| F2 LLM topic clustering | `digest`'s "top topics" are stopword-filtered **term counts** (`services/digest.py::_topics`), not topics; nothing clusters or names them. | §14, third bullet (V3 reserved) | M8 | 3 | A week of questions yields named clusters with counts, and the digest shows them |
-| F3 Live-agent inbox | Handoff is notify-and-callback by decision (V2 **D1**, ADR-4). Customers asked for an agent who can answer in the widget. | §14, third bullet; ADR-4 | M9 | 4 | An agent claims a waiting session and answers it in the widget without the visitor reloading |
-| F4 Per-website embed token (**K18**) | The Origin/Referer check is soft: no header (or a forged one) is accepted, so a copied `website_id` still spends the customer's credits. `services/embed_guard.py` says closing it "needs a signed embed token per website (a schema change, so V2)". | §14 bullet 3; README K18 row | M7 | 2 | A request with no token (or another website's token) is refused once the mode is `enforce` |
+| F1 Redis rate limiting | The limiter is in-memory per process, so multiple API processes have independent budgets and restarts reset them (accepted risk **K5**). | §11 risk register, last row ("Redis limiter is V3") | — | 1 | With Redis healthy, two API processes share one atomic budget; outage behavior is explicitly weaker and per-process |
+| F2 LLM topic clustering | `digest`'s "top topics" are stopword-filtered **term counts** (`services/digest.py::_topics`), not topics; nothing clusters or names them. | §14, third bullet (V3 reserved) | M8 | 3 | A complete digest-aligned week yields named clusters, with sample/total counts distinguished; unsupported partial windows retain term counts |
+| F3 Live-agent inbox | Handoff is notify-and-callback by decision (V2 **D1**, ADR-4). Customers asked for an agent who can answer in the widget. | §14, third bullet; ADR-4 | M9 | 4 | An agent claims a waiting session and answers it in the widget without the visitor reloading; privacy, retention and auth paths include the new records |
+| F4 Per-website embed token (**K18 residual**) | Origin/Referer is a soft signal. A token shipped in browser HTML/JavaScript is also public and replayable; it can deter casual copying, but cannot prove origin or stop deliberate reuse. | §14 bullet 3; README K18 row | M7 | 2 | Compatibility mode preserves old snippets; enforce mode requires the website's token and documents K18 as an accepted residual |
 
 Non-goals mapped to V2 decisions, restated so they are not reopened: no WebSocket
 transport (the repo has none — see D1), no new Python or JS dependency, no
 `EMBEDDING_DIMENSIONS` change (**no re-ingest anywhere in V3**), no second auth
-library.
+library. An embed token is not a secret once included in a public page; it is a
+compatibility/control mechanism and raises the effort for casual copying, not an
+origin-authentication boundary or a DRM/credit-abuse guarantee.
 
 ---
 
@@ -54,28 +56,33 @@ Changing one after its wave is complete means rework, so decide now.
 
 | ID | Question | Default for V3 | Revisit before |
 |---|---|---|---|
-| D1 | Transport for the agent inbox and presence: WebSocket or SSE? | **SSE**, matching `/api/chat/stream`. The codebase has no WebSocket route, `requirements`/`pyproject` need nothing new, and a reverse proxy that already passes the chat stream passes this. Presence is a Redis key with a TTL, not a socket registry. | V3-42 |
-| D2 | Is there a `conversations` table to attach an agent to? | **No** — sessions exist only as `chat_messages.session_id` (`services/conversations.py` groups them in SQL). M9 adds a real `conversations` row with `(website_id, session_id)` unique, created **lazily** on the first widget message or agent action. **No backfill**: old sessions keep working through the existing string-keyed queries, and `delete_conversation` deletes the row when it deletes the messages. | V3-40 |
-| D3 | How are topics clustered without a new dependency? | **Assign by pgvector distance to stored centroids, name by the existing chat LLM.** Centroids are computed in Python over the already-embedded messages (`services/llm.py::embed_texts`, `EMBEDDING_DIMENSIONS` unchanged), so no scikit-learn/numpy requirement is added; the LLM is only asked to name/summarise each cluster once per run. | V3-31 |
-| D4 | Embed token shape and rollout | **Per-website hashed token**, stored like an API key (`api_keys` pattern: `sha256(token)` + prefix, raw value shown once), sent by the widget as `X-Embed-Token`. Rollout mirrors K4: env `EMBED_TOKEN_MODE=compat` (default, tokenless requests still accepted when the website has no token) → `enforce`. | V3-23 |
-| D5 | Behaviour when Redis is unreachable | **Degrade to the in-memory limiter and log once**, never fail open into unlimited traffic. `GET /health` reports which backend answered. Default backend stays `memory`, so a deployment that changes nothing behaves exactly like V2.1. | V3-10 |
-| D6 | Clustering cost control | **Opt-in per company** (`topic_clustering_enabled`, internal key, default off) and capped by env (`TOPIC_CLUSTER_MAX_MESSAGES`, default 500 per run). It spends the company's LLM credits, so it is never on by default. | V3-32 |
+| D1 | Transport/auth for agent inbox and presence? | **SSE over `fetch()` streaming**, not native `EventSource`, so the browser can send the existing JWT Authorization header (and `X-Session-Token` for the widget stream). Document proxy buffering/timeouts and use DB polling/reconciliation as fallback. Presence uses per-connection Redis leases with TTL, not a socket registry. | V3-42 |
+| D2 | Is there a `conversations` table to attach an agent to? | **No** — sessions exist only as `chat_messages.session_id`, scoped by website. M9 adds a row unique on `(website_id, session_id)`, created lazily; route identifiers are the conversation UUID because session ids are not unique within a company. No message backfill. `delete_conversation` must delete messages and the conversation in one transaction; privacy export/erasure and retention are updated. | V3-40 |
+| D3 | Which messages, windows and embeddings feed topic clusters? | **Company-wide visitor `user` questions only; embed a bounded sample at run time.** Chat messages do not currently have stored embeddings. Cluster deterministically within fixed weekly UTC windows aligned with `normalize_period`/`digest_day` (no cross-window centroid mutation), persist centroids/labels by company/window, and use the existing LLM only for capped naming. Distinguish sampled counts from total eligible questions when the cap truncates input. A unique durable run/claim per company + window prevents duplicate work; avoid retaining raw representative questions in derived rows. | V3-31 |
+| D4 | Embed token shape, limits and rollout | **Per-website high-entropy token**, SHA-256 hash at rest (random token does not need the API-key pepper), raw value shown once, sent as `X-Embed-Token`. It is public/replayable in a snippet. `compat` accepts missing tokens whether or not one has been issued; a supplied invalid/revoked token is refused. `enforce` requires a valid token and is a documented breaking rollout, not an origin-authentication guarantee. Do not reset visitor session state on refusal. | V3-23 |
+| D5 | Behaviour when Redis is unreachable | **If configured for Redis, fall back to the existing in-process limiter and emit a rate-limited warning/health signal.** This preserves a local cap, but is not a shared/global limit during an outage and can admit up to the per-process budget. Default backend stays `memory`; document the weaker guarantee and do not describe fallback as fail-closed or globally enforced. | V3-10 |
+| D6 | Clustering cost control and reporting windows | **Opt-in per company** (`topic_clustering_enabled`, internal key, default off), bounded by input-question, cluster-count, embedding-call and LLM-naming-call caps. Runs use non-overlapping weekly UTC windows aligned with the company's `normalize_period`/`digest_day` and a durable idempotent claim; digest/analytics show named clusters only for complete windows exactly covered by the request, otherwise retain the existing term-count fallback. Derived windows are invalidated/rebuilt after message erasure and covered by retention. | V3-32 |
 | D7 | Legal/commercial items | **Still out of scope** — SOC 2, HIPAA BAA, signed DPA, pricing, trial, "95+ languages". V3 adds no compliance claim and no marketing wording; `docs/security.md` §1 stays true. | — |
 
 ### Environment pre-flight
 
-- [ ] `master` = tag `v2.1` = `4031b6f`, working tree clean, `git tag --list` shows
-      `v1`, `v2`, `v2.1` and nothing newer. Record `git rev-parse master`.
+- [ ] Confirm `v2.1` resolves to `4031b6f4a063e62bf5bdc6e20f3d8ac67781ae99` and
+      the V2.1 code baseline is clean. `master` may contain documentation-only
+      commits after the tag (currently the V3 plan); record `git rev-parse HEAD`,
+      inspect the delta from `v2.1`, and branch `feat/v3` from the current `master`
+      rather than requiring the branch to equal the release tag. Keep any unrelated
+      code changes out of the V3 starting point.
 - [ ] `uv run alembic current` = `uv run alembic heads` = `c9d3e5a71b28` (single
       head). Every M7–M9 chains from it.
 - [ ] `pg_dump` backup before M7 (`backups/`, already gitignored).
-- [ ] Redis reachable (`GET /health` reports `redis: true`); if it is not, F1 is
-      still implementable and testable but its gate cannot prove cross-process
-      sharing — record that as a blocked gate item, never tick it silently.
+- [ ] Redis reachable (`GET /health` reports `redis: true`); if not, F1 remains
+      implementable, but cross-process sharing cannot be verified. Record that
+      specific check as blocked, never tick it silently.
 - [ ] Baseline green: `uv run python -m unittest discover -s tests -v` (406 tests),
       `node --test tests/*.mjs` (24 checks), `cd frontend && npm run build && npm run lint`,
       `trail build`.
-- [ ] Branch `feat/v3` created from `master` (`4031b6f`).
+- [ ] Branch `feat/v3` created from the verified current `master`; record its
+      base SHA and the reviewed V2.1-to-master delta.
 
 ---
 
@@ -86,8 +93,9 @@ Carried from `PLAN_V2.md` §4 and `AGENTS.md`; new V3 rules marked **V3**.
 1. `ChatWidgetConfig` keys and every `localStorage` key stay valid; new config is
    optional with a default. **V3:** `X-Embed-Token` is additive — a snippet that
    never sends it keeps working in `compat` mode.
-2. `services/rag.py::search` stays the only retrieval SQL. Clustering reads
-   `embeddings` through its own aggregate query and must not fork the search.
+2. `services/rag.py::search` stays the only retrieval SQL. Topic clustering reads
+   bounded `user` chat messages and embeds them on demand; it does not query the
+   document `embeddings` table or fork retrieval SQL.
 3. Chunking stays 1000/200 via `split_text`.
 4. `EMBEDDING_DIMENSIONS` unchanged → **no re-ingest at any point in V3**.
 5. Reuse `get_llm`, `embed_texts`, `enqueue_job`, `rate_limit`, `send_email_async`,
@@ -103,12 +111,20 @@ Carried from `PLAN_V2.md` §4 and `AGENTS.md`; new V3 rules marked **V3**.
    website has a token and `EMBED_TOKEN_MODE=enforce` is set, tokenless requests
    are refused — that is the feature, not a regression.
 10. Tenant scoping is not optional: every inbox, clustering and token query filters
-    by the caller's `company_id`, and a foreign id is a **404**, never a 403
-    (matches `api/privacy.py`).
+    by the caller's `company_id`, and a foreign resource id is a **404**, never a
+    403 (matches `api/privacy.py`). Inbox APIs use conversation UUIDs, not
+    company-scoped `session_id` values.
 11. Migrations that add indexes to busy tables build `CONCURRENTLY` inside
     `op.get_context().autocommit_block()` — see AGENTS.md and `d2f5a81c9b74`.
 12. After each gate: `trail build`, then update `README.md`, `AGENTS.md`,
     `docs/security.md` and this file's dashboard.
+13. **V3:** Redis pub/sub events are best-effort notifications, not a durable or
+    exactly-once message queue. Persist messages/state first; clients must
+    reconcile from the database and deduplicate by message/event id after reconnect.
+14. **V3:** Changes to conversation deletion, privacy export/erasure, retention,
+    message schemas and frontend history must include agent-authored messages and
+    `conversations` rows. Erasure is transactional; cluster derived data is either
+    rebuilt or removed when source messages are erased.
 
 ---
 
@@ -122,19 +138,23 @@ invents its own version. **Entry:** environment pre-flight above.
 - [ ] **V3-01 · Decisions + scope doc** — `S`, depends: —, migration: —
   - Files: `plans/PLAN_V3.md`, `README.md` (a "V3 (planned)" note only — no
     feature claims yet).
-  - Do: confirm D1–D7 against the code (SSE vs WebSocket, no `conversations`
-    table, no clustering dependency, `api_keys` hashing pattern, `REDIS_*` config,
-    `INTERNAL_SETTINGS` registry). Record each confirmation inline here.
+  - Do: confirm D1–D7 against code (SSE transport/auth, no `conversations` table,
+    no stored chat-message vectors, embed-token limitations, `REDIS_*` config,
+    `INTERNAL_SETTINGS` registry, privacy/retention impact). Decide whether F4's
+    public token has enough product value to justify a breaking `enforce` rollout;
+    keep K18 accepted if retained. Record each decision inline here.
   - Done when: every D-row is either confirmed or rewritten, and no task below
     depends on an unconfirmed decision.
 
 - [ ] **V3-02 · One Redis access module** — `M`, depends: V3-01, migration: —
   - Files: `src/site_gpt/app/services/redis.py`, `tests/test_redis_helpers.py`.
   - Do: `services/redis.py` currently owns a module-level `redis_client` and
-    `enqueue_job`, and nothing else. Extract `get_client()` (single construction
-    point), a `ping()` used by `/health`, `publish_channel`/`subscribe_channel`
-    helpers for the inbox, and a `fixed_window`/`sliding_window` counter helper
-    for F1. Keep `enqueue_job` and the `queue:jobs` contract byte-identical.
+    `enqueue_job`, and nothing else. Extract a single client construction point,
+    `ping()` used by `/health`, lifecycle-safe publish/subscribe helpers for the
+    inbox, and a rate-limit counter primitive for F1. Keep `enqueue_job` and the
+    `queue:jobs` payload contract unchanged. Avoid connecting at import time;
+    close pubsub/subscriber resources on disconnect and keep operations on the
+    application's event loop.
   - Done when: import works with Redis **down** (no connection at import time),
     `enqueue_job` behaviour and payload are unchanged, and the new helpers have
     unit tests that stub the client.
@@ -144,10 +164,11 @@ invents its own version. **Entry:** environment pre-flight above.
     `tests/test_settings.py`.
   - Do: add (all defaulted to the V2.1 behaviour) `RATE_LIMIT_BACKEND=memory`,
     `EMBED_TOKEN_MODE=compat`, `TOPIC_CLUSTER_MAX_MESSAGES=500`,
-    `TOPIC_CLUSTER_INTERVAL_SECONDS=86400`, `INBOX_PRESENCE_TTL_SECONDS=60`,
+    `TOPIC_CLUSTER_INTERVAL_SECONDS=86400` (scheduler due-check cadence; actual
+    window boundaries come from `normalize_period`/`digest_day`), `INBOX_PRESENCE_TTL_SECONDS=60`,
     `INBOX_STREAM_HEARTBEAT_SECONDS=15`; internal keys `topic_clustering_enabled`
-    (`false`) and `topic_cluster_count` (`5`). Nothing is wired yet beyond the
-    registry, so `WIDGET_PUBLIC_KEYS` does not grow.
+    (`false`), `topic_cluster_count` (`5`) and `live_inbox_enabled` (`false`).
+    Nothing is wired yet beyond the registry, so `WIDGET_PUBLIC_KEYS` does not grow.
   - Done when: settings tests pass at the new key count, `GET /api/widget-config`
     still publishes exactly the 14 allowlisted keys, and `.env.example` documents
     every variable with its default.
@@ -164,47 +185,56 @@ invents its own version. **Entry:** environment pre-flight above.
 - [ ] `uv run python -c "import site_gpt.app.main"` and `import site_gpt.app.worker` pass.
 - [ ] `alembic current` is still `c9d3e5a71b28` (Wave 0 adds no revision).
 - [ ] Both suites, `npm run build && npm run lint`, `trail build` pass.
-- [ ] `GET /health` and `GET /api/widget-config` unchanged for a V2.1 company.
+- [ ] `GET /api/widget-config` remains unchanged; `/health` retains its current
+      fields and adds only documented Redis/backend degradation diagnostics.
 - [ ] commit `chore(v3): V3-0G gate — foundation`.
 
 ---
 
 ### Wave 1 — F1 Redis rate limiting (no schema change)
 
-**Goal:** make K5 stop being an accepted risk: the limit becomes shared across API
-processes and survives restarts, without changing any caller's contract.
+**Goal:** mitigate K5 when Redis is healthy: the limit becomes shared across API
+processes and survives restarts, without changing any caller's contract. An outage
+fallback remains per-process and is an explicitly weaker mitigation.
 **Entry:** V3-0G.
 
 - [ ] **V3-10 · Sliding-window limiter with a memory fallback** — `M`, depends: V3-0G, migration: —
   - Files: `services/ratelimit.py`, `services/redis.py`, `tests/test_ratelimit.py`.
   - Do: keep `allow(key, max_requests, window_seconds)` and `rate_limit(...)` as
-    the public surface — call sites keep working. Back it by Redis (sorted set per
-    `{scope}:{ip}` with `ZREMRANGEBYSCORE` + `ZCARD` in one pipeline, `EXPIRE` as
-    a floor against orphans) when `RATE_LIMIT_BACKEND=redis`; keep the current
-    in-process deque when it is `memory`. A Redis error logs **once** per process
-    and falls through to the memory path (D5) — never to "always allow".
-  - Done when: the same key exhausted in process A is refused in process B, a
-    restart does not reset a non-expired window, and a stubbed Redis failure still
-    enforces the limit in-process.
+    the public surface — call sites keep working. For the sliding window, use a
+    Redis sorted set and one atomic Lua script (prune, count, conditionally add,
+    set expiry); a pipeline alone is not atomic under concurrent API processes.
+    Keep the current in-process deque when `RATE_LIMIT_BACKEND=memory`. A Redis
+    error logs with process-level throttling and falls through to memory (D5); this
+    is a per-process cap during outage, not globally enforced.
+  - Done when: concurrent requests against two API processes cannot exceed one
+    Redis budget; restart does not reset a non-expired window; limiter Redis errors
+    trigger bounded timeout/fallback and an explicit degraded limiter signal in
+    `/health` (not just the independent Redis ping); tests prove fallback limits
+    each process locally and document that combined outage traffic may exceed one
+    shared budget.
 
 - [ ] **V3-11 · One policy table for public limits** — `S`, depends: V3-10, migration: —
   - Files: `api/routes.py`, `api/handoff.py`, `api/v1.py`, `core/config.py`.
   - Do: route limits are currently scattered literal arguments. Collect them in a
-    module-level table (`chat`, `stream`, `contacts`, `handoff`, `session-token`,
-    `v1`) so a change is one edit, and return `Retry-After` on 429. Do not change
-    any existing number in this task — behaviour must be identical with the
-    `memory` backend.
+    module-level policy table (`chat`, `stream`, `contacts`, `handoff`,
+    `session-token`, `v1`). Keep public widget limits IP-scoped. For `/api/v1`,
+    do not add per-key limiting in this task unless an authenticated dependency can
+    safely expose the full key-row id before the limiter; preserve key auth/scope
+    ordering and current limits. Add a standards-compliant `Retry-After` on 429
+    without changing body or numeric limits; separately decide whether API-key
+    abuse protection merits a follow-up.
   - Done when: every public route resolves its limit from the table, the 429 body
     is unchanged apart from the added header, and a test pins the table.
 
 - [ ] **V3-12 · Compose with quota and API keys** — `S`, depends: V3-11, migration: —
   - Files: `services/quota.py`, `api/v1.py`, `README.md`.
-  - Do: document and verify precedence — the per-IP window is a burst guard, the
-    daily Redis quota is the spend ceiling, and an API key is limited per key
-    (`key:{prefix}`) instead of per IP so one customer cannot fill another's
-    bucket from a shared NAT. No change to the quota counter itself.
-  - Done when: two keys behind one IP get independent buckets, and an exhausted
-    key still gets the documented `429` with `Retry-After`.
+  - Do: document precedence — the existing per-IP limiter is a burst guard and
+    daily Redis quota is the spend ceiling. Do not claim API-key-specific limiting
+    unless this task adds/tests an auth-before-limit dependency; otherwise defer
+    per-key quotas explicitly. Do not change the quota counter itself.
+  - Done when: tests/docs prove the actual auth, limiter and quota ordering; do not
+    claim independent per-key buckets unless they are implemented.
 
 - [ ] **V3-13 · Docs: K5 leaves the accepted list** — `S`, depends: V3-12, migration: —
   - Files: `README.md` §4, `docs/security.md` §5, `AGENTS.md`.
@@ -224,74 +254,88 @@ processes and survives restarts, without changing any caller's contract.
 
 ---
 
-### Wave 2 — F4 Per-website embed token (K18), M7
+### Wave 2 — F4 Per-website embed token (K18 residual), M7
 
-**Goal:** close the "copied `website_id`" hole without breaking a single deployed
-snippet. **Entry:** V3-1G.
+**Goal:** provide a per-website token gate and casual-copy deterrent without
+breaking deployed snippets by default. This does not close deliberate copying or
+prove origin. **Entry:** V3-1G.
 
 - [ ] **V3-20 · Migration M7 — `embed_tokens`** — `M`, depends: V3-1G, migration: **M7**
   - Files: `models.py`, `alembic/versions/<rev>_v3_m7_embed_tokens.py`, `tests/test_models_indexes.py`.
-  - Do: table `embed_tokens` following `api_keys` (`5fbe6ce28d9b`-era style):
-    `website_id` FK `ondelete="CASCADE"`, `token_prefix` (String 12), `token_hash`
-    (String 64, **unique**), `created_at`, `revoked_at`, `last_used_at`; index on
-    `(website_id, created_at)` built `CONCURRENTLY` (AGENTS.md rule). One active
-    row per website is enforced in the service, not by a partial index, so rotation
-    can keep a short overlap.
+  - Do: table `embed_tokens`: `website_id` FK `ondelete="CASCADE"`,
+    `token_prefix` (String 12), `token_hash` (String 64, unique), `created_at`,
+    `revoked_at`, `last_used_at`. Enforce one active token per website with a
+    partial unique index on `website_id WHERE revoked_at IS NULL`; a regular index
+    build is appropriate because the new table has no existing traffic/data.
+    Rotation revokes the previous row and inserts the replacement in one
+    transaction (no overlap). Add an appropriate history index if the read path
+    warrants it.
   - Done when: `upgrade → downgrade → upgrade` works, `alembic heads` shows a
-    single head chained from `c9d3e5a71b28`, and a pre-existing website is
-    unaffected (a website with no row is "no token yet", not "invalid").
+    single head chained from `c9d3e5a71b28`, duplicate active tokens are rejected
+    by the database, and a pre-existing website with no row remains unaffected.
 
 - [ ] **V3-21 · Token issue / rotate / revoke** — `M`, depends: V3-20, migration: —
-  - Files: `services/embed_tokens.py` (new), `api/website.py`, `schemas/embed_token.py` (new), `api/api_key.py` for the pattern.
+  - Files: `services/embed_tokens.py` (new), `api/website.py`, `schemas/embed_token.py` (new), website detail UI and snippet generator.
   - Do: `POST /api/websites/{id}/embed-token` mints (raw value returned **once**),
     `POST …/embed-token/rotate` revokes the previous row and mints a new one,
     `DELETE …/embed-token` revokes, `GET` returns prefix/created/revoked only.
-    Admin-only, company-scoped, foreign id → 404. Hash with `API_KEY_PEPPER`
-    exactly as `services/api_keys.py` does (one definition, no copy).
+    Admin-only, company-scoped, foreign id → 404. Hash the high-entropy token
+    with centralized SHA-256 logic; unlike customer API keys, it is public in the
+    browser and must not be described as a confidential credential.
   - Done when: the raw token never appears in a read, a log or the DB; rotation
     leaves the old prefix invalid and the new one valid; another company's website
     id is a 404.
 
 - [ ] **V3-22 · Widget and snippet carry the token** — `M`, depends: V3-21, migration: —
-  - Files: `scripts/widget.js`, `frontend/src/utils/widgetSnippet.ts`, `tests/widget_embed_token.test.mjs`.
-  - Do: `window.ChatWidgetConfig.embedToken` (optional) becomes `X-Embed-Token` on
-    every public call the widget makes (`/api/chat`, `/api/chat/stream`,
-    `/api/widget-config`, `POST /api/contacts`, session-token call); the snippet
-    generator emits it. Config key and `localStorage` names stay untouched; with no
-    `embedToken` the widget sends exactly the V2.1 headers. Keep the dead-token
-    recovery rule from K4: reset **once** on `invalid_token`-style refusal, and
-    never loop.
+  - Files: `scripts/widget.js`, `frontend/src/utils/widgetSnippet.ts`, website
+    detail/snippet UI, `tests/widget_embed_token.test.mjs`.
+  - Do: add an explicit operator UI flow to copy the raw token once and regenerate
+    the installation snippet with it; never put the token in public widget-config
+    or persist it in a public setting. Optional `window.ChatWidgetConfig.embedToken`
+    becomes `X-Embed-Token` on every applicable public widget request. Keep config
+    and existing `localStorage` keys backward-compatible. Do not conflate
+    embed-token errors with K4 session-token errors: an embed-token refusal must
+    not reset/replace the visitor's session or retry with a different identity.
+    Update all actual public widget call sites, including config, chat/stream,
+    contacts, handoff and session-token minting where applicable.
   - Done when: the node suite proves header presence when configured, absence when
     not, and that no other request shape changed.
 
 - [ ] **V3-23 · Enforce in `embed_guard`** — `M`, depends: V3-22, migration: —
   - Files: `services/embed_guard.py`, `api/routes.py`, `tests/test_embed_origin.py`.
-  - Do: `ensure_embed_allowed` gains the token check as a third layer after the
-    existing host check: with `EMBED_TOKEN_MODE=compat` a website that has **no**
-    active token still accepts tokenless requests (old snippet), a website that
-    **has** one requires a matching token, and `enforce` requires it everywhere.
-    A wrong/revoked token is `403` with a machine-readable `reason`
-    (`invalid_embed_token`), never a generic prose the widget must parse. Update
-    `last_used_at` at most once per minute per token to avoid a write per message.
-  - Done when: matrix covered by tests — no token + compat + unclaimed website →
-    200; no token + website with active token → 403; foreign website's token →
-    403; revoked → 403; enforce + no token → 403; valid → 200 and `last_used_at`
-    set. `services/embed_guard.py`'s docstring no longer says "a schema change, so V2".
+  - Do: extend `ensure_embed_allowed` (do not fork it). `compat` accepts a missing
+    token whether or not one has been issued, preserving deployed snippets; any
+    supplied token must match an active token. Add `X-Embed-Token` to the explicit
+    CORS allowed-header list and test browser preflight from an already-allowed
+    origin; do not broaden the origin policy. `enforce` requires a valid token.
+    A wrong/revoked token is `403` with stable machine-readable reason
+    `invalid_embed_token`. Keep this distinct from K4's `session_expired`,
+    `session_claimed` and `invalid_token`; never reset session state for an embed
+    refusal. Update `last_used_at` at most once per minute without an unbounded
+    per-token in-memory map.
+  - Done when: matrix covered by tests — no token + compat + website with/without
+    an issued token → allowed; wrong/foreign/revoked token → 403; enforce + no
+    token → 403; valid token → allowed and `last_used_at` updated under the
+    throttle. Verify token enforcement is additive to the host check and document
+    that neither Origin/Referer nor a public snippet token proves browser origin.
 
-- [ ] **V3-24 · Docs: K18 leaves the accepted list** — `S`, depends: V3-23, migration: —
+- [ ] **V3-24 · Docs: embed-token residual and rollout** — `S`, depends: V3-23, migration: —
   - Files: `README.md` §4 (K18 row, embed section), `docs/security.md` §2/§5, `AGENTS.md`.
-  - Do: describe the token, the `compat → enforce` rollout (same shape as K4), the
-    residual (a token in the page source of a compromised customer site is still
-    readable — it raises the bar and stops casual copies), and the exact snippet
-    change a customer must ship.
-  - Done when: README's K18 row says "mitigated in V3, residual X", and the
-    deployment checklist tells an operator how to flip the mode.
+  - Do: describe the token's public/replayable nature, the `compat → enforce`
+    breaking rollout, the exact snippet change required, and that it cannot prove
+    origin or stop deliberate copying. Keep K18 listed as an accepted residual
+    unless a separate, genuinely origin-bound mechanism is designed.
+  - Done when: README/security docs make no claim that a browser-visible token
+    closes K18; the deployment checklist includes staged snippet validation and
+    rollback.
 
 #### Gate V3-2G
 
 - [ ] M7 applied; single head; `downgrade -1 && upgrade head` clean.
-- [ ] Token matrix (six cases in V3-23) re-run by hand against a real server.
-- [ ] A V2.1 snippet with no `embedToken` still chats in `compat` mode (recorded).
+- [ ] Token matrix (compat missing with/without issuance, enforce missing, valid,
+      wrong, foreign and revoked tokens) re-run by hand against a real server.
+- [ ] A V2.1 snippet with no `embedToken` still chats in `compat` mode after an
+      admin issues a token; record both pre- and post-issuance checks.
 - [ ] Both suites + widget suite + build + lint + `trail build` pass.
 - [ ] commit `chore(v3): V3-2G gate — embed token`.
 
@@ -302,65 +346,80 @@ snippet. **Entry:** V3-1G.
 **Goal:** replace term counts with named clusters, and put them in the digest and
 `/analytics`. **Entry:** V3-2G.
 
-- [ ] **V3-30 · Migration M8 — `topic_clusters`** — `M`, depends: V3-2G, migration: **M8**
-  - Files: `models.py`, `alembic/versions/<rev>_v3_m8_topic_clusters.py`.
-  - Do: `topic_clusters` — `company_id` FK CASCADE, `website_id` FK CASCADE
-    nullable (NULL = whole company, matching `extra_documents`), `label` String,
-    `summary` Text, `centroid` `Vector(EMBEDDING_DIMENSIONS)` nullable (NULL for a
-    hand-named cluster), `message_count` int, `period_start` timestamptz,
-    `created_at`; index `(company_id, created_at)` and `(website_id, created_at)`
-    both `CONCURRENTLY`. Same vector dimension — **no re-ingest**.
-  - Done when: reversible, single head from M7, and the dimension matches
-    `EMBEDDING_DIMENSIONS` (a test asserts it, as the embeddings table does).
+- [ ] **V3-30 · Migration M8 — topic clusters + run claims** — `M`, depends: V3-2G, migration: **M8**
+  - Files: `models.py`, `alembic/versions/<rev>_v3_m8_topic_clusters.py`, `services/retention.py`, `api/privacy.py`.
+  - Do: `topic_clusters` stores company-scoped clusters by weekly window:
+    `company_id` FK CASCADE, `label`, `summary`, `centroid`
+    `Vector(EMBEDDING_DIMENSIONS)`, stable `cluster_key`, sampled/eligible counts,
+    `period_start`, `created_at`, with unique `(company_id, period_start, cluster_key)`.
+    Add `topic_cluster_runs` with unique `(company_id, period_start)`, status,
+    claim/completion timestamps and bounded error metadata. Use indexes/constraints appropriate to expected query volume;
+    these new empty tables do not require `CONCURRENTLY` by default. Apply explicit
+    retention to cluster and run rows. Same vector dimension — **no re-ingest**.
+  - Done when: reversible, single head from M7; DB constraints enforce unique
+    company/window runs and stable cluster identities; centroid matches
+    `EMBEDDING_DIMENSIONS`; retention and privacy invalidation are tested.
 
 - [ ] **V3-31 · Clustering service** — `L`, depends: V3-30, migration: —
-  - Files: `services/topics.py` (new), `services/llm.py` (reuse only), `tests/test_topics.py`.
-  - Do: `cluster_topics(db, company_id, website_id=None, period=…)` — take visitor
-    questions from the window (bounded by `TOPIC_CLUSTER_MAX_MESSAGES`), embed only
-    what is not already embedded (reuse `embed_texts`), assign each question to an
-    existing centroid within a cosine threshold or start a new one, then ask the
-    chat model **once per cluster** for a short label + one-sentence summary.
-    Purely deterministic assignment so tests can pin it with stubbed embeddings;
-    the LLM call is isolated and its failure degrades to the first question's
-    trimmed text as the label. Skips questions shorter than a few tokens and the
-    `__qa_training__` content (that is not a visitor question).
+  - Files: `services/topics.py` (new), `services/llm.py` (reuse only), `tests/test_topics.py`, `services/retention.py`, `api/privacy.py`.
+  - Do: `cluster_topics(db, company_id, window=…)` — select visitor `role='user'`
+    questions across company websites in a full weekly window aligned with
+    `normalize_period`/`digest_day`, bounded by `TOPIC_CLUSTER_MAX_MESSAGES`; current
+    chat messages have no stored vectors, so embed this sample at run time with
+    `embed_texts` and do not persist duplicate message vectors. Use stable ordered
+    inputs, deterministic centroid initialization/assignment and stable cluster
+    IDs; define cosine threshold and tie-breaking. Cap embedding inputs and LLM
+    naming calls separately. Treat visitor questions as untrusted input: use a
+    fixed constrained naming prompt, request a bounded structured response, validate
+    and length-limit label/summary fields, and fall back on malformed/provider
+    output. Store labels, summaries and aggregates only, not raw representative
+    questions. Track eligible and sampled counts; label counts sampled/estimated
+    when truncated. On privacy erasure, delete/invalidate the affected company/week
+    without an external provider call; rebuild later through the worker only when
+    enabled. Retention covers run/cluster rows.
   - Done when: a stubbed run yields stable clusters across two runs, a failing LLM
     still produces rows, and no company's rows can appear in another's run.
 
 - [ ] **V3-32 · Worker job + settings** — `M`, depends: V3-31, migration: —
   - Files: `worker.py`, `api/setting.py`, `tests/test_settings.py`, `tests/test_worker.py`.
-  - Do: job `{"type": "topic_clusters", "company_id": …}` handled by the worker's
-    own loop on `TOPIC_CLUSTER_INTERVAL_SECONDS`, queued only for companies with
-    `topic_clustering_enabled=true` (D6), skipped when nothing new is in the
-    window. `topic_cluster_count` bounds the number stored per run. Add both keys
-    to the settings test in the same commit.
-  - Done when: flag off → no job, no LLM call; flag on → one run per interval even
-    with two workers (claim it the way the digest claims a period), and the digest
-    loop is unaffected.
+  - Do: schedule each enabled company into digest-aligned weekly windows using
+    `TOPIC_CLUSTER_INTERVAL_SECONDS` only as the scheduler check cadence. Add the
+    `topic_clusters` job type to worker dispatch. M8 has a durable run row unique on
+    `(company_id, period_start)` with status, claim/completion timestamps and
+    bounded error metadata; atomically claim, recover stale runs, and commit output
+    plus completion status. `topic_cluster_count` and input/embedding/LLM caps bound
+    every run.
+  - Done when: flag off → no job/provider call; flag on → duplicate jobs/two workers
+    cannot duplicate a completed window; a failed/stale claim is recoverable; digest
+    and analytics only aggregate complete, non-overlapping windows, falling back
+    to `top_topics` when the requested interval cannot be represented exactly.
 
 - [ ] **V3-33 · Digest + analytics read clusters** — `M`, depends: V3-32, migration: —
-  - Files: `services/digest.py`, `api/analytics.py`, `frontend/src/pages/Analytics.tsx`, `tests/test_digest.py`.
-  - Do: `build_digest` gains `topic_groups` (label, count, summary) when clusters
-    exist for the window and keeps `top_topics` (term counts) as the fallback so a
-    company with clustering off sees the V2.1 digest byte-for-byte.
-    `render_digest_html` renders the groups; `/api/analytics/summary` returns them
-    and the page shows one table with a "Show terms" toggle. Do not delete
-    `_topics` — it is the fallback.
+  - Files: `services/digest.py`, `api/analytics.py`, `api/v1.py` (compatibility review), digest/analytics schemas and frontend types/page, `tests/test_digest.py`.
+  - Do: `build_digest` adds `topic_groups` only when complete weekly partitions
+    cover the requested interval without gaps or double-counting; otherwise preserve
+    `top_topics` as the fallback. Keep clustering-off digest output byte-for-byte
+    compatible. Render groups in digest HTML; preserve analytics fields and review
+    `/api/v1/analytics/summary` compatibility before changing its public payload.
+    Update schemas/types and show fallback/sample-count indicators. Keep `_topics`.
   - Done when: flag off reproduces the old digest exactly (asserted), flag on shows
     clusters, and the analytics payload keeps its existing fields.
 
 - [ ] **V3-34 · Docs: topics** — `S`, depends: V3-33, migration: —
   - Files: `README.md`, `AGENTS.md`, `docs/security.md` §4 (data inventory).
-  - Do: document the two keys, the two env caps, what is sent to the LLM (questions
-    only, bounded), and that clusters are derived data deleted with the company's
-    website rows.
-  - Done when: the README states the cost model (one LLM call per cluster per run)
-    and the inventory lists `topic_clusters`.
+  - Do: document settings and the scheduler cadence/input/embedding/LLM caps,
+    disclosure that bounded visitor questions go to the configured embedding
+    provider and cluster names/summaries to the configured chat LLM, plus the
+    retention and erasure/recomputation policy for derived cluster data.
+  - Done when: docs state bounded provider-call cost, and the data inventory lists
+    both `topic_clusters` and `topic_cluster_runs`.
 
 #### Gate V3-3G
 
 - [ ] M8 applied from M7; `downgrade -1 && upgrade head` clean; single head.
-- [ ] A seeded week produces clusters; digest HTML contains them; `/analytics` renders them.
+- [ ] A seeded full weekly UTC window produces clusters; the weekly digest shows
+      them; analytics displays them only when complete weekly partitions cover its
+      requested interval exactly. Partial/missing coverage uses term-count fallback.
 - [ ] Flag off reproduces the V2.1 digest (diffed, recorded here).
 - [ ] Both suites + widget suite + build + lint + `trail build` pass.
 - [ ] commit `chore(v3): V3-3G gate — topic clustering`.
@@ -377,94 +436,116 @@ handoff email remains the fallback when nobody is there. **Entry:** V3-3G.
   - Do: `conversations` — `website_id` FK CASCADE, `session_id` String(255),
     `state` String(20) (`bot` | `waiting` | `human` | `closed`), `assigned_user_id`
     FK `users.id` `ondelete="SET NULL"` nullable, `claimed_at`, `closed_at`,
-    `last_message_at`; **unique** `(website_id, session_id)`, index
-    `(website_id, state, last_message_at)` built `CONCURRENTLY`. Add
-    `chat_messages.author_user_id` FK SET NULL nullable (`role='agent'` rows).
-    **No backfill** (D2): rows are created lazily; `delete_conversation` removes the
-    conversation row with its messages so privacy erasure stays complete.
-  - Done when: reversible; a session with no row still lists and deletes through
-    the existing helpers; `services/conversations.py` is the only place that
-    creates the row (one `get_or_create_conversation`).
+    `last_message_at`; unique `(website_id, session_id)` and an index for the
+    company website/state/queue ordering. Since `conversations` is new and empty,
+    create its indexes normally; use concurrent index work only for indexes on
+    existing busy tables. Add `chat_messages.author_user_id` FK SET NULL nullable
+    (`role='agent'` rows).
+    **No backfill** (D2): rows are created lazily; extend transcript/history,
+    export, retention, deletion and erasure paths. Define transitions explicitly:
+    `bot → waiting → human`, `human → waiting` on release, and `human → closed` on
+    close, plus behavior for a later visitor message. Explicit erasure must use one
+    transaction/service for messages, conversation, linked handoffs/feedback and
+    that session's `session_tokens`; retention must not orphan conversation
+    metadata after messages expire.
+  - Done when: reversible; a session with no row still lists/deletes through
+    existing helpers; `services/conversations.py` owns conversation creation;
+    explicit erasure is transactional and leaves no messages, conversation, token,
+    feedback or handoff rows for that session and invalidates affected cluster data;
+    retention removes expired metadata consistently.
 
 - [ ] **V3-41 · Inbox service: claim, assign, close** — `L`, depends: V3-40, migration: —
-  - Files: `services/inbox.py` (new), `schemas/inbox.py` (new), `api/inbox.py` (new), `main.py`.
-  - Do: `POST /api/inbox/{session_id}/claim` with `SELECT … FOR UPDATE SKIP LOCKED`
-    on the conversation row (the K5a delivery-claim rule, reused): exactly one
-    agent wins, the loser gets `409`. `POST …/release`, `POST …/assign`,
-    `POST …/close`, `GET /api/inbox` (manager+, company-scoped, filter by state,
-    paginated with `PaginatedResponse`), `GET /api/inbox/{session_id}` (transcript
-    + contact). `handoff_requests.status` becomes `accepted` when a session is
-    claimed so `/handoffs` and `/inbox` agree.
-  - Done when: two concurrent claims produce one winner and one 409; a foreign
-    session is a 404; closing frees the session; no route edits rows by hand
-    outside the service.
+  - Files: `services/inbox.py` (new), `schemas/inbox.py` (new), `api/inbox.py` (new), `main.py`, `api/setting.py`, `tests/test_settings.py`.
+  - Do: address agent routes by conversation UUID, scoped to the caller's company.
+    Add `live_inbox_enabled=false`; disabled inbox routes return 404 while existing
+    public handoff stays intact. When enabled, claim uses
+    `SELECT … FOR UPDATE SKIP LOCKED`: one agent wins and loser gets `409`. Add
+    release/assign/close, paginated manager+ list and transcript/contact reads.
+    Default to current company manager RBAC. Claim/handoff changes go through the
+    service in one transaction.
+  - Done when: two concurrent claims produce one winner and one 409; foreign
+    conversation UUID is a 404; same session id on two websites resolves
+    unambiguously; closing applies the defined state transition; no route edits
+    rows by hand outside the service.
 
 - [ ] **V3-42 · Agent SSE stream + presence** — `L`, depends: V3-41, migration: —
   - Files: `api/inbox.py`, `services/inbox.py`, `services/redis.py`, `tests/test_inbox_stream.py`.
-  - Do: `GET /api/inbox/events` (JWT) as an SSE `StreamingResponse` that subscribes
-    to `inbox:{company_id}` and emits `session.waiting`, `message.created`,
-    `session.claimed`, `session.closed`; heartbeat every
-    `INBOX_STREAM_HEARTBEAT_SECONDS`; a client disconnect closes the subscription.
-    Presence is `inbox:presence:{company_id}:{user_id}` with
-    `INBOX_PRESENCE_TTL_SECONDS` refreshed by the stream itself (D1) — no socket
-    registry. Redis unavailable → the endpoint answers `503` with a clear detail
-    (the page then polls `GET /api/inbox` every few seconds), never a silent hang.
-  - Done when: two dashboards see the same event once; closing the tab drops
-    presence within the TTL; a Redis outage degrades to polling.
+  - Do: `GET /api/inbox/events` (JWT, `fetch()`-based SSE so Authorization headers
+    are available) authenticates/authorizes and checks `live_inbox_enabled` before
+    starting a `StreamingResponse`; it streams Redis pub/sub notifications. Publish
+    stable-id notifications only after DB transactions commit. Each event carries a stable id;
+    clients reconcile authoritative DB state and deduplicate after reconnect
+    (pub/sub is not durable or exactly once). The UI periodically reconciles from
+    the DB. Heartbeat at `INBOX_STREAM_HEARTBEAT_SECONDS`; disconnect closes the
+    subscription. Track a
+    unique presence lease per connection with TTL, aggregate by company/user, and
+    renew while connected so one tab disconnecting cannot clear another tab's
+    presence. Redis unavailable → 503 before streaming; poll the DB.
+  - Done when: multiple dashboards receive notifications and converge on the same
+    DB state; reconnect does not lose messages; one tab closing does not clear a
+    second tab's presence; Redis outage degrades to polling.
 
 - [ ] **V3-43 · Agent replies reach the widget** — `L`, depends: V3-42, migration: —
   - Files: `api/inbox.py`, `services/rag.py` (`save_message` reuse), `api/routes.py`, `scripts/widget.js`, `tests/widget_inbox.test.mjs`.
-  - Do: `POST /api/inbox/{session_id}/messages` stores `role='agent'` +
-    `author_user_id`, sets `last_message_at`, publishes `message.created`. The
-    widget gets the other direction through an SSE endpoint
-    `GET /api/session/{session_id}/events` authenticated by the **K4 session
-    token** (`services/session_tokens.py::authorize` — never by the embed token
-    alone), which streams only that session's agent messages and falls back to
-    polling `?after=` where SSE is blocked. Visitor messages already arrive via
-    `/api/chat`; when the session is `human`, the bot does **not** answer and the
-    message is queued to the agent instead (one line in `ask`/`ask_stream`, keyed
-    on the conversation state).
+  - Do: agent message routes use the conversation UUID and store `role='agent'` +
+    `author_user_id`; extend message schemas/UI types, history/transcript readers,
+    privacy export and retention to preserve and expire agent-authored messages. Persist before publishing. The public widget
+    stream resolves website + session, checks `ensure_website_active` and
+    `ensure_embed_allowed`, and authorizes with the **K4 session token**
+    (`services/session_tokens.py::authorize`) — never the embed token alone. Poll
+    by stable `(created_at, id)` keyset cursor if SSE is blocked or reconnects. In
+    `human` state, `/api/chat` persists the visitor message and returns a queued
+    result without invoking the LLM; define transitions back to bot/closed and test
+    both sync and streaming handlers.
   - Done when: visitor message → agent sees it; agent reply → widget shows it
-    within a second without reload; bot silent while `state='human'`; a foreign
-    session token cannot read another session's stream; lead form and history still
-    work.
+    without reload; bot silent while `state='human'`; a foreign session token
+    cannot read another session's stream; reconnect does not lose persisted
+    messages; lead form and history still work.
 
 - [ ] **V3-44 · `/inbox` page** — `L`, depends: V3-43, migration: —
-  - Files: `frontend/src/pages/Inbox.tsx` (new), `App.tsx`, `components/Layout.tsx`, `utils/api.ts`, `types/api.ts`.
+  - Files: `frontend/src/pages/Inbox.tsx` (new), `App.tsx`, `components/Layout.tsx`, `utils/api.ts`, `types/api.ts`, `api/setting.py`, `tests/test_settings.py`.
   - Do: Ant Design only — queue list (state, website, waiting time, assigned agent),
     transcript pane with an agent composer, Claim/Release/Close actions, live
-    updates from the event stream, presence avatars. No chart library, no new UI
-    dependency; reuse the existing auth context and `ProtectedRoute`.
+    updates from the event stream, presence avatars. Gate page/navigation on
+    `live_inbox_enabled`; no chart library or new UI dependency; reuse auth context
+    and `ProtectedRoute`.
   - Done when: `npm run build && npm run lint` pass, the page renders seeded
     sessions, and a claim made in one browser shows in another.
 
 - [ ] **V3-45 · Handoff becomes a queue entry** — `M`, depends: V3-44, migration: —
   - Files: `api/handoff.py`, `services/inbox.py`, `frontend/src/pages/Handoffs.tsx`, `services/integrations.py`.
-  - Do: a handoff click sets `conversations.state='waiting'` (creating the row),
-    still emails and emits `handoff.requested` so the V2.1 behaviour is intact
-    when nobody is in `/inbox`, and now also appears in the inbox queue. The
-    `handoff.requested` payload gains `inbox_url`; nothing is removed from it.
-  - Done when: with `handoff_enabled=false` nothing changes; with it on, one click
-    produces exactly one `handoff_requests` row, one email, one event and one
-    waiting session; `/handoffs` still marks `accepted/closed` and stays in sync
-    with a claim.
+  - Do: when `live_inbox_enabled=true`, a handoff click atomically creates/reuses
+    the conversation and waiting state, preserving the current idempotent handoff
+    row, email and integration event. When false, preserve the exact V2.1 path and
+    create no inbox state. Document additive event fields and expose no internal
+    or cross-tenant URL/data.
+  - Done when: with `handoff_enabled=false` nothing changes; with handoff and inbox
+    enabled, one click produces one `handoff_requests` row, one email, one event and
+    one waiting session; with inbox disabled, the V2.1 path creates no conversation
+    row. `/handoffs` status remains in sync with an inbox claim.
 
 - [ ] **V3-46 · Docs: inbox** — `S`, depends: V3-45, migration: —
   - Files: `README.md`, `AGENTS.md`, `docs/security.md`, `plans/SPEC.md` (ADR-4 note).
-  - Do: replace "notify-and-callback, not an inbox" with the actual behaviour
-    (queue + fallback email), document the new env vars, the SSE endpoints and
-    their auth, the presence TTL, and the residual risk (an agent can read a
-    visitor's transcript — same data admins already see; RBAC unchanged).
+  - Do: update ADR-4 as superseded by the implemented queue + fallback email;
+    document env vars, fetch-based SSE auth/reconnect semantics, CORS preflight,
+    proxy buffering/timeouts, presence TTL and the actual access model. Document the residual that embed tokens are public and
+    replayable, and that inbox agents can read visitor transcripts under existing
+    company RBAC.
   - Done when: README's admin-page list includes `/inbox`, ADR-4 is marked
     superseded with a pointer to D1, and no doc still claims "no live chat".
 
 #### Gate V3-4G (release gate)
 
-- [ ] M7 → M8 → M9 applies from empty DB with `pgvector`, replaying from `c9d3e5a71b28`; each downgrade/upgrade proved.
+- [ ] M7 → M8 → M9 applies from empty DB with `pgvector`, replaying from
+      `c9d3e5a71b28`; each downgrade/upgrade is proved, including cluster-run and
+      per-window cluster uniqueness plus conversation/message deletion paths.
 - [ ] Full smoke (see §9) passes on a throwaway database.
-- [ ] With every V3 flag off, a V2.1 company behaves exactly as at tag `v2.1` (diffed, recorded).
+- [ ] With every V3 flag off (including `live_inbox_enabled=false` and
+  `topic_clustering_enabled=false`), a V2.1 company behaves as at tag `v2.1`;
+  record the comparison and any explicitly documented additive diagnostics.
 - [ ] Both suites + widget suite + build + lint + `trail build` pass; docs consistent.
-- [ ] Tag `v3`; push `feat/v3`, merge `master`, tag pushed.
+- [ ] Merge the verified release commit from `feat/v3` to `master`, then create
+      and push tag `v3` on the merged release commit.
 
 ---
 
@@ -474,14 +555,13 @@ handoff email remains the fallback when nobody is there. **Entry:** V3-3G.
 graph LR
   W0[Wave 0<br/>redis helper, env] --> G0{V3-0G}
   G0 --> W1[Wave 1<br/>F1 rate limit] --> G1{V3-1G}
-  G0 --> M7[M7 embed_tokens<br/>V3-20] --> W2[Wave 2<br/>F4 token] --> G2{V3-2G}
+  G1 --> M7[M7 embed_tokens<br/>V3-20] --> W2[Wave 2<br/>F4 token] --> G2{V3-2G}
   G2 --> M8[M8 topic_clusters<br/>V3-30] --> W3[Wave 3<br/>F2 clusters] --> G3{V3-3G}
   G3 --> M9[M9 conversations<br/>V3-40] --> W4[Wave 4<br/>F3 inbox] --> G4{V3-4G tag v3}
 ```
 
-Critical path: **W0 → M7 → W2 → M8 → W3 → M9 → W4**. Wave 1 (F1) is deliberately
-independent of the migrations and can run in parallel with Wave 2 by a second
-person, but only after V3-0G — both need the shared `services/redis.py` helpers.
+Critical path: **W0 → W1 → M7/W2 → M8/W3 → M9/W4**. The listed task
+dependencies are serial; do not parallelize a wave against a gate it depends on.
 
 ---
 
@@ -492,23 +572,25 @@ autogenerate chain it, then confirm the parent is the head above.
 
 | ID | Revision file | Contents | Task | Chains from |
 |---|---|---|---|---|
-| M7 | `<rev>_v3_m7_embed_tokens.py` | `embed_tokens` (website FK cascade, prefix, unique hash, revoked/last-used) + `(website_id, created_at)` index | V3-20 | `c9d3e5a71b28` |
-| M8 | `<rev>_v3_m8_topic_clusters.py` | `topic_clusters` (company + nullable website, label/summary, centroid `Vector(EMBEDDING_DIMENSIONS)`, counts) + two `CONCURRENTLY` indexes | V3-30 | M7 |
-| M9 | `<rev>_v3_m9_inbox.py` | `conversations` (unique website+session, state, assignee, timestamps) + `chat_messages.author_user_id` + queue index | V3-40 | M8 |
+| M7 | `<rev>_v3_m7_embed_tokens.py` | `embed_tokens` (website FK cascade, prefix, unique hash, revoked/last-used), partial unique active-token index and history index | V3-20 | `c9d3e5a71b28` |
+| M8 | `<rev>_v3_m8_topic_clusters.py` | Company/window `topic_clusters` plus unique durable `topic_cluster_runs` claim/status table, both with CASCADE company FKs | V3-30 | M7 |
+| M9 | `<rev>_v3_m9_inbox.py` | `conversations` (unique website+session, state, assignee, timestamps) + `chat_messages.author_user_id` + transactional indexes on the new table; privacy/retention updates and any index on existing busy tables concurrently | V3-40 | M8 |
 
 Rules that still apply:
 
-- New indexes on `chat_messages`, `conversations`, `embed_tokens` build
-  `CONCURRENTLY` inside `op.get_context().autocommit_block()`; those migrations are
-  **not atomic**, an interrupted build leaves an invalid index, and the fix is
-  `DROP INDEX CONCURRENTLY` + re-run (not idempotent).
+- Build indexes concurrently on existing busy tables only, using
+  `op.get_context().autocommit_block()`; those migrations are **not atomic**, an
+  interrupted build can leave an invalid index, and the fix is `DROP INDEX
+  CONCURRENTLY` + re-run (not idempotent). New empty V3 tables normally use
+  transactional index/constraint creation; justify any concurrent build explicitly.
 - Autogenerate will propose the known drift (naive `DateTime()` ALTERs on
   `api_keys.last_used_at`/`revoked_at`, `users.reset_token_expires_at`,
   `contacts.consent_at`, and the `chat_feedback.website_id` FK drop/create).
   Remove those lines; keep only the real change.
-- Every downgrade must be real: dropping `conversations` must not silently orphan
-  `chat_messages` (the `author_user_id` column goes first), and `embed_tokens`'
-  cascade must not be relied on in the downgrade path.
+- Every downgrade must be real and explicitly document data loss where applicable:
+  dropping `conversations` or `topic_clusters` removes inbox/history or derived
+  data. Prefer disabling features and rolling back app code before a destructive
+  schema downgrade; the `author_user_id` column goes first.
 - No migration touches `embeddings` or `EMBEDDING_DIMENSIONS`; M8's centroid column
   uses the same dimension, so there is **no re-ingest**.
 
@@ -551,18 +633,25 @@ curl -s http://localhost:8000/health
 
 **End-to-end smoke (full, at V3-4G):** fresh DB → `alembic upgrade head` → register
 a company → website + sitemap → ingest → chat (sync + SSE) → Redis backend on, two
-API processes, one budget → mint an embed token, snippet sends it, tokenless is
-refused in `enforce` and accepted in `compat` → enable clustering, run the job, see
-named clusters in `/analytics` and in the digest preview → `/inbox`: visitor clicks
-handoff, agent claims, exchanges three messages both ways, closes the session, bot
-answers again → privacy export + erase the session (conversation row gone too) →
-turn **all** V3 flags off and repeat the V2.1 smoke to prove no regression.
+API processes, one budget → mint an embed token, install the updated snippet,
+verify tokenless is accepted in `compat` even after issuance and refused in
+`enforce` → enable clustering, run a complete weekly job, see named clusters in
+the weekly digest and in `/analytics` when the range aligns → `/inbox`: visitor
+clicks handoff, agent claims, exchanges messages both ways, closes the session,
+bot resumes only per the specified state transition → privacy export + transactional
+erasure of the session (conversation, messages, session token, linked handoff/
+feedback and affected cluster data accounted for) → turn **all** V3 flags off and
+repeat the V2.1 smoke to prove no regression.
 
-**Negative checks:** foreign website's token → 403; revoked token → 403; no token
-in `enforce` → 403; two agents claiming at once → one 409; a session token reading
-another session's stream → 403; clustering disabled → no LLM call and the old
-digest; Redis down → `/health` honest, rate limit still enforced in memory, inbox
-falls back to polling; `GET /api/widget-config` still exactly 14 public keys.
+**Negative checks:** foreign/revoked embed token → 403; tokenless request in
+`compat` → accepted even after token issuance; tokenless request in `enforce` →
+403; embed-token refusal does not reset the K4 session; two agents claiming at
+once → one 409; duplicate session ids on different websites remain unambiguous;
+a session token reading another session's stream → 403; clustering disabled → no
+provider call and old digest; duplicate cluster jobs cannot duplicate a window;
+Redis down → `/health` reports degradation, rate limit falls back per process with
+that limitation explicit, inbox falls back to polling; `/api/widget-config` still
+publishes exactly 14 public keys.
 
 **Blocked-item rule:** if this environment has no reachable LLM/embedding provider,
 no SMTP or no browser, tick the gate but record the item as **blocked and
@@ -579,10 +668,10 @@ check that was not run.
 | A migration is wrong, not yet applied | Delete the untracked revision, `alembic downgrade -1`, regenerate. |
 | A migration is applied and wrong | **Do not edit it.** Write the next revision; restore from the §3 backup only if data was lost. |
 | Wave gate fails | Stop. Fix inside the same wave; the next wave assumes the contract. |
-| Redis outage in production | Set `RATE_LIMIT_BACKEND=memory` (documented, immediate); the inbox page polls; no code change needed. |
-| Embed token rollout goes wrong | Set `EMBED_TOKEN_MODE=compat` — tokenless requests are accepted again for websites without a token, so old snippets recover. |
-| Inbox misbehaves | Turn `handoff_enabled` off: the button hides and `POST /api/handoff` 404s, which is V2.1's behaviour. |
-| V3 abandoned after deployment | `alembic downgrade c9d3e5a71b28` (M9 → M8 → M7 must each reverse), redeploy tag `v2.1`. |
+| Redis outage in production | Redis-configured limiting falls back per process and health is degraded; the inbox page polls. Set `RATE_LIMIT_BACKEND=memory` only as an explicit operational mode, not an equivalent shared limit. |
+| Embed token rollout goes wrong | Set `EMBED_TOKEN_MODE=compat` — missing tokens are accepted again for all websites, including those with an issued token. A supplied invalid token remains refused; fix/remove the bad snippet header if necessary. |
+| Inbox misbehaves | Disable the inbox feature/route while preserving the existing handoff path; do not disable `handoff_enabled`, which would also remove the V2.1 fallback. |
+| V3 abandoned after deployment | Prefer forward-compatible feature flags and redeploy the last supported app. Only downgrade after a verified backup and explicit data-loss review: M9 inbox/agent data and M8 derived history are lost. Reverse migrations in order, then redeploy tag `v2.1`. |
 
 ---
 
@@ -590,14 +679,14 @@ check that was not run.
 
 | Risk | Trigger | Mitigation | Owner task |
 |---|---|---|---|
-| Rate limiting now depends on Redis | Redis down or slow | Memory fallback (D5), one-time log, `/health` reports the backend, no per-request retry storm | V3-10 |
-| Embed token breaks a live customer's widget | Enforcing before snippets ship the token | `compat` default; a website with no token keeps working; per-website flip, not global first | V3-23, V3-24 |
-| Token leaks in page source | Copy of the customer's HTML | Hash at rest, prefix-only reads, revoke/rotate; documented residual — it raises the bar, it is not DRM | V3-21, V3-24 |
-| Clustering burns LLM credits | A large company on a daily interval | Off by default, `TOPIC_CLUSTER_MAX_MESSAGES`, `topic_cluster_count`, one call per cluster, skip empty windows | V3-31, V3-32 |
-| Cluster labels are misleading | Poor embeddings or a spammy window | Summary + representative questions stored, term fallback kept, label is advisory not a stored fact about a customer | V3-31, V3-33 |
+| Rate limiting now depends on Redis | Redis down or slow | In-memory fallback (D5) is per process and weakens the global cap; emit a degraded health signal, use bounded retries/timeouts, and avoid retry storms. | V3-10 |
+| Embed token breaks a live customer's widget | Enabling `enforce` before snippets ship the token | `compat` default accepts missing tokens even after issuance; validate snippets first and treat `enforce` as a breaking operator rollout. | V3-23, V3-24 |
+| Embed token offers limited protection against deliberate copying | Any visitor can inspect the deployed snippet and replay its token | Keep K18 accepted; treat the token as a casual-copy deterrent/operational gate only, not origin authentication or credit-abuse protection. Reconfirm product value before M7; omit F4 if no requirement justifies key management and the breaking enforce rollout. | V3-01, V3-21, V3-24 |
+| Clustering burns provider credits | A large company on a scheduled window | Off by default; cap input questions, embedding requests/tokens, cluster count, and LLM naming calls separately; skip empty windows | V3-31, V3-32 |
+| Cluster labels are misleading | Poor embeddings or a spammy window | Store aggregate labels/counts only, keep term fallback, label is advisory; do not persist raw representative visitor questions in derived rows | V3-31, V3-33 |
 | Two agents answer the same visitor | Double claim | `FOR UPDATE SKIP LOCKED` claim, 409 for the loser, state transitions only through `services/inbox.py` | V3-41 |
 | Stream leaks another tenant's messages | Missing session/token check | K4 session-token `authorize` on the widget stream, company filter on the agent stream, negative tests at the gate | V3-42, V3-43 |
-| Privacy erasure misses the new tables | `delete_conversation` not extended | Extend it in M9's task; gate re-runs the erase smoke and asserts zero rows | V3-40, V3-4G |
+| Privacy erasure/retention misses inbox state | Existing helpers only delete chat messages | Transactionally extend privacy export/erasure, retention, and conversation deletion to cover conversation rows and session tokens; gate checks for zero orphan rows | V3-40, V3-4G |
 | Docs drift again (V1 K2 / V2.1 repeats) | Gate rushed | Docs + `trail build` inside the gate commit; §13 requires it | All gates |
 | Inbox scope creep into a helpdesk | "Just add SLAs/tags/reports" | The four features here are the scope; anything beyond is a new plan | — |
 
@@ -618,14 +707,21 @@ check that was not run.
 
 ## 13. Definition of done — V3
 
-- [ ] All 25 tasks ticked and all 5 gates signed off (blocked items recorded, not hidden).
-- [ ] F1–F4 implemented; M7–M9 applied; single head chained from `c9d3e5a71b28`.
-- [ ] K5 and K18 leave `README.md` §4 / `docs/security.md` §5 as **mitigated, with residual**; ADR-4 marked superseded for the inbox.
-- [ ] Zero widget backward-compatibility breaks: a V2.1 snippet with no `embedToken` still chats in `compat`, and a V2.1 digest is reproduced byte-for-byte with clustering off.
+- [ ] All 25 tasks ticked and all 5 gates signed off (blocked items recorded, not hidden); all D1–D7 assumptions and the added privacy, token and cluster-window invariants are resolved before their waves.
+- [ ] F1–F4 implemented; M7–M9 applied; single head chained from `c9d3e5a71b28`; cluster runs and inbox conversations are idempotent and tenant-scoped.
+- [ ] K5 is described as mitigated only when Redis is available, with the
+  per-process fallback limitation explicit. K18 remains an accepted residual; a
+  public embed token is not described as closing it. ADR-4 is marked superseded
+  for the inbox.
+- [ ] Zero widget backward-compatibility breaks: a V2.1 snippet with no
+  `embedToken` still chats in `compat` both before and after token issuance; a
+  V2.1 digest is reproduced byte-for-byte with clustering off.
 - [ ] Zero `EMBEDDING_DIMENSIONS` change, zero re-ingest.
-- [ ] Every feature off by default; with all flags off, behaviour equals tag `v2.1` except the documented `enforce` opt-in.
+- [ ] Every feature off by default; with all flags off, behaviour equals tag
+  `v2.1` except explicitly opted-in `EMBED_TOKEN_MODE=enforce`.
 - [ ] Both suites green (counts recorded at the tag), frontend build + lint green, `trail build` run, docs consistent.
-- [ ] `git tag v3` created, pushed, `master` merged, README describes V3 as the current version.
+- [ ] Verified release commit is merged to `master`; tag `v3` points to that commit
+  and is pushed; README describes V3 as the current version.
 
 ---
 
