@@ -69,6 +69,38 @@ SESSION_EXPIRED_DETAIL = (
     "start a new session"
 )
 
+# Machine-readable reasons, sent alongside the human `detail`. The widget has to
+# tell two 403s apart: "this id is dead, start a new session" (`session_expired`)
+# versus "another tab holds it, keep this one" (`session_claimed`). Resetting on
+# the second one is what made two tabs silently lose each other's history.
+REASON_CLAIMED = "session_claimed"
+REASON_EXPIRED = "session_expired"
+REASON_INVALID = "invalid_token"
+REASON_REQUIRED = "token_required"
+
+
+class SessionTokenError(HTTPException):
+    """A refusal with a stable `reason` the client can branch on."""
+
+    def __init__(self, status_code: int, detail: str, reason: str):
+        super().__init__(status_code=status_code, detail=detail)
+        self.reason = reason
+
+
+async def error_response(request, exc: SessionTokenError):
+    """Render a `SessionTokenError` as `{detail, reason}` (registered in main).
+
+    `HTTPException` alone would only send `detail`, and string matching on prose
+    is how a client ends up resetting a session it should have kept.
+    """
+    from fastapi.responses import JSONResponse
+
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail, "reason": exc.reason},
+        headers=getattr(exc, "headers", None),
+    )
+
 
 def generate_token() -> str:
     return TOKEN_PREFIX + secrets.token_urlsafe(32)
@@ -174,12 +206,16 @@ def mint(
         # The route checked before calling, but a concurrent request may have
         # claimed the session in between. Rotating then would hand a token to
         # someone who merely knows the id, so the rule is enforced here too.
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail=ALREADY_CLAIMED_DETAIL
+        raise SessionTokenError(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=ALREADY_CLAIMED_DETAIL,
+            reason=REASON_CLAIMED,
         )
     if row is not None and chain_expired(row):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail=SESSION_EXPIRED_DETAIL
+        raise SessionTokenError(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=SESSION_EXPIRED_DETAIL,
+            reason=REASON_EXPIRED,
         )
     if row is not None:
         row.token_hash = hash_token(raw_token)
@@ -205,9 +241,10 @@ def mint(
         # disguised as a 403.
         db.rollback()
         if row_for(db, website_id, session_id) is not None:
-            raise HTTPException(
+            raise SessionTokenError(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=ALREADY_CLAIMED_DETAIL,
+                reason=REASON_CLAIMED,
             )
         raise
     db.refresh(row)
@@ -267,25 +304,28 @@ def authorize(
 
     if raw_token:
         if not verify(row, raw_token, now):
-            raise HTTPException(
+            raise SessionTokenError(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Invalid or expired session token",
+                reason=REASON_INVALID,
             )
         row.last_seen_at = now
         db.commit()
         return
 
     if token_required():
-        raise HTTPException(
+        raise SessionTokenError(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="A session token is required. Reload the page to obtain one.",
+            reason=REASON_REQUIRED,
         )
     if row is not None:
         # Claimed while the transition window is still open: the token is the
         # only way in from the moment it exists.
-        raise HTTPException(
+        raise SessionTokenError(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="This conversation is protected by a session token",
+            reason=REASON_CLAIMED,
         )
     # Legacy embed, legacy session: readable until `SESSION_TOKEN_MODE=enforce`.
     return

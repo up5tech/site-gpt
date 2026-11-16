@@ -271,12 +271,23 @@
     try {
       let res = await mintSessionToken();
       if (res.status === 403) {
-        // 403 means this id can never be claimed: either the session's token
-        // chain passed the server's absolute lifetime, or another tab claimed
-        // it. Retrying the same id would fail for ever, so start a new session
-        // and try exactly once — the old history stays with admins, not here.
-        sessionId = newSession();
-        res = await mintSessionToken();
+        // Not every 403 means "this id is dead". `session_expired` says the
+        // token chain passed its absolute lifetime and no rotation can save it,
+        // so a new session is the only way forward: start one and try exactly
+        // once. `session_claimed` means another tab holds this session — the id
+        // is still good, and resetting it would make the two tabs silently lose
+        // each other's history. Any other 403 is not ours to interpret.
+        let reason = '';
+        try {
+          const body = await res.json();
+          reason = body && typeof body.reason === 'string' ? body.reason : '';
+        } catch (e) {
+          reason = '';
+        }
+        if (reason === 'session_expired') {
+          sessionId = newSession();
+          res = await mintSessionToken();
+        }
       }
       if (!res.ok) return '';
       return adoptSessionToken(await res.json());

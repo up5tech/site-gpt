@@ -11,6 +11,10 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
+import asyncio
+import json
+from types import SimpleNamespace
+
 from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
 
@@ -324,6 +328,71 @@ class ChainLifetimeTests(unittest.TestCase):
         self.assertGreater(
             session_tokens.SESSION_TOKEN_MAX_LIFETIME_SECONDS, SESSION_TOKEN_TTL_SECONDS
         )
+
+
+class ReasonCodeTests(unittest.TestCase):
+    """The client must be able to tell the two 403s apart without parsing prose."""
+
+    def _mint_error(self, row, presented=None):
+        with self.assertRaises(session_tokens.SessionTokenError) as caught:
+            session_tokens.mint(
+                _db(row),
+                row.website_id,
+                row.session_id,
+                presented_token=presented,
+            )
+        return caught.exception
+
+    def test_a_dead_chain_and_a_claimed_session_have_different_reasons(self):
+        raw = session_tokens.generate_token()
+        expired = _row(raw)
+        expired.created_at = datetime.now(UTC) - timedelta(
+            seconds=session_tokens.SESSION_TOKEN_MAX_LIFETIME_SECONDS + 60
+        )
+        expired.expires_at = datetime.now(UTC) - timedelta(days=1)
+        claimed = _row(raw)
+
+        # The holder of a dead chain still presents its token: that is what
+        # makes the refusal "expired" rather than "claimed".
+        expired_error = self._mint_error(expired, presented=raw)
+        claimed_error = self._mint_error(claimed, presented=None)
+
+        self.assertEqual(expired_error.status_code, 403)
+        self.assertEqual(claimed_error.status_code, 403)
+        self.assertEqual(expired_error.reason, session_tokens.REASON_EXPIRED)
+        self.assertEqual(claimed_error.reason, session_tokens.REASON_CLAIMED)
+        # The widget keys off the code, so the two must never collide.
+        self.assertNotEqual(expired_error.reason, claimed_error.reason)
+
+    def test_reading_with_a_bad_token_reports_invalid(self):
+        website = SimpleNamespace(id=uuid4())
+        row = _row(session_tokens.generate_token())
+        row.website_id = website.id
+
+        with self.assertRaises(session_tokens.SessionTokenError) as caught:
+            session_tokens.authorize(_db(row), website, "sid-1", "sst_wrong")
+
+        self.assertEqual(caught.exception.status_code, 403)
+        self.assertEqual(caught.exception.reason, session_tokens.REASON_INVALID)
+
+    def test_the_response_carries_detail_and_reason(self):
+        error = session_tokens.SessionTokenError(
+            status_code=403,
+            detail=session_tokens.SESSION_EXPIRED_DETAIL,
+            reason=session_tokens.REASON_EXPIRED,
+        )
+
+        response = asyncio.run(session_tokens.error_response(None, error))
+        body = json.loads(response.body)
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(body["reason"], "session_expired")
+        self.assertEqual(body["detail"], session_tokens.SESSION_EXPIRED_DETAIL)
+
+    def test_the_app_registers_the_handler(self):
+        from site_gpt.app.main import app
+
+        self.assertIn(session_tokens.SessionTokenError, app.exception_handlers)
 
 
 class SessionHasDataTests(unittest.TestCase):

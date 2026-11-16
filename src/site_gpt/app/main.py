@@ -18,6 +18,7 @@ from site_gpt.app.api.user import router as user_router
 from site_gpt.app.api.v1 import router as v1_router
 from site_gpt.app.api.website import router as website_router
 from site_gpt.app.core.config import CORS_ORIGINS
+from site_gpt.app.services.session_tokens import SessionTokenError, error_response
 
 DESCRIPTION = """
 SiteGPT admin API, worker and embeddable chat widget.
@@ -52,6 +53,11 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc",
 )
+
+# Session-token refusals carry a `reason` code beside the human `detail`, so the
+# widget can tell "this id is dead" from "another tab holds it" without parsing
+# prose.
+app.add_exception_handler(SessionTokenError, error_response)
 
 # Browsers reject `allow_credentials=True` together with a wildcard origin,
 # so credentials are only enabled for explicit (non-wildcard) origin lists.

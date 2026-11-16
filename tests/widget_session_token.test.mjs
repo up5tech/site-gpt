@@ -45,10 +45,12 @@ const PRELUDE = [
   '  calls.push(sessionId);',
   '  if (throwOnFirstMint && calls.length === 1) throw new Error("offline");',
   '  const next = responses[Math.min(calls.length - 1, responses.length - 1)];',
+  '  const status = typeof next === "number" ? next : next.status;',
+  '  const reason = typeof next === "object" ? next.reason : undefined;',
   '  return {',
-  '    status: next,',
-  '    ok: next >= 200 && next < 300,',
-  "    json: async () => ({ token: 'sst_new' }),",
+  '    status,',
+  '    ok: status >= 200 && status < 300,',
+  '    json: async () => ({ token: "sst_new", reason }),',
   '  };',
   '}',
   'function adoptSessionToken(data) {',
@@ -83,8 +85,8 @@ async function run(responses, options = {}) {
   };
 }
 
-test('a 403 restarts the session and mints once more', async () => {
-  const result = await run([403, 200]);
+test('a session_expired 403 restarts the session and mints once more', async () => {
+  const result = await run([{ status: 403, reason: 'session_expired' }, 200]);
 
   assert.equal(result.token, 'sst_new');
   assert.equal(result.calls.length, 2, 'the dead id must not be retried for ever');
@@ -99,8 +101,11 @@ test('a 403 restarts the session and mints once more', async () => {
   assert.equal(result.history, undefined, 'the old local history is cleared');
 });
 
-test('a second 403 gives up instead of looping', async () => {
-  const result = await run([403, 403]);
+test('a second session_expired 403 gives up instead of looping', async () => {
+  const result = await run([
+    { status: 403, reason: 'session_expired' },
+    { status: 403, reason: 'session_expired' },
+  ]);
 
   assert.equal(result.token, '');
   assert.equal(result.calls.length, 2, 'one retry only');
@@ -115,6 +120,25 @@ test('a 200 on the first try mints once and keeps the session', async () => {
   assert.equal(result.calls.length, 1);
   assert.equal(result.calls[0], 'old-session');
   assert.equal(result.sessionId, 'old-session', 'no reset without a 403');
+});
+
+test('a session_claimed 403 keeps the session: another tab owns it', async () => {
+  // Both tabs share localStorage, so the id is still good; resetting it here is
+  // what used to wipe the other tab's history.
+  const result = await run([{ status: 403, reason: 'session_claimed' }]);
+
+  assert.equal(result.token, '');
+  assert.equal(result.calls.length, 1, 'no new session, so no second mint');
+  assert.equal(result.sessionId, 'old-session', 'the session id must survive');
+  assert.notEqual(result.history, undefined, 'local history is not cleared');
+});
+
+test('a 403 without a reason code is not treated as expired', async () => {
+  const result = await run([403]);
+
+  assert.equal(result.token, '');
+  assert.equal(result.calls.length, 1);
+  assert.equal(result.sessionId, 'old-session');
 });
 
 test('an offline mint leaves the widget working without a token', async () => {
