@@ -140,16 +140,29 @@ lifetime closes that: it is counted from the row's `created_at`, which rotation
 never moves, so a chain cannot be extended past it. After it, `verify()` rejects
 the token and `mint()` refuses to rotate it (`403` *"reached its maximum
 lifetime"*, not the "already has a token" message, which would invite a pointless
-retry). The widget handles that: on the mint's `403` it calls `newSession()` and
-mints **once** more, so the visitor keeps a working widget instead of loading a
-session it can never read. The consequence is the same either way — the old
-transcript is unreachable from the browser and its messages stay under the old
-session id for admins until retention deletes them. A second `403` is the end of
-the attempt; the widget then works without history rather than retrying for ever.
+retry). Every session-token refusal carries a machine-readable `reason` beside its
+human `detail`, because the two 403s on this endpoint mean different things:
+
+| `reason` | Status | What the widget does |
+| --- | --- | --- |
+| `session_expired` | 403 | calls `newSession()` and mints **once** more — the id is dead |
+| `session_claimed` | 403 | keeps the session id: another tab may hold the valid token, and resetting would make the two tabs silently lose each other's history |
+| `invalid_token` | 403 | read refused; the widget re-mints (reads only) |
+| `token_required` | 401 | `SESSION_TOKEN_MODE=enforce` and no token was sent |
+
+So a dead chain leads to a fresh session, and its old transcript stays under the
+old session id for admins until retention deletes them. A second refusal ends the
+attempt; the widget then works without history rather than retrying for ever. A
+tab that lost its token for a session another tab claimed still shows no history —
+the alternative was wiping the session for the tab that holds it.
 
 So, stated plainly: a stolen token is useful until its TTL expires, and can be
 renewed only inside the session's absolute lifetime; after that it is dead. There
 is still no server-side revocation UI (see §5).
+
+`POST /api/session-token` answers `{"detail": "...", "reason": "session_expired" |
+"session_claimed"}` (plus `invalid_token` / `token_required` from the read guards),
+and clients should branch on `reason`, not on the prose.
 
 `SESSION_TOKEN_MODE` (`compat` | `enforce`) controls whether a tokenless read of
 an *unclaimed* session is allowed; see §5 for the trade-off.
