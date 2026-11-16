@@ -278,6 +278,29 @@ class RetentionIndexTests(unittest.TestCase):
             [column.name for column in index.columns], ["company_id", "created_at"]
         )
 
+    def test_the_covered_single_column_index_is_gone(self):
+        # The composite's `company_id` prefix serves every lookup the old index
+        # served, so keeping it would only add write cost.
+        names = {item.name for item in models.ExtraDocument.__table__.indexes}
+
+        self.assertNotIn("idx_extra_documents_company_id", names)
+        self.assertIn("idx_extra_documents_company_id_created_at", names)
+
+    def test_the_drop_migration_drops_it_concurrently(self):
+        path = (
+            Path(__file__).resolve().parent.parent
+            / "alembic"
+            / "versions"
+            / "d5b9c4e2a87f_v2_drop_covered_document_index.py"
+        )
+        source = path.read_text(encoding="utf-8")
+
+        self.assertIn("drop_index", source)
+        self.assertIn("'idx_extra_documents_company_id'", source)
+        self.assertIn("postgresql_concurrently=True", source)
+        self.assertIn("autocommit_block()", source)
+        self.assertIn("down_revision: Union[str, Sequence[str], None] = 'c3f8a2b91d47'", source)
+
     def test_the_document_index_migration_builds_it_concurrently(self):
         path = (
             Path(__file__).resolve().parent.parent

@@ -152,9 +152,9 @@ class ExtraDocument(BaseModel):
     __tablename__ = "extra_documents"
 
     __table_args__ = (
-        Index("idx_extra_documents_company_id", "company_id"),
         # The retention purge looks up one company's expired documents and orders
-        # them by age; the composite serves the tenant filter and the range.
+        # them by age. The composite's `company_id` prefix also serves plain tenant
+        # lookups, which is why there is no single-column index here any more.
         Index(
             "idx_extra_documents_company_id_created_at", "company_id", "created_at"
         ),
