@@ -28,6 +28,10 @@ Run the suite (or a single file: `uv run python -m unittest tests.test_settings 
 - `src/site_gpt/app/scripts/widget.js` — vanilla JS, no build; config via `window.ChatWidgetConfig`.
 - `frontend/src/` — pages per route (`App.tsx`), `utils/api.ts` (axios + JWT), `context/AuthContext` (token storage), Ant Design components.
 
+## Planning docs
+
+`plans/` holds the version plans: `PLAN_V1.md` (V1 baseline), `SPEC.md` (V2 requirements), `PLAN_V2.md` (the current release — V2 and V2.1, tagged `v2.1`), and `PLAN_V3.md` (**planned, not implemented** — Redis rate limiting, topic clustering, live-agent inbox, per-website embed token); don't build against V3 until its environment pre-flight and decisions are ticked.
+
 ## Conventions
 
 - Python: SQLAlchemy 2.0 `Mapped/mapped_column` style, `Session = Depends(get_db)`, JWT via `core/auth.py` (`hash_password`/`verify_password`/`create_access_token`). Don't introduce new auth libs.

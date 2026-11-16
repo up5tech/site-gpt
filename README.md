@@ -282,6 +282,15 @@ Keys understood by `widget_ui_strings`: `clear`, `send`, `thinking`, `sources`,
   before the email is sent, so a retry, a restart or a second worker cannot send
   the same week twice.
 
+### V3 (planned) — not implemented
+
+Nothing below exists in the code yet: tag `v2.1` is still the current release, and
+this note makes no claim about an endpoint, setting or behaviour.
+[`plans/PLAN_V3.md`](plans/PLAN_V3.md) is the task/gate plan for the four items V2
+and V2.1 deferred on purpose — a Redis-backed rate limiter shared across API
+processes (K5), LLM topic clustering, a live-agent inbox, and a per-website embed
+token that closes the soft Origin check (K18).
+
 ## Dev commands
 
 ```bash
