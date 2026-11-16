@@ -152,6 +152,84 @@ def _upload(db, company, created_at, name="doc.txt", file_url=None, user=None):
     return attachment
 
 
+class DeleteInBatchesTests(unittest.TestCase):
+    """The shared helper both retention passes use must stay bounded."""
+
+    def setUp(self):
+        self.engine, self.db = _session()
+        self.company = _company(self.db)
+        self.website = _website(self.db, self.company)
+        for index in range(5):
+            _seed(
+                self.db,
+                self.website,
+                self.company,
+                NOW - timedelta(days=10, minutes=index),
+                session_id=f"b{index}",
+            )
+
+    def tearDown(self):
+        self.db.close()
+        self.engine.dispose()
+
+    def _filters(self):
+        return [models.ChatMessage.created_at < NOW - timedelta(days=1)]
+
+    def test_a_dry_run_counts_and_commits_nothing(self):
+        commits = {"n": 0}
+        real_commit = self.db.commit
+
+        def commit():
+            commits["n"] += 1
+            real_commit()
+
+        self.db.commit = commit
+        counted = retention.delete_in_batches(
+            self.db, models.ChatMessage, self._filters(), 2, dry_run=True
+        )
+
+        self.assertEqual(counted, 5)
+        self.assertEqual(commits["n"], 0)
+        self.assertEqual(self.db.query(models.ChatMessage).count(), 5)
+
+    def test_each_batch_commits_before_the_next(self):
+        commits = {"n": 0}
+        real_commit = self.db.commit
+
+        def commit():
+            commits["n"] += 1
+            real_commit()
+
+        self.db.commit = commit
+        deleted = retention.delete_in_batches(
+            self.db, models.ChatMessage, self._filters(), 2
+        )
+
+        self.assertEqual(deleted, 5)
+        # 2 + 2 + 1
+        self.assertEqual(commits["n"], 3)
+        self.assertEqual(self.db.query(models.ChatMessage).count(), 0)
+
+    def test_nothing_to_do_costs_no_commit(self):
+        commits = {"n": 0}
+        real_commit = self.db.commit
+
+        def commit():
+            commits["n"] += 1
+            real_commit()
+
+        self.db.commit = commit
+        deleted = retention.delete_in_batches(
+            self.db,
+            models.ChatMessage,
+            [models.ChatMessage.created_at < NOW - timedelta(days=365)],
+            2,
+        )
+
+        self.assertEqual(deleted, 0)
+        self.assertEqual(commits["n"], 0)
+
+
 class UploadRetentionTests(unittest.TestCase):
     """An expired upload must lose both its row and its bytes."""
 

@@ -90,18 +90,31 @@ def company_retention_days(db: Session, company_id: UUID) -> int:
     )
 
 
-def _delete_batch(
+def batch_ids(db: Session, model, filters: list, batch_size: int) -> list:
+    """The next batch of ids, oldest first. Postgres has no `DELETE ... LIMIT`."""
+    return [
+        row_id
+        for (row_id,) in db.query(model.id)
+        .filter(*filters)
+        .order_by(model.created_at.asc())
+        .limit(batch_size)
+        .all()
+    ]
+
+
+def delete_in_batches(
     db: Session,
     model,
     filters: list,
     batch_size: int,
-    dry_run: bool,
+    dry_run: bool = False,
 ) -> int:
     """Count what matches (dry run) or delete it a bounded batch at a time.
 
-    Each batch is selected by id and deleted by id, then committed: a tenant with
-    millions of expired rows never holds one long transaction. Postgres has no
-    `DELETE ... LIMIT`, so the id round-trip is how a batch is scoped.
+    Each batch is selected by id and deleted by id, then committed: a table with
+    millions of expired rows never holds one long transaction. Shared with the
+    delivery retention pass, so the two purges cannot drift into one unbounded
+    statement each.
     """
     query = db.query(model).filter(*filters)
     if dry_run:
@@ -109,14 +122,7 @@ def _delete_batch(
 
     deleted = 0
     while True:
-        ids = [
-            row_id
-            for (row_id,) in db.query(model.id)
-            .filter(*filters)
-            .order_by(model.created_at.asc())
-            .limit(batch_size)
-            .all()
-        ]
+        ids = batch_ids(db, model, filters, batch_size)
         if not ids:
             break
         deleted += (
@@ -128,6 +134,10 @@ def _delete_batch(
         if len(ids) < batch_size:
             break
     return deleted
+
+
+# Kept as the local name this module's purge was written against.
+_delete_batch = delete_in_batches
 
 
 def _attachment_scope(db: Session, company_id: UUID, cutoff: datetime):

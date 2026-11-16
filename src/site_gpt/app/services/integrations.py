@@ -37,6 +37,7 @@ from sqlalchemy.orm import Session
 
 from site_gpt.app import models
 from site_gpt.app.core import config
+from site_gpt.app.services import retention
 
 logger = logging.getLogger(__name__)
 
@@ -571,25 +572,19 @@ def payload_purged(delivery: models.IntegrationDelivery) -> bool:
 DELIVERY_PURGE_BATCH_SIZE = 1000
 
 
-def _batch_ids(db: Session, filters: list, batch_size: int) -> list:
-    """The next batch of ids, oldest first. Postgres has no `DELETE ... LIMIT`."""
-    return [
-        row_id
-        for (row_id,) in db.query(models.IntegrationDelivery.id)
-        .filter(*filters)
-        .order_by(models.IntegrationDelivery.created_at.asc())
-        .limit(batch_size)
-        .all()
-    ]
-
-
 def _clear_dead_payloads(
     db: Session, filters: list, batch_size: int
 ) -> int:
-    """Blank the payload of each dead row, one bounded batch at a time."""
+    """Blank the payload of each dead row, one bounded batch at a time.
+
+    An UPDATE rather than a delete, so it reuses only the batching shape:
+    `retention.batch_ids` picks the ids, each batch commits on its own.
+    """
     cleared = 0
     while True:
-        ids = _batch_ids(db, filters, batch_size)
+        ids = retention.batch_ids(
+            db, models.IntegrationDelivery, filters, batch_size
+        )
         if not ids:
             break
         cleared += (
@@ -603,24 +598,6 @@ def _clear_dead_payloads(
         if len(ids) < batch_size:
             break
     return cleared
-
-
-def _delete_settled(db: Session, filters: list, batch_size: int) -> int:
-    """Delete each batch of settled rows and commit it before the next."""
-    deleted = 0
-    while True:
-        ids = _batch_ids(db, filters, batch_size)
-        if not ids:
-            break
-        deleted += (
-            db.query(models.IntegrationDelivery)
-            .filter(models.IntegrationDelivery.id.in_(ids))
-            .delete(synchronize_session=False)
-        )
-        db.commit()
-        if len(ids) < batch_size:
-            break
-    return deleted
 
 
 def purge_deliveries(
@@ -678,10 +655,12 @@ def purge_deliveries(
         ]
         if company_id is not None:
             settled_filters.append(models.IntegrationDelivery.company_id == company_id)
-        deleted = (
-            rows(models.IntegrationDelivery).filter(*settled_filters).count()
-            if dry_run
-            else _delete_settled(db, settled_filters, batch_size)
+        deleted = retention.delete_in_batches(
+            db,
+            models.IntegrationDelivery,
+            settled_filters,
+            batch_size,
+            dry_run=dry_run,
         )
 
     if not dry_run:
