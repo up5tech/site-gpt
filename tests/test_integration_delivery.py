@@ -434,6 +434,22 @@ class _LockSession:
         return None
 
 
+class DeliveryRetentionIndexTests(unittest.TestCase):
+    def test_the_retention_index_is_declared_on_the_model(self):
+        # The migration and the model must agree, or autogenerate proposes a drop
+        # on the next revision and the hourly pass quietly goes back to a scan.
+        names = {index.name for index in models.IntegrationDelivery.__table__.indexes}
+        self.assertIn("idx_integration_deliveries_status_created_at", names)
+
+    def test_the_settled_filter_starts_with_the_status_column(self):
+        index = next(
+            i
+            for i in models.IntegrationDelivery.__table__.indexes
+            if i.name == "idx_integration_deliveries_status_created_at"
+        )
+        self.assertEqual([c.name for c in index.columns], ["status", "created_at"])
+
+
 class ResendClaimTests(unittest.TestCase):
     """Two admins pressing Resend must not send the event twice."""
 

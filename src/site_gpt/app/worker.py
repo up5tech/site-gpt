@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import time
 import traceback
 from datetime import datetime, timedelta, UTC
 from uuid import UUID
@@ -13,6 +14,7 @@ from site_gpt.app.services.redis import redis_client, enqueue_job
 from site_gpt.app.core.config import (
     CRAWL_REFRESH_HOURS,
     DELIVERY_CHECK_SECONDS,
+    DELIVERY_RETENTION_CHECK_SECONDS,
     DIGEST_CHECK_SECONDS,
     RETENTION_CHECK_SECONDS,
     DIGEST_ENABLED,
@@ -442,18 +444,25 @@ async def delivery_loop():
 
     The row is the queue: if this worker dies before the next tick, the delivery
     is still `pending` in the database and the next process picks it up.
+
+    Retention runs on its own, much slower clock (`DELIVERY_RETENTION_CHECK_SECONDS`,
+    default hourly): a row becomes deletable days after it settled, so scanning
+    for it on every retry tick is work with nothing to find.
     """
+    next_purge = 0.0
     while True:
         db = SessionLocal()
         try:
             result = await process_due_deliveries(db)
             if result["attempted"]:
                 print(f"[worker] integration deliveries: {result}")
-            # Delivery rows carry the visitor's contact details; clear a dead
-            # row's payload immediately and drop settled rows past the window.
-            purged = purge_deliveries(db)
-            if purged["cleared_payloads"] or purged["deleted"]:
-                print(f"[worker] delivery retention: {purged}")
+            if time.monotonic() >= next_purge:
+                # Delivery rows carry the visitor's contact details; clear a dead
+                # row's payload and drop settled rows past the window.
+                purged = purge_deliveries(db)
+                next_purge = time.monotonic() + DELIVERY_RETENTION_CHECK_SECONDS
+                if purged["cleared_payloads"] or purged["deleted"]:
+                    print(f"[worker] delivery retention: {purged}")
         except Exception as e:
             print(f"[worker] integration delivery retry failed: {e}")
         finally:

@@ -127,6 +127,13 @@ DELIVERY_CHECK_SECONDS = int(os.getenv("DELIVERY_CHECK_SECONDS", "60"))
 # clear still runs). See `services/integrations.purge_deliveries`.
 DELIVERY_RETENTION_DAYS = int(os.getenv("DELIVERY_RETENTION_DAYS", "30"))
 
+# How often the delivery retention pass runs, in seconds (default 1 hour). It is
+# deliberately slower than `DELIVERY_CHECK_SECONDS`: a row only becomes due for
+# deletion days after it settled, so scanning on every retry tick buys nothing.
+DELIVERY_RETENTION_CHECK_SECONDS = int(
+    os.getenv("DELIVERY_RETENTION_CHECK_SECONDS", "3600")
+)
+
 # How often the worker queues the retention purge for companies that set a
 # `retention_days` policy. Daily: the purge removes rows older than the policy,
 # so a faster tick would only re-scan the same rows.

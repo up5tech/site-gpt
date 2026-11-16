@@ -412,6 +412,9 @@ class IntegrationDelivery(BaseModel):
         UniqueConstraint("integration_id", "event_id"),
         Index("idx_integration_deliveries_company_id", "company_id"),
         Index("idx_integration_deliveries_due", "status", "next_attempt_at"),
+        # Retention filters settled rows by status + age; without this the hourly
+        # pass is a sequential scan of every delivery ever stored.
+        Index("idx_integration_deliveries_status_created_at", "status", "created_at"),
     )
 
     company_id: Mapped[uuid.UUID] = mapped_column(
