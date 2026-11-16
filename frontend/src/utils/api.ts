@@ -35,6 +35,13 @@ export const getAuthToken = (): string | null => {
  * sent one, otherwise the caller's fallback text. Keeps `catch` blocks typed
  * without reaching into `error.response` untyped.
  */
+/**
+ * HTTP status of a failed API call, or undefined when it never reached the
+ * server. Callers use it to decide whether the response is worth showing.
+ */
+export const getApiErrorStatus = (error: unknown): number | undefined =>
+  axios.isAxiosError(error) ? error.response?.status : undefined;
+
 export const getApiErrorMessage = (
   error: unknown,
   fallback: string,

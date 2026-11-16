@@ -35,6 +35,7 @@ import {
   createIntegration,
   deleteIntegration,
   getApiErrorMessage,
+  getApiErrorStatus,
   getIntegrationDeliveries,
   getIntegrations,
   resendIntegrationDelivery,
@@ -252,7 +253,16 @@ export function Integrations() {
       }
       await fetchDeliveries();
     } catch (error) {
-      message.error(getApiErrorMessage(error, 'Failed to resend the event'));
+      // A 409 explains itself: either another admin is already resending this
+      // delivery, or retention purged its payload. Everything else stays
+      // generic so a server detail cannot leak into the UI.
+      if (getApiErrorStatus(error) === 409) {
+        message.warning(
+          getApiErrorMessage(error, 'This delivery cannot be resent right now'),
+        );
+      } else {
+        message.error('Failed to resend the event');
+      }
     } finally {
       setResendingId(null);
     }
