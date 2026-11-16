@@ -156,21 +156,11 @@ def _attachment_scope(db: Session, company_id: UUID, cutoff: datetime):
     files behind with nothing pointing at them. Standalone uploads (no document)
     still expire by their own `created_at`.
     """
-    same_document = aliased(models.Attachment)
-    document_has_fresh_upload = (
-        db.query(same_document.id)
-        .filter(
-            same_document.extra_document_id == models.Attachment.extra_document_id,
-            same_document.created_at >= cutoff,
-        )
-        .exists()
+    _, document_live = document_expiry(
+        db, cutoff, attachment=aliased(models.Attachment)
     )
     document_alive = and_(
-        models.Attachment.extra_document_id.isnot(None),
-        or_(
-            models.ExtraDocument.created_at >= cutoff,
-            document_has_fresh_upload,
-        ),
+        models.Attachment.extra_document_id.isnot(None), document_live
     )
     return (
         db.query(models.Attachment)
@@ -188,6 +178,40 @@ def _attachment_scope(db: Session, company_id: UUID, cutoff: datetime):
             ~document_alive,
         )
     )
+
+
+def document_expiry(
+    db: Session,
+    cutoff: datetime,
+    document=models.ExtraDocument,
+    attachment=models.Attachment,
+):
+    """The two SQL conditions that decide a document's fate, in one place.
+
+    ``expired`` is what the document purge deletes; ``live`` is the opposite, and the
+    attachment purge uses it to leave a live document's files to that document.
+    Computing them together is the point: "a document is in use" must mean the same
+    thing on both paths, or one would delete files the other considers current.
+
+    A document is live when it was created inside the window, or when something was
+    attached to it inside the window — re-using an old document today is current
+    use. A document nobody attached anything to has no such upload, so it expires by
+    its own date.
+
+    `expired` keeps `created_at < cutoff` as a plain conjunct so the planner can use
+    `idx_extra_documents_company_id_created_at` rather than wrapping it in a `NOT`.
+    """
+    fresh_upload = (
+        db.query(attachment.id)
+        .filter(
+            attachment.extra_document_id == document.id,
+            attachment.created_at >= cutoff,
+        )
+        .exists()
+    )
+    expired = and_(document.created_at < cutoff, ~fresh_upload)
+    live = or_(document.created_at >= cutoff, fresh_upload)
+    return expired, live
 
 
 def _remove_upload_file(file_url: str | None) -> bool:
@@ -273,19 +297,8 @@ def purge_documents(
     attached to it at or after the cutoff. A document nobody attached anything to
     has no such attachment, so a text-only document still expires by its own date.
     """
-    fresh_attachment = (
-        db.query(models.Attachment.id)
-        .filter(
-            models.Attachment.extra_document_id == models.ExtraDocument.id,
-            models.Attachment.created_at >= cutoff,
-        )
-        .exists()
-    )
-    filters = [
-        models.ExtraDocument.company_id == company_id,
-        models.ExtraDocument.created_at < cutoff,
-        ~fresh_attachment,
-    ]
+    expired, _ = document_expiry(db, cutoff)
+    filters = [models.ExtraDocument.company_id == company_id, expired]
     if dry_run:
         return db.query(models.ExtraDocument).filter(*filters).count()
 
