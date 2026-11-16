@@ -6,8 +6,12 @@ SQLite database holding only the tables the purge touches, so the filter and the
 `DELETE` are the ones production builds — not a mock's opinion of them.
 """
 
+import os
+import shutil
+import tempfile
 import unittest
 from datetime import UTC, datetime, timedelta
+from unittest.mock import patch
 from uuid import uuid4
 
 from sqlalchemy import create_engine
@@ -27,6 +31,10 @@ TABLES = [
     models.Contact.__table__,
     models.DigestLog.__table__,
     models.Setting.__table__,
+    # Uploads: the file bytes live on disk, so the row and the file go together.
+    models.User.__table__,
+    models.ExtraDocument.__table__,
+    models.Attachment.__table__,
 ]
 
 
@@ -112,6 +120,148 @@ def _counts(db):
     }
 
 
+def _user(db, company, email="owner@acme.test"):
+    user = models.User(
+        company_id=company.id,
+        email=email,
+        password_hash="x",
+        first_name="A",
+        last_name="B",
+    )
+    db.add(user)
+    db.commit()
+    return user
+
+
+def _upload(db, company, created_at, name="doc.txt", file_url=None, user=None):
+    """An uploaded document plus the attachment row pointing at its file."""
+    document = models.ExtraDocument(name=name, content="text", company_id=company.id)
+    db.add(document)
+    db.commit()
+    attachment = models.Attachment(
+        extra_document_id=None if user else document.id,
+        user_id=None if user is None else user.id,
+        filename=name,
+        status="uploaded",
+        file_url=file_url or f"{uuid4().hex}.txt",
+        created_at=created_at,
+        updated_at=created_at,
+    )
+    db.add(attachment)
+    db.commit()
+    return attachment
+
+
+class UploadRetentionTests(unittest.TestCase):
+    """An expired upload must lose both its row and its bytes."""
+
+    def setUp(self):
+        self.engine, self.db = _session()
+        self.root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
+        patcher = patch.object(retention, "UPLOAD_ROOT", self.root)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+        self.company = _company(self.db)
+        self.website = _website(self.db, self.company)
+        self.other = _company(self.db, "Other")
+        self.old = NOW - timedelta(days=10)
+        self.fresh = NOW - timedelta(hours=1)
+
+    def tearDown(self):
+        self.db.close()
+        self.engine.dispose()
+
+    def _write(self, file_url, content="bytes"):
+        path = os.path.join(self.root, file_url)
+        os.makedirs(os.path.dirname(path) or self.root, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(content)
+        return path
+
+    def test_dry_run_counts_uploads_without_deleting_anything(self):
+        attachment = _upload(self.db, self.company, self.old)
+        path = self._write(attachment.file_url)
+
+        result = retention.purge_company(
+            self.db, self.company.id, days=7, dry_run=True, now=NOW
+        )
+
+        self.assertEqual(result["deleted"]["attachments"], 1)
+        self.assertTrue(os.path.exists(path))
+        self.assertEqual(self.db.query(models.Attachment).count(), 1)
+
+    def test_purge_deletes_the_expired_row_and_its_file(self):
+        old = _upload(self.db, self.company, self.old)
+        old_path = self._write(old.file_url)
+        fresh = _upload(self.db, self.company, self.fresh, name="new.txt")
+        fresh_path = self._write(fresh.file_url, "new")
+
+        result = retention.purge_company(
+            self.db, self.company.id, days=7, dry_run=False, now=NOW
+        )
+
+        self.assertEqual(result["deleted"]["attachments"], 1)
+        self.assertFalse(os.path.exists(old_path))
+        self.assertEqual(
+            [row.id for row in self.db.query(models.Attachment).all()], [fresh.id]
+        )
+        self.assertTrue(os.path.exists(fresh_path))
+
+    def test_another_companys_upload_is_untouched(self):
+        theirs = _upload(self.db, self.other, self.old)
+        their_path = self._write(theirs.file_url)
+
+        result = retention.purge_company(
+            self.db, self.company.id, days=7, dry_run=False, now=NOW
+        )
+
+        self.assertEqual(result["deleted"]["attachments"], 0)
+        self.assertTrue(os.path.exists(their_path))
+        self.assertEqual(self.db.query(models.Attachment).count(), 1)
+
+    def test_an_upload_never_attached_to_a_document_is_scoped_by_its_uploader(self):
+        mine = _upload(self.db, self.company, self.old, user=_user(self.db, self.company))
+        path = self._write(mine.file_url)
+
+        result = retention.purge_company(
+            self.db, self.company.id, days=7, dry_run=False, now=NOW
+        )
+
+        # The row has no `extra_document_id`; the uploader's company is what makes
+        # it ours (and deletable) rather than orphaned.
+        self.assertEqual(result["deleted"]["attachments"], 1)
+        self.assertFalse(os.path.exists(path))
+        self.assertEqual(self.db.query(models.Attachment).count(), 0)
+
+    def test_a_missing_file_does_not_stop_the_purge(self):
+        attachment = _upload(self.db, self.company, self.old)
+
+        result = retention.purge_company(
+            self.db, self.company.id, days=7, dry_run=False, now=NOW
+        )
+
+        self.assertEqual(result["deleted"]["attachments"], 1)
+        self.assertEqual(self.db.query(models.Attachment).count(), 0)
+
+    def test_a_file_url_cannot_delete_outside_the_upload_directory(self):
+        outside = os.path.join(os.path.dirname(self.root), "not-ours.txt")
+        with open(outside, "w", encoding="utf-8") as handle:
+            handle.write("keep me")
+        self.addCleanup(os.remove, outside)
+        _upload(self.db, self.company, self.old, file_url="../not-ours.txt")
+
+        result = retention.purge_company(
+            self.db, self.company.id, days=7, dry_run=False, now=NOW
+        )
+
+        # The row goes (it is expired data); the file outside uploads/ stays.
+        self.assertEqual(result["deleted"]["attachments"], 1)
+        self.assertTrue(os.path.exists(outside))
+        self.assertEqual(self.db.query(models.Attachment).count(), 0)
+
+
 class ParseTests(unittest.TestCase):
     def test_zero_and_junk_mean_keep_for_ever(self):
         for raw in (None, "", "0", "-5", "abc", "30 days"):
@@ -170,6 +320,7 @@ class PurgeTests(unittest.TestCase):
                 "handoff_requests": 2,
                 "contacts": 2,
                 "digest_log": 2,
+                "attachments": 0,
             },
         )
         self.assertEqual(result["total"], 10)

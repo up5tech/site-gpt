@@ -15,13 +15,18 @@ The rules this module holds:
   remove before trusting it;
 * no cascade surprises: `chat_feedback.message_id` and `handoff_requests.contact_id`
   are `ON DELETE SET NULL`, so purging messages or contacts first is safe.
+* uploaded files go with their rows: an `attachments` row is the pointer to a file
+  under `uploads/`, so deleting the row without the bytes would leave personal data
+  on disk with nothing tracking it. The file is removed after the batch commits, and
+  a missing or unremovable file never stops the purge.
 """
 
 import logging
+import os
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import false
+from sqlalchemy import false, or_
 from sqlalchemy.orm import Session
 
 from site_gpt.app import models
@@ -49,6 +54,11 @@ SCOPED_BY_WEBSITE: tuple[tuple[str, type], ...] = (
 
 # Tables that carry `company_id` directly.
 SCOPED_BY_COMPANY: tuple[tuple[str, type], ...] = (("digest_log", models.DigestLog),)
+
+# Where uploaded bytes live. Matches `api/upload.py` and `worker.py`, which both
+# build `uploads/<attachment.file_url>`: one constant here stays honest because the
+# other two would have to change together anyway.
+UPLOAD_ROOT = "uploads"
 
 
 def parse_retention_days(raw: str | int | None) -> int:
@@ -120,6 +130,92 @@ def _delete_batch(
     return deleted
 
 
+def _attachment_scope(db: Session, company_id: UUID, cutoff: datetime):
+    """This company's attachments older than the cutoff.
+
+    An attachment has no tenant of its own: it belongs to an `extra_documents` row
+    (the normal case) or, for an upload that was never attached, to the user who
+    uploaded it. Both paths are company-scoped here; a row with neither is left
+    alone rather than guessed at.
+    """
+    return (
+        db.query(models.Attachment)
+        .outerjoin(
+            models.ExtraDocument,
+            models.Attachment.extra_document_id == models.ExtraDocument.id,
+        )
+        .outerjoin(models.User, models.Attachment.user_id == models.User.id)
+        .filter(
+            models.Attachment.created_at < cutoff,
+            or_(
+                models.ExtraDocument.company_id == company_id,
+                models.User.company_id == company_id,
+            ),
+        )
+    )
+
+
+def _remove_upload_file(file_url: str | None) -> bool:
+    """Delete the bytes behind an attachment row. Never raises.
+
+    `file_url` comes from the database, but it is still validated: a row holding
+    `../` must not let a purge delete outside `uploads/`.
+    """
+    if not file_url:
+        return False
+    root = os.path.normpath(UPLOAD_ROOT)
+    path = os.path.normpath(os.path.join(root, file_url))
+    if not path.startswith(root + os.sep):
+        logger.warning("refusing to delete a file outside %s/: %s", root, file_url)
+        return False
+    try:
+        os.remove(path)
+        return True
+    except FileNotFoundError:
+        return False
+    except OSError as exc:
+        # A stuck file must not stop the database purge.
+        logger.warning("could not delete upload %s: %s", path, exc)
+        return False
+
+
+def purge_attachments(
+    db: Session,
+    company_id: UUID,
+    cutoff: datetime,
+    batch_size: int = RETENTION_BATCH_SIZE,
+    dry_run: bool = False,
+) -> int:
+    """Delete (or count) this company's expired uploads and their files."""
+    base = _attachment_scope(db, company_id, cutoff)
+    if dry_run:
+        return base.count()
+
+    deleted = 0
+    while True:
+        rows = (
+            base.with_entities(models.Attachment.id, models.Attachment.file_url)
+            .order_by(models.Attachment.created_at.asc())
+            .limit(batch_size)
+            .all()
+        )
+        if not rows:
+            break
+        ids = [row[0] for row in rows]
+        db.query(models.Attachment).filter(models.Attachment.id.in_(ids)).delete(
+            synchronize_session=False
+        )
+        db.commit()
+        # After the commit, never before: a failed commit must not leave rows
+        # pointing at files that are already gone.
+        for _, file_url in rows:
+            _remove_upload_file(file_url)
+        deleted += len(ids)
+        if len(rows) < batch_size:
+            break
+    return deleted
+
+
 def purge_company(
     db: Session,
     company_id: UUID,
@@ -138,7 +234,10 @@ def purge_company(
         days = company_retention_days(db, company_id)
     batch_size = max(1, int(batch_size or 0))
     cutoff = cutoff_for(days, now)
-    deleted: dict[str, int] = {name: 0 for name, _ in SCOPED_BY_WEBSITE + SCOPED_BY_COMPANY}
+    deleted: dict[str, int] = {
+        name: 0 for name, _ in SCOPED_BY_WEBSITE + SCOPED_BY_COMPANY
+    }
+    deleted["attachments"] = 0
 
     if cutoff is not None:
         website_ids = [
@@ -160,6 +259,11 @@ def purge_company(
         for name, model in SCOPED_BY_COMPANY:
             filters = [model.company_id == company_id, model.created_at < cutoff]
             deleted[name] = _delete_batch(db, model, filters, batch_size, dry_run)
+
+        # Uploaded files and the rows that point at them.
+        deleted["attachments"] = purge_attachments(
+            db, company_id, cutoff, batch_size=batch_size, dry_run=dry_run
+        )
 
         if not dry_run:
             logger.info(
