@@ -192,9 +192,12 @@ failed send can be retried, so it is cleaned on its own schedule
   answers `409` because there is nothing left to send;
 - **settled** rows (`delivered`/`dead`) older than the window are deleted;
   `pending` rows are never deleted because they are work that has not happened;
-- the worker runs this on every `DELIVERY_CHECK_SECONDS` tick, and an admin can
-  preview or trigger it with `POST /api/integrations/deliveries/purge`
-  (`dry_run` defaults to true, company-scoped).
+- the worker runs this on its own clock, `DELIVERY_RETENTION_CHECK_SECONDS`
+  (default hourly) rather than on every retry tick — a row only becomes deletable
+  days after it settled — and an admin can preview or trigger it with
+  `POST /api/integrations/deliveries/purge` (`dry_run` defaults to true,
+  company-scoped). `(status, created_at)` indexes the filter, so the pass is an
+  index scan over the settled tail instead of a table scan;
 
 A manual resend is claimed the same way the worker claims its rows:
 `resend_claim` selects the delivery `FOR UPDATE SKIP LOCKED` and holds it until the
