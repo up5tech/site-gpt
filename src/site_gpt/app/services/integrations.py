@@ -630,8 +630,36 @@ def purge_deliveries(
     }
 
 
+def resend_claim(db: Session, delivery_id: UUID):
+    """Lock the row for this resend; `None` means another caller holds it.
+
+    Two admins pressing Resend at once used to both re-arm and send the same row,
+    so the receiver got it twice. `FOR UPDATE SKIP LOCKED` makes the claim
+    exclusive: the loser is told to wait instead of sending again. The lock lasts
+    until the attempt commits (`attempt_delivery` does that), which is exactly the
+    window in which the event may be in flight.
+    """
+    return (
+        db.query(models.IntegrationDelivery)
+        .filter(models.IntegrationDelivery.id == delivery_id)
+        .with_for_update(skip_locked=True)
+        .first()
+    )
+
+
 async def resend_delivery(db: Session, delivery: models.IntegrationDelivery) -> bool:
     """Give a dead (or pending) delivery a fresh attempt budget and try once."""
+    delivery_id = delivery.id
+    claimed = resend_claim(db, delivery_id)
+    if claimed is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "This delivery is already being resent by another request; "
+                "reload to see the result"
+            ),
+        )
+    delivery = claimed
     if payload_purged(delivery):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -645,7 +673,11 @@ async def resend_delivery(db: Session, delivery: models.IntegrationDelivery) -> 
     delivery.next_attempt_at = datetime.now(UTC)
     delivery.last_error = None
     delivery.delivered_at = None
-    db.commit()
+    # No commit here: that would release the claim taken above, and a second
+    # admin could re-arm and send the row while this one is still in flight.
+    # `attempt_delivery` commits when the send has an outcome; a crash in between
+    # rolls the re-arm back and leaves the row dead (still resendable) instead of
+    # leaving a phantom `pending` nobody is sending.
     return await attempt_delivery(db, delivery)
 
 

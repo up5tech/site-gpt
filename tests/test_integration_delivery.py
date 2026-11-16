@@ -35,6 +35,10 @@ class _FakeQuery:
         self.items = self.items[:count]
         return self
 
+    def with_for_update(self, skip_locked=False):
+        # The claim: in these fakes the row is always free.
+        return self
+
     def all(self):
         return list(self.items)
 
@@ -395,6 +399,144 @@ class DueDeliveryClaimTests(unittest.TestCase):
         result, attempt = self._run(db, limit=0)
 
         self.assertEqual(result["attempted"], 0)
+        attempt.assert_not_called()
+
+
+class _LockSession:
+    """Scripts the `FOR UPDATE SKIP LOCKED` select that claims a resend."""
+
+    def __init__(self, claimed):
+        self.claimed = claimed
+        self.skip_locked = None
+        self.commits = 0
+        self.rollbacks = 0
+
+    def query(self, model, *args):
+        return self
+
+    def filter(self, *args, **kwargs):
+        return self
+
+    def with_for_update(self, skip_locked=False):
+        self.skip_locked = skip_locked
+        return self
+
+    def first(self):
+        return self.claimed
+
+    def commit(self):
+        self.commits += 1
+
+    def rollback(self):
+        self.rollbacks += 1
+
+    def refresh(self, row):
+        return None
+
+
+class ResendClaimTests(unittest.TestCase):
+    """Two admins pressing Resend must not send the event twice."""
+
+    def test_the_claim_query_locks_the_row_and_skips_a_locked_one(self):
+        from sqlalchemy import create_engine
+        from sqlalchemy.dialects import postgresql
+        from sqlalchemy.orm import sessionmaker
+
+        engine = create_engine("sqlite+pysqlite:///:memory:")
+        Base.metadata.create_all(
+            engine,
+            tables=[
+                models.Company.__table__,
+                models.Integration.__table__,
+                models.IntegrationDelivery.__table__,
+            ],
+        )
+        session = sessionmaker(bind=engine)()
+        try:
+            # SQLite silently drops the clause, so the claim itself returns None
+            # here; the compiled statement is what proves the locking is asked
+            # for (and the real behaviour is verified against Postgres).
+            query = integrations.resend_claim(session, uuid4())
+            sql = str(
+                session.query(models.IntegrationDelivery)
+                .filter(models.IntegrationDelivery.id == uuid4())
+                .with_for_update(skip_locked=True)
+                .statement.compile(dialect=postgresql.dialect())
+            )
+        finally:
+            session.close()
+            engine.dispose()
+
+        self.assertIn("FOR UPDATE SKIP LOCKED", sql)
+        self.assertIsNone(query)
+
+    def test_a_delivery_locked_by_another_resend_is_refused(self):
+        delivery = _delivery(_integration())
+        delivery.status = "dead"
+        attempts_before = delivery.attempts
+        db = _LockSession(claimed=None)  # another caller holds the row
+        attempt = AsyncMock(return_value=True)
+
+        with patch.object(integrations, "attempt_delivery", attempt):
+            with self.assertRaises(HTTPException) as caught:
+                asyncio.run(integrations.resend_delivery(db, delivery))
+
+        self.assertEqual(caught.exception.status_code, 409)
+        self.assertIn("already being resent", caught.exception.detail)
+        attempt.assert_not_called()
+        self.assertEqual(db.commits, 0)
+        self.assertTrue(db.skip_locked)
+        # The loser must not have re-armed the row.
+        self.assertEqual(delivery.status, "dead")
+        self.assertEqual(delivery.attempts, attempts_before)
+
+    def test_the_claiming_caller_still_resends(self):
+        delivery = _delivery(_integration())
+        delivery.status = "dead"
+        db = _LockSession(claimed=delivery)
+        attempt = AsyncMock(return_value=True)
+
+        with patch.object(integrations, "attempt_delivery", attempt):
+            delivered = asyncio.run(integrations.resend_delivery(db, delivery))
+
+        self.assertTrue(delivered)
+        attempt.assert_awaited_once()
+        self.assertEqual(delivery.status, "pending")
+        self.assertEqual(delivery.attempts, 0)
+
+    def test_the_claim_is_still_held_when_the_send_starts(self):
+        # A commit between claiming and sending released the lock, which is how a
+        # second admin could send the same row: the claim must travel with the
+        # send and be released only by attempt_delivery's own commit.
+        delivery = _delivery(_integration())
+        delivery.status = "dead"
+        db = _LockSession(claimed=delivery)
+        seen = {}
+
+        async def attempt(session, row):
+            seen["commits_before_send"] = session.commits
+            seen["status"] = row.status
+            return True
+
+        with patch.object(integrations, "attempt_delivery", attempt):
+            delivered = asyncio.run(integrations.resend_delivery(db, delivery))
+
+        self.assertTrue(delivered)
+        self.assertEqual(seen["commits_before_send"], 0)
+        self.assertEqual(seen["status"], "pending")
+
+    def test_a_purged_payload_is_refused_after_the_claim(self):
+        delivery = _delivery(_integration())
+        delivery.status = "dead"
+        delivery.payload = ""
+        db = _LockSession(claimed=delivery)
+        attempt = AsyncMock(return_value=True)
+
+        with patch.object(integrations, "attempt_delivery", attempt):
+            with self.assertRaises(HTTPException) as caught:
+                asyncio.run(integrations.resend_delivery(db, delivery))
+
+        self.assertEqual(caught.exception.status_code, 409)
         attempt.assert_not_called()
 
 
