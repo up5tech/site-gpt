@@ -80,6 +80,28 @@ REDIS_PORT = os.getenv("REDIS_PORT", "6379")
 REDIS_PASSWORD = os.getenv("REDIS_PASSWORD")
 REDIS_DB = os.getenv("REDIS_DB", "0")
 
+# V3-03 scaffolding (not yet wired into behaviour): every feature defaults to
+# the V2.1 behaviour. RATE_LIMIT_BACKEND switches the per-IP limiter between
+# the in-process `memory` backend (default, V2.1) and the shared `redis`
+# backend (V3-10); EMBED_TOKEN_MODE selects `compat` (missing embed tokens
+# accepted) vs `enforce` (a valid token is required, V3-23).
+RATE_LIMIT_BACKEND = os.getenv("RATE_LIMIT_BACKEND", "memory").strip().lower()
+EMBED_TOKEN_MODE = os.getenv("EMBED_TOKEN_MODE", "compat").strip().lower()
+
+# V3 topic clustering (F2, Wave 3): bounded inputs + scheduler cadence. The
+# cadence is only how often the worker checks; window boundaries come from
+# `normalize_period`/`digest_day`, not from this value.
+TOPIC_CLUSTER_MAX_MESSAGES = int(os.getenv("TOPIC_CLUSTER_MAX_MESSAGES", "500"))
+TOPIC_CLUSTER_INTERVAL_SECONDS = int(
+    os.getenv("TOPIC_CLUSTER_INTERVAL_SECONDS", "86400")
+)
+
+# V3 live-agent inbox (F3, Wave 4): presence lease TTL and SSE heartbeat.
+INBOX_PRESENCE_TTL_SECONDS = int(os.getenv("INBOX_PRESENCE_TTL_SECONDS", "60"))
+INBOX_STREAM_HEARTBEAT_SECONDS = int(
+    os.getenv("INBOX_STREAM_HEARTBEAT_SECONDS", "15")
+)
+
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*")
 

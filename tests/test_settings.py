@@ -69,6 +69,10 @@ INTERNAL_KEYS = {
     "digest_recipients",
     # Retention policy (F9): days of visitor data to keep, "0" = for ever.
     "retention_days",
+    # V3-03: F2/F3 feature switches (off by default).
+    "topic_clustering_enabled",
+    "topic_cluster_count",
+    "live_inbox_enabled",
 }
 
 
@@ -94,6 +98,12 @@ class SettingsRegistryTests(unittest.TestCase):
 
     def test_internal_settings_are_exactly_the_internal_keys(self):
         self.assertEqual(set(INTERNAL_SETTINGS), INTERNAL_KEYS)
+
+    def test_v3_internal_defaults_are_off(self):
+        # V3-03: every new feature switch must default to V2.1 behaviour.
+        self.assertEqual(INTERNAL_SETTINGS["topic_clustering_enabled"], "false")
+        self.assertEqual(INTERNAL_SETTINGS["topic_cluster_count"], "5")
+        self.assertEqual(INTERNAL_SETTINGS["live_inbox_enabled"], "false")
 
     def test_widget_public_keys_are_the_pinned_literal(self):
         # An explicit tuple, not derived from a dict: order is part of the

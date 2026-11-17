@@ -63,6 +63,11 @@ INTERNAL_SETTINGS: dict[str, str] = {
     # `chat_messages`, `chat_feedback`, `handoff_requests`, `contacts` and
     # `digest_log`; see `services/retention.py`.
     "retention_days": "0",
+    # V3-03 scaffolding (registry only; wired in Waves 3-4). All off by
+    # default so V2.1 behaviour is unchanged until a company opts in.
+    "topic_clustering_enabled": "false",  # F2: LLM topic clustering
+    "topic_cluster_count": "5",  # F2: max named clusters per window
+    "live_inbox_enabled": "false",  # F3: live-agent inbox
 }
 
 # Every setting a company can have: seeded on register, accepted by
