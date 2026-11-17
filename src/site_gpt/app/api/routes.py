@@ -61,7 +61,7 @@ from site_gpt.app.services.quota import (
 from site_gpt.app.services.rag import ask, ask_stream
 from site_gpt.app.services.ratelimit import rate_limit
 from site_gpt.app.services import session_tokens as session_token_queries
-from site_gpt.app.services.redis import enqueue_job, redis_client
+from site_gpt.app.services.redis import enqueue_job, ping as redis_ping
 from site_gpt.app.services.website_state import ensure_website_active
 
 router = APIRouter()
@@ -675,7 +675,7 @@ async def health(db: Session = Depends(get_db)):
     except Exception:
         pass
     try:
-        result["redis"] = bool(await redis_client.ping())
+        result["redis"] = await redis_ping()
     except Exception:
         pass
     if not (result["db"] and result["redis"]):

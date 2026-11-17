@@ -19,12 +19,10 @@ class HealthTests(unittest.TestCase):
         self.client = TestClient(app)
 
     def _redis(self, ping_result):
-        fake = MagicMock()
-        fake.ping = AsyncMock(return_value=ping_result)
-        return fake
+        return AsyncMock(return_value=ping_result)
 
     def test_ok_when_db_and_redis_answer(self):
-        with patch.object(routes, "redis_client", self._redis(True)):
+        with patch.object(routes, "redis_ping", self._redis(True)):
             response = self.client.get("/health")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
@@ -32,15 +30,15 @@ class HealthTests(unittest.TestCase):
         )
 
     def test_degraded_when_redis_does_not_answer(self):
-        with patch.object(routes, "redis_client", self._redis(False)):
+        with patch.object(routes, "redis_ping", self._redis(False)):
             response = self.client.get("/health")
         self.assertEqual(response.json()["status"], "degraded")
         self.assertFalse(response.json()["redis"])
 
     def test_degraded_when_redis_raises(self):
-        fake = MagicMock()
-        fake.ping = AsyncMock(side_effect=RuntimeError("boom"))
-        with patch.object(routes, "redis_client", fake):
+        # ping() itself never raises, but health must still degrade (not
+        # 500) if it ever does.
+        with patch.object(routes, "redis_ping", AsyncMock(side_effect=RuntimeError("boom"))):
             response = self.client.get("/health")
         self.assertEqual(response.status_code, 200)
         self.assertFalse(response.json()["redis"])

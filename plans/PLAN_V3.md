@@ -151,7 +151,8 @@ invents its own version. **Entry:** environment pre-flight above.
   - Done when: every D-row is either confirmed or rewritten, and no task below
     depends on an unconfirmed decision.
 
-- [ ] **V3-02 · One Redis access module** — `M`, depends: V3-01, migration: —
+- [x] **V3-02 · One Redis access module** — `M`, depends: V3-01, migration: —
+  - Done: `services/redis.py` now has `create_client()`/`get_client()`, `ping()`, `publish_event()`, `subscribe()` (unsubscribe+aclose in finally), `increment()`; `enqueue_job`/`queue:jobs` payload unchanged; `routes.health` uses `ping()`; `tests/test_redis_helpers.py` (12 tests, stubbed) + `test_health` updated; full suite 418 tests OK, imports OK.
   - Files: `src/site_gpt/app/services/redis.py`, `tests/test_redis_helpers.py`.
   - Do: `services/redis.py` currently owns a module-level `redis_client` and
     `enqueue_job`, and nothing else. Extract a single client construction point,
@@ -701,12 +702,12 @@ check that was not run.
 
 | Wave | Tasks | Done | Gate |
 |---|---|---|---|
-| 0 — Foundation | 4 | 1 / 4 | ☐ V3-0G |
+| 0 — Foundation | 4 | 2 / 4 | ☐ V3-0G |
 | 1 — Redis rate limiting (F1) | 4 | 0 / 4 | ☐ V3-1G |
 | 2 — Embed token / K18 (F4) | 5 | 0 / 5 | ☐ V3-2G |
 | 3 — Topic clustering (F2) | 5 | 0 / 5 | ☐ V3-3G |
 | 4 — Live-agent inbox (F3) | 7 | 0 / 7 | ☐ V3-4G |
-| **Total** | **25 tasks + 5 gates** | **1 / 25** | **not started** |
+| **Total** | **25 tasks + 5 gates** | **2 / 25** | **not started** |
 
 ---
 
