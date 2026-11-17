@@ -77,23 +77,29 @@ Environment pre-flight recorded at V3-01: `v2.1` annotated tag `^{commit}` = `40
 
 ### Environment pre-flight
 
-- [ ] Confirm `v2.1` resolves to `4031b6f4a063e62bf5bdc6e20f3d8ac67781ae99` and
+- [x] Confirm `v2.1` resolves to `4031b6f4a063e62bf5bdc6e20f3d8ac67781ae99` and
       the V2.1 code baseline is clean. `master` may contain documentation-only
       commits after the tag (currently the V3 plan); record `git rev-parse HEAD`,
       inspect the delta from `v2.1`, and branch `feat/v3` from the current `master`
       rather than requiring the branch to equal the release tag. Keep any unrelated
       code changes out of the V3 starting point.
-- [ ] `uv run alembic current` = `uv run alembic heads` = `c9d3e5a71b28` (single
+      Done (V3-01/V3-04): tag `^{commit}` = `4031b6f…` ✓; HEAD `1616332` docs-only; `feat/v3` branched from it.
+- [x] `uv run alembic current` = `uv run alembic heads` = `c9d3e5a71b28` (single
       head). Every M7–M9 chains from it.
-- [ ] `pg_dump` backup before M7 (`backups/`, already gitignored).
-- [ ] Redis reachable (`GET /health` reports `redis: true`); if not, F1 remains
+      Done (V3-04): verified, still `c9d3e5a71b28`.
+- [x] `pg_dump` backup before M7 (`backups/`, already gitignored).
+      Done (V3-04): `backups/site_gpt_pre_v3.dump` (40K) via `docker exec postgres16 pg_dump`.
+- [x] Redis reachable (`GET /health` reports `redis: true`); if not, F1 remains
       implementable, but cross-process sharing cannot be verified. Record that
       specific check as blocked, never tick it silently.
-- [ ] Baseline green: `uv run python -m unittest discover -s tests -v` (406 tests),
+      Done (V3-04): `services.redis.ping()` → True (redis6 container). Cross-process sharing verifiable in Wave 1.
+- [x] Baseline green: `uv run python -m unittest discover -s tests -v` (406 tests),
       `node --test tests/*.mjs` (24 checks), `cd frontend && npm run build && npm run lint`,
       `trail build`.
-- [ ] Branch `feat/v3` created from the verified current `master`; record its
+      Done (V3-04): 419 Python tests OK (406 + 12 redis_helpers + 1 settings case), 24 node checks pass, build+lint clean, `trail build` done, `trail ask` finds the new redis helpers.
+- [x] Branch `feat/v3` created from the verified current `master`; record its
       base SHA and the reviewed V2.1-to-master delta.
+      Done: base `1616332`, delta = 2 docs-only commits (`1574765`, `1616332`).
 
 ---
 
@@ -165,7 +171,8 @@ invents its own version. **Entry:** environment pre-flight above.
     `enqueue_job` behaviour and payload are unchanged, and the new helpers have
     unit tests that stub the client.
 
-- [ ] **V3-03 · Env + settings scaffolding** — `S`, depends: V3-02, migration: —
+- [x] **V3-03 · Env + settings scaffolding** — `S`, depends: V3-02, migration: —
+  - Done: 6 env vars in `config.py` + `.env.example` + README table; 3 internal keys in registry + `INTERNAL_KEYS` + defaults test; `WIDGET_PUBLIC_KEYS` still exactly 14 (verified). Commit `7f5e539`.
   - Files: `core/config.py`, `.env.example`, `README.md`, `api/setting.py`,
     `tests/test_settings.py`.
   - Do: add (all defaulted to the V2.1 behaviour) `RATE_LIMIT_BACKEND=memory`,
@@ -179,7 +186,8 @@ invents its own version. **Entry:** environment pre-flight above.
     still publishes exactly the 14 allowlisted keys, and `.env.example` documents
     every variable with its default.
 
-- [ ] **V3-04 · Test + graph baseline** — `S`, depends: V3-03, migration: —
+- [x] **V3-04 · Test + graph baseline** — `S`, depends: V3-03, migration: —
+  - Done: AGENTS.md states V3 suites + runbook pointer; baseline 419 tests / 24 node / build+lint / trail build all green; `trail ask` finds redis helpers; pg_dump + Redis pre-flight recorded above.
   - Files: `AGENTS.md`, `tests/`, `.trail/`.
   - Do: state in `AGENTS.md` which suites V3 extends (no new runner), add the V3
     runbook to §9 here, run `trail build`. Do not create a second test framework.
@@ -188,12 +196,12 @@ invents its own version. **Entry:** environment pre-flight above.
 
 #### Gate V3-0G
 
-- [ ] `uv run python -c "import site_gpt.app.main"` and `import site_gpt.app.worker` pass.
-- [ ] `alembic current` is still `c9d3e5a71b28` (Wave 0 adds no revision).
-- [ ] Both suites, `npm run build && npm run lint`, `trail build` pass.
-- [ ] `GET /api/widget-config` remains unchanged; `/health` retains its current
+- [x] `uv run python -c "import site_gpt.app.main"` and `import site_gpt.app.worker` pass.
+- [x] `alembic current` is still `c9d3e5a71b28` (Wave 0 adds no revision).
+- [x] Both suites, `npm run build && npm run lint`, `trail build` pass.
+- [x] `GET /api/widget-config` remains unchanged; `/health` retains its current
       fields and adds only documented Redis/backend degradation diagnostics.
-- [ ] commit `chore(v3): V3-0G gate — foundation`.
+- [x] commit `chore(v3): V3-0G gate — foundation`.
 
 ---
 
@@ -702,12 +710,12 @@ check that was not run.
 
 | Wave | Tasks | Done | Gate |
 |---|---|---|---|
-| 0 — Foundation | 4 | 2 / 4 | ☐ V3-0G |
+| 0 — Foundation | 4 | 4 / 4 | ☑ V3-0G |
 | 1 — Redis rate limiting (F1) | 4 | 0 / 4 | ☐ V3-1G |
 | 2 — Embed token / K18 (F4) | 5 | 0 / 5 | ☐ V3-2G |
 | 3 — Topic clustering (F2) | 5 | 0 / 5 | ☐ V3-3G |
 | 4 — Live-agent inbox (F3) | 7 | 0 / 7 | ☐ V3-4G |
-| **Total** | **25 tasks + 5 gates** | **2 / 25** | **not started** |
+| **Total** | **25 tasks + 5 gates** | **4 / 25** | **not started** |
 
 ---
 

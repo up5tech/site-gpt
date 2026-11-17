@@ -16,6 +16,8 @@ Unit tests use plain `unittest` (no extra deps): `uv run python -m unittest disc
 
 Run the suite (or a single file: `uv run python -m unittest tests.test_settings -v`) after changing services under `src/site_gpt/app/services/` or the settings keys.
 
+V3 (Wave 0: `plans/PLAN_V3.md` §5) extends these same suites — no new runner: `tests/test_redis_helpers.py` (V3-02, stubbed Redis helpers) and the registry cases in `tests/test_settings.py` (V3-03 internal keys). The V3 verification runbook is `PLAN_V3.md` §9; baseline at V3-04: 419 Python tests, 24 node checks, `npm run build && npm run lint`, `trail build`.
+
 ## Layout & ownership
 
 - `src/site_gpt/app/main.py` — app + CORS (open, dev only) + router wiring. Add new routers here with `/api/...` prefix.
