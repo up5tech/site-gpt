@@ -64,6 +64,17 @@ Changing one after its wave is complete means rework, so decide now.
 | D6 | Clustering cost control and reporting windows | **Opt-in per company** (`topic_clustering_enabled`, internal key, default off), bounded by input-question, cluster-count, embedding-call and LLM-naming-call caps. Runs use non-overlapping weekly UTC windows aligned with the company's `normalize_period`/`digest_day` and a durable idempotent claim; digest/analytics show named clusters only for complete windows exactly covered by the request, otherwise retain the existing term-count fallback. Derived windows are invalidated/rebuilt after message erasure and covered by retention. | V3-32 |
 | D7 | Legal/commercial items | **Still out of scope** — SOC 2, HIPAA BAA, signed DPA, pricing, trial, "95+ languages". V3 adds no compliance claim and no marketing wording; `docs/security.md` §1 stays true. | — |
 
+**D1–D7 verified against code (V3-01, 2026-11-17) — all confirmed, none rewritten:**
+- D1: No WebSocket in repo; chat stream is `StreamingResponse` SSE-shaped (`services/quota.py::quota_sse_events`), dashboard auth is a JWT `Authorization` header (`utils/api.ts`) — `fetch()`-based SSE is the only transport that can carry both headers. Confirmed.
+- D2: `models.py` has no `Conversation` class; sessions are `chat_messages.session_id` (indexed) and `session_tokens` already uses unique `(website_id, session_id)`. M9 lazy-create + UUID routing stands. Confirmed.
+- D3: `ChatMessage` has no embedding column; `digest.py::_topics` is stopword term counts; `embed_texts` exists in `services/llm.py` for runtime embedding. Confirmed.
+- D4: `embed_guard.ensure_embed_allowed` is the single chokepoint; `services/api_keys.py` is the SHA-256-hash precedent. **F4 decision: keep F4 in scope** — value is casual-copy deterrence + operational gate, not K18 closure; K18 stays accepted (README §4 / `docs/security.md` §5 unchanged). Confirmed as documented.
+- D5: `services/redis.py` constructs a module-level `redis.asyncio` client from `REDIS_HOST/PORT/PASSWORD/DB` (`core/config.py:78-81`); `rate_limit` is in-memory. Confirmed.
+- D6: `api/setting.py` `INTERNAL_SETTINGS` registry + `digest.py::normalize_period` weekly windows are the anchors. Confirmed.
+- D7: `docs/security.md` §1 makes no compliance claim; V3 keeps it that way. Confirmed.
+
+Environment pre-flight recorded at V3-01: `v2.1` annotated tag `^{commit}` = `4031b6f4a063e62bf5bdc6e20f3d8ac67781ae99` ✓; `master` HEAD `1616332ed8d1d32ee21bb628ddb2d270e1304374` (docs-only delta from tag: `1574765`, `1616332`); `feat/v3` branched from it; alembic single head `c9d3e5a71b28` ✓. Remaining pre-flight items (pg_dump, Redis reachability, baseline suite) belong to V3-04 baseline, not V3-01.
+
 ### Environment pre-flight
 
 - [ ] Confirm `v2.1` resolves to `4031b6f4a063e62bf5bdc6e20f3d8ac67781ae99` and
@@ -135,14 +146,8 @@ Carried from `PLAN_V2.md` §4 and `AGENTS.md`; new V3 rules marked **V3**.
 **Goal:** decide the four contracts and make the shared plumbing real, so no wave
 invents its own version. **Entry:** environment pre-flight above.
 
-- [ ] **V3-01 · Decisions + scope doc** — `S`, depends: —, migration: —
-  - Files: `plans/PLAN_V3.md`, `README.md` (a "V3 (planned)" note only — no
-    feature claims yet).
-  - Do: confirm D1–D7 against code (SSE transport/auth, no `conversations` table,
-    no stored chat-message vectors, embed-token limitations, `REDIS_*` config,
-    `INTERNAL_SETTINGS` registry, privacy/retention impact). Decide whether F4's
-    public token has enough product value to justify a breaking `enforce` rollout;
-    keep K18 accepted if retained. Record each decision inline here.
+- [x] **V3-01 · Decisions + scope doc** — `S`, depends: —, migration: —
+  - Done: D1–D7 confirmed against code (see verification block above); F4 kept in scope with K18 accepted. README "V3 (planned)" note already accurate — no edit needed.
   - Done when: every D-row is either confirmed or rewritten, and no task below
     depends on an unconfirmed decision.
 
@@ -696,12 +701,12 @@ check that was not run.
 
 | Wave | Tasks | Done | Gate |
 |---|---|---|---|
-| 0 — Foundation | 4 | 0 / 4 | ☐ V3-0G |
+| 0 — Foundation | 4 | 1 / 4 | ☐ V3-0G |
 | 1 — Redis rate limiting (F1) | 4 | 0 / 4 | ☐ V3-1G |
 | 2 — Embed token / K18 (F4) | 5 | 0 / 5 | ☐ V3-2G |
 | 3 — Topic clustering (F2) | 5 | 0 / 5 | ☐ V3-3G |
 | 4 — Live-agent inbox (F3) | 7 | 0 / 7 | ☐ V3-4G |
-| **Total** | **25 tasks + 5 gates** | **0 / 25** | **not started** |
+| **Total** | **25 tasks + 5 gates** | **1 / 25** | **not started** |
 
 ---
 
