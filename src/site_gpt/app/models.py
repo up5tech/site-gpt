@@ -11,6 +11,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -111,6 +112,9 @@ class Website(BaseModel):
     )
     handoff_requests = relationship(
         "HandoffRequest", cascade="all, delete-orphan", passive_deletes=True
+    )
+    embed_tokens = relationship(
+        "EmbedToken", cascade="all, delete-orphan", passive_deletes=True
     )
 
 
@@ -409,6 +413,52 @@ class SessionToken(BaseModel):
         DateTime(timezone=True), nullable=True
     )
     revoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
+class EmbedToken(BaseModel):
+    """The per-website token a deployed widget snippet presents (V3 F4).
+
+    This is **not** a secret in the API-key sense: it ships in a public HTML page
+    and any visitor can read and replay it. It exists so an operator can revoke
+    the snippets they no longer deploy and can require a token at all
+    (`EMBED_TOKEN_MODE=enforce`); it cannot prove browser origin or stop
+    deliberate copying (K18 stays an accepted residual).
+
+    Only the SHA-256 hash is stored, like `ApiKey`, and the raw value is shown
+    once on mint. The partial unique index below is the real invariant: a website
+    has at most one **active** token, so rotation can revoke the old row and insert
+    the new one in one transaction without ever exposing two live tokens.
+    """
+
+    __tablename__ = "embed_tokens"
+
+    __table_args__ = (
+        UniqueConstraint("token_hash"),
+        # Not a UniqueConstraint: revoked rows must accumulate as history, so the
+        # uniqueness covers only the active one. The index also serves the active
+        # lookup by website, which is why there is no separate website_id index.
+        Index(
+            "uq_embed_tokens_website_id_active",
+            "website_id",
+            unique=True,
+            postgresql_where=text("revoked_at IS NULL"),
+        ),
+    )
+
+    website_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("websites.id", ondelete="CASCADE"), nullable=False
+    )
+    # The same 12-character prefix convention as `ApiKey.key_prefix`: enough to
+    # recognize a token in the UI without making it usable.
+    token_prefix: Mapped[str] = mapped_column(String(12), nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # Throttled by the guard: at most one write per token per minute.
+    last_used_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
 
