@@ -3,7 +3,7 @@
 | | | |
 |---|---|---|
 | Version | **V3** — implements what `V2` and `V2.1` deliberately left out (`plans/PLAN_V2.md` §14) |
-| Status | **In progress — Waves 0–2 done (13 / 25 tasks); gate V3-2G is next, then Wave 3 (topic clustering); gates V3-0G and V3-1G signed off** |
+| Status | **In progress — Waves 0–2 done and signed off (13 / 25 tasks, 3 / 5 gates); Wave 3 (topic clustering) starts at V3-30, gated by V3-3G** |
 | Created | 2026-11-16 |
 | Derived from | `plans/PLAN_V2.md` (§14, §11 risk register), `plans/SPEC.md`, `docs/security.md` §5 (accepted risks K5 / K18), `README.md` §4 |
 | Baseline | V2.1 tag `v2.1` = `4031b6f4a063e62bf5bdc6e20f3d8ac67781ae99`; current `master` HEAD `1616332ed8d1d32ee21bb628ddb2d270e1304374` is docs-only after that tag (the V3 plan); V3 work lives on `feat/v3`; Alembic head `c9d3e5a71b28`; baseline suite counts are historical and must be re-run at pre-flight |
@@ -356,13 +356,20 @@ prove origin. **Entry:** V3-1G.
 
 #### Gate V3-2G
 
-- [ ] M7 applied; single head; `downgrade -1 && upgrade head` clean.
-- [ ] Token matrix (compat missing with/without issuance, enforce missing, valid,
+- [x] M7 applied; single head; `downgrade -1 && upgrade head` clean.
+  Done: `alembic heads`/`current` = `76f46b510350` (one head); `downgrade -1` ran `76f46b510350 -> c9d3e5a71b28` and `to_regclass('embed_tokens')` came back `None`; `upgrade head` rebuilt the table with `embed_tokens_pkey`, `embed_tokens_token_hash_key` and `uq_embed_tokens_website_id_active`, and `alembic_version` is back at `76f46b510350` with a single head. The table held 0 rows before the round-trip (backed up to `/tmp` first), so nothing was lost.
+- [x] Token matrix (compat missing with/without issuance, enforce missing, valid,
       wrong, foreign and revoked tokens) re-run by hand against a real server.
-- [ ] A V2.1 snippet with no `embedToken` still chats in `compat` mode after an
+  Done: 20/20 manual checks over two real uvicorn servers (`8011` in `compat`, `8012` with `EMBED_TOKEN_MODE=enforce`) against the real Postgres DB, with fixtures created and deleted by the run: no token before issuance → 200; admin `POST …/embed-token` → 201 with the raw value once; no token *after* issuance → 200; wrong token → 403 `invalid_embed_token`; valid token → 200; another website's token → 403 `invalid_embed_token`; revoked token → 403 `invalid_embed_token`; `enforce` + no token → 403 `embed_token_required`; rotate → 201 and the pre-rotation token → 403 `invalid_embed_token`; `enforce` + valid token → 200; `/api/v1` with an API key → 200 in both modes. Also observed, and worth knowing: `GET /api/conversations/{sid}` is not an F4-gated route — it stays gated by its K4 session token and answers 200 in `enforce` when that token is held.
+- [x] A V2.1 snippet with no `embedToken` still chats in `compat` mode after an
       admin issues a token; record both pre- and post-issuance checks.
-- [ ] Both suites + widget suite + build + lint + `trail build` pass.
-- [ ] commit `chore(v3): V3-2G gate — embed token`.
+  Done: same run, same website, same session: `POST /api/chat` with no `X-Embed-Token` returned 200 **before** the admin minted a token and 200 **after** it, which is the deployed-snippet guarantee V3-23 promised. No widget change is needed to keep chatting in `compat`.
+- [x] Both suites + widget suite + build + lint + `trail build` pass.
+  Done: 482 Python tests OK (0 failures), 33/33 node checks pass, `npm run build` ✓ (2.06s) and `npm run lint` clean (0 warnings), `trail build` exit 0 (1872 nodes / 4180 edges; `.trail/cache/` is git-ignored, so it leaves the tree clean).
+- [x] commit `chore(v3): V3-2G gate — embed token`.
+  Done: the gate commit carries this tick and its evidence; `trail build` left the tree clean because `.trail/cache/` is git-ignored.
+
+Re-run on the final tree: 20/20 manual checks, 482 Python tests, 33 node checks, build 1.97 s, lint clean (exit 0 with `--max-warnings 0`), `trail build` 1872 nodes / 4180 edges, and the downgrade round-trip again restored the table with both unique indexes. One behaviour to carry into Wave 4 when the inbox adds public reads: `GET /api/conversations/{sid}` is gated by K4, not by F4, so `enforce` does not refuse it without an embed token — deliberate, but do not assume the embed gate covers every public read.
 
 ---
 
@@ -723,10 +730,10 @@ check that was not run.
 |---|---|---|---|
 | 0 — Foundation | 4 | 4 / 4 | ☑ V3-0G |
 | 1 — Redis rate limiting (F1) | 4 | 4 / 4 | ☑ V3-1G |
-| 2 — Embed token / K18 (F4) | 5 | 5 / 5 | ☐ V3-2G |
+| 2 — Embed token / K18 (F4) | 5 | 5 / 5 | ☑ V3-2G |
 | 3 — Topic clustering (F2) | 5 | 0 / 5 | ☐ V3-3G |
 | 4 — Live-agent inbox (F3) | 7 | 0 / 7 | ☐ V3-4G |
-| **Total** | **25 tasks + 5 gates** | **13 / 25** | **2 / 5 gates** |
+| **Total** | **25 tasks + 5 gates** | **13 / 25** | **3 / 5 gates** |
 
 ---
 
