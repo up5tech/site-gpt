@@ -128,7 +128,7 @@ npm install && npm run dev   # :5173
 | `SESSION_TOKEN_TTL_SECONDS` | `2592000` | lifetime of one widget session token value (30 days); an expired token can still be rotated by its holder |
 | `SESSION_TOKEN_MAX_LIFETIME_SECONDS` | `15552000` | absolute lifetime of a session's token chain, counted from its creation (180 days). Rotation cannot extend it, so this — not the TTL — is what bounds a stolen token. Past it `POST /api/session-token` answers 403 and the widget starts a new session and mints once more, so it keeps working (without the old history) |
 | `RATE_LIMIT_BACKEND` | `memory` | V3 (F1): `memory` = per-process in-memory limiter (V2.1); `redis` = shared sliding-window budget across API processes (wired in V3-10). Default keeps V2.1 behaviour |
-| `EMBED_TOKEN_MODE` | `compat` | V3 (F4): `compat` accepts a missing `X-Embed-Token`; `enforce` requires a valid per-website token (wired in V3-23). Default keeps V2.1 behaviour |
+| `EMBED_TOKEN_MODE` | `compat` | V3 (F4): `compat` accepts a missing `X-Embed-Token` — even for a website that has a token — but refuses a supplied token that is wrong, revoked or another website's; `enforce` requires a valid token. Refusals are `403` with `reason: invalid_embed_token` or `embed_token_required`, never a session reason. Default keeps V2.1 behaviour; see [Embed token](#embed-token-v3-f4) |
 | `TOPIC_CLUSTER_MAX_MESSAGES` | `500` | V3 (F2): max visitor questions embedded per clustering run; the company setting `topic_clustering_enabled` (default `false`) opts in |
 | `TOPIC_CLUSTER_INTERVAL_SECONDS` | `86400` | V3 (F2): worker scheduler check cadence for clustering; window boundaries come from `digest_day`/`normalize_period` |
 | `INBOX_PRESENCE_TTL_SECONDS` | `60` | V3 (F3): TTL of an agent presence lease in the live inbox (wired in V3-42) |
@@ -188,6 +188,50 @@ is part of the URL, so a new value fetches the new file immediately. Use the val
 of the `X-Widget-Version` response header (`curl -I http://localhost:8000/widget.js`)
 — it is a hash of `widget.js`, so it changes exactly when the widget changes. The
 Settings page copies a snippet that already includes it.
+
+### Embed token (V3 F4)
+
+A website can carry a per-website token. **It is public**: it sits in the page
+source next to `website_id`, so any visitor can read and replay it. It exists so
+an owner can revoke a snippet they no longer deploy and can require a token at
+all — it does **not** prove the request came from the owner's site, and K18 stays
+accepted (§4).
+
+Mint one in **Websites → <site> → Embed token** (admin only). The raw value is
+shown **once** — only its hash is stored — and the snippet carries it as
+`embedToken`:
+
+```html
+<script>
+  window.ChatWidgetConfig = {
+    apiUrl: 'https://api.example.com',
+    website_id: '<WEBSITE_ID>',
+    embedToken: 'emb_…'
+  };
+</script>
+```
+
+| `EMBED_TOKEN_MODE` | Missing token | Supplied token | Use it when |
+|---|---|---|---|
+| `compat` (default) | accepted, even for a website that has a token | must be valid | rollout: old and new snippets both work |
+| `enforce` | refused | must be valid | every snippet on your sites already sends the token |
+
+Rotation revokes the old row and mints the new one in one transaction, so any
+snippet still carrying the old value stops working immediately: **update the
+snippets first, rotate second**. Refusals are `403` with a machine-readable
+`reason` beside the `detail`:
+
+- `invalid_embed_token` — the token is wrong, revoked, or belongs to another
+  website (one answer for all three; the value is never echoed back).
+- `embed_token_required` — `enforce` is on and the request carried no token.
+
+Neither is a session error: the widget keeps the visitor's session and history
+for an embed refusal (it resets only on the K4 `session_expired` reason).
+
+**Rollback:** set `EMBED_TOKEN_MODE=compat`. Missing tokens are accepted again,
+including for websites that already have one; a *supplied* but invalid token is
+still refused, so fix or remove the bad `embedToken` line in that snippet. No
+migration or data change is involved.
 
 ## Widget settings (per company)
 
@@ -288,14 +332,15 @@ Keys understood by `widget_ui_strings`: `clear`, `send`, `thinking`, `sources`,
   before the email is sent, so a retry, a restart or a second worker cannot send
   the same week twice.
 
-### V3 (planned) — not implemented
+### V3 (in progress on `feat/v3`)
 
-Nothing below exists in the code yet: tag `v2.1` is still the current release, and
-this note makes no claim about an endpoint, setting or behaviour.
-[`plans/PLAN_V3.md`](plans/PLAN_V3.md) is the task/gate plan for the four items V2
-and V2.1 deferred on purpose — a Redis-backed rate limiter shared across API
-processes (K5), LLM topic clustering, a live-agent inbox, and a per-website embed
-token that closes the soft Origin check (K18).
+Tag `v2.1` is still the latest release; V3 is being built wave by wave against
+[`plans/PLAN_V3.md`](plans/PLAN_V3.md), whose dashboard records what is actually
+ticked. Landed so far: the Redis-backed rate limiter (K5,
+`RATE_LIMIT_BACKEND`) and the per-website embed token (F4,
+`EMBED_TOKEN_MODE` + `X-Embed-Token`) — a revocation and compatibility control
+that does **not** close the soft Origin check, so K18 stays accepted. Still
+pending: LLM topic clustering and the live-agent inbox.
 
 ## Dev commands
 
@@ -376,7 +421,7 @@ list with the residual risk spelled out:
 |---|---|---|
 | K4 | `GET /api/conversations/{session_id}` and `GET /api/contacts/{session_id}` are **public by design** — the widget restores history and lead details without a login. A guessed `session_id` combined with a known `website_id` used to expose that session's transcript or contact details. | **Mitigated in V2.1** by a per-session token (`X-Session-Token`, stored only as a hash): once a session is claimed, its id alone reads nothing. Residual: `SESSION_TOKEN_MODE=compat` (the default) still allows a tokenless read of an *unclaimed* session so older embed snippets keep working, and sessions that already had data before the change can never be claimed — switch to `enforce` once your embeds ship the new snippet. See [`docs/security.md`](docs/security.md) §5.1. |
 | K5 | `services/ratelimit.py` was an in-memory fixed window, **per process**. Limits reset on restart and were not shared across workers. | **Mitigated in V3 (F1)** with `RATE_LIMIT_BACKEND=redis`: one shared sliding-window budget (atomic Lua over a sorted set) across API processes, surviving restarts. Residual: with the default `memory` backend the limiter is still per process, and during a Redis outage the `redis` backend falls back to that same per-process cap (`/health` reports `rate_limiter.degraded`) — Redis is an availability dependency for the enforced path. The Redis daily message cap remains the hard spend ceiling. |
-| K18 | The widget's Origin/Referer check is **soft**: requests with no `Origin`/`Referer` (non-browser clients, forged headers, `referrerpolicy="no-referrer"`) are still accepted, and loopback origins are always allowed so local demos work. | It blocks ordinary cross-site embedding (copying a `website_id` into another page), not a determined API caller. A signed per-website embed token would close it and needs a schema change; it is still open after V2 and V2.1 (the session token of K4 is per session, not per website). |
+| K18 | The widget's Origin/Referer check is **soft**: requests with no `Origin`/`Referer` (non-browser clients, forged headers, `referrerpolicy="no-referrer"`) are still accepted, and loopback origins are always allowed so local demos work. | It blocks ordinary cross-site embedding (copying a `website_id` into another page), not a determined API caller. **Still accepted after V3 (F4).** The per-website embed token makes a deployed snippet revocable and can be made mandatory (`EMBED_TOKEN_MODE=enforce`), which raises the effort for casual copying, but the token is public and replayable — it does not authenticate the origin, so it does not close K18. Closing it needs a genuinely origin-bound mechanism (for example short-lived signed requests), which no release implements. |
 | K8 | 👍/👎 feedback is stored in `chat_feedback` and never influences answers on its own. | Closed in V2: an admin reviews it in `/training`, corrects an answer and approves the pair; approved pairs are re-embedded into one `__qa_training__` document per website (`POST /api/feedback/rebuild`). Nothing changes without approval. |
 
 Also note `/docs` and `/openapi.json` are enabled and unauthenticated (FastAPI default) —

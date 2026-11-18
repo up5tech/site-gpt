@@ -3,7 +3,7 @@
 | | | |
 |---|---|---|
 | Version | **V3** — implements what `V2` and `V2.1` deliberately left out (`plans/PLAN_V2.md` §14) |
-| Status | **In progress — Waves 0 and 1 done; Wave 2 is down to its docs task (12 / 25 tasks; gates V3-0G and V3-1G signed off)** |
+| Status | **In progress — Waves 0–2 done (13 / 25 tasks); gate V3-2G is next, then Wave 3 (topic clustering); gates V3-0G and V3-1G signed off** |
 | Created | 2026-11-16 |
 | Derived from | `plans/PLAN_V2.md` (§14, §11 risk register), `plans/SPEC.md`, `docs/security.md` §5 (accepted risks K5 / K18), `README.md` §4 |
 | Baseline | V2.1 tag `v2.1` = `4031b6f4a063e62bf5bdc6e20f3d8ac67781ae99`; current `master` HEAD `1616332ed8d1d32ee21bb628ddb2d270e1304374` is docs-only after that tag (the V3 plan); V3 work lives on `feat/v3`; Alembic head `c9d3e5a71b28`; baseline suite counts are historical and must be re-run at pre-flight |
@@ -343,8 +343,9 @@ prove origin. **Entry:** V3-1G.
     throttle. Verify token enforcement is additive to the host check and document
     that neither Origin/Referer nor a public snippet token proves browser origin.
 
-- [ ] **V3-24 · Docs: embed-token residual and rollout** — `S`, depends: V3-23, migration: —
-  - Files: `README.md` §4 (K18 row, embed section), `docs/security.md` §2/§5, `AGENTS.md`.
+- [x] **V3-24 · Docs: embed-token residual and rollout** — `S`, depends: V3-23, migration: —
+  - Done: README gained an "Embed token (V3 F4)" section (public/replayable nature, `embedToken` snippet, a `compat`/`enforce` table, rotate-after-updating-the-snippet warning, both reason codes, and `EMBED_TOKEN_MODE=compat` as the rollback); the §4 K18 row now says the token raises casual-copy effort but does not authenticate origin, so K18 stays accepted, and the env-table row documents both reasons. The stale "V3 (planned) — not implemented" note was replaced with what has actually landed (F1, F4) and what has not, explicitly denying that the token closes K18. `docs/security.md` §2 gained an embed-token control row, §5 a K18 bullet (public token, no origin proof, "enforce" is a breaking rollout, rollback is a mode change), and §6 the staged rollout/rollback plus hand-run token-matrix items. `AGENTS.md` lists `embed_tokens.py`, describes the extended guard and its reason codes, marks `PLAN_V3.md` as in progress, and adds the "an embed refusal never resets a session" rule. No claim that a browser-visible token closes K18 survives in any doc.
+  - Files: `README.md` §4 (K18 row, embed section), `docs/security.md` §2/§5/§6, `AGENTS.md`.
   - Do: describe the token's public/replayable nature, the `compat → enforce`
     breaking rollout, the exact snippet change required, and that it cannot prove
     origin or stop deliberate copying. Keep K18 listed as an accepted residual
@@ -722,10 +723,10 @@ check that was not run.
 |---|---|---|---|
 | 0 — Foundation | 4 | 4 / 4 | ☑ V3-0G |
 | 1 — Redis rate limiting (F1) | 4 | 4 / 4 | ☑ V3-1G |
-| 2 — Embed token / K18 (F4) | 5 | 4 / 5 | ☐ V3-2G |
+| 2 — Embed token / K18 (F4) | 5 | 5 / 5 | ☐ V3-2G |
 | 3 — Topic clustering (F2) | 5 | 0 / 5 | ☐ V3-3G |
 | 4 — Live-agent inbox (F3) | 7 | 0 / 7 | ☐ V3-4G |
-| **Total** | **25 tasks + 5 gates** | **12 / 25** | **2 / 5 gates** |
+| **Total** | **25 tasks + 5 gates** | **13 / 25** | **2 / 5 gates** |
 
 ---
 

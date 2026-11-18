@@ -46,6 +46,7 @@ processes.
 | Uploads | Size capped while streaming (`MAX_UPLOAD_MB`, 413 without buffering the body) | `api/upload.py` |
 | Consent | When `require_consent` is on, `POST /api/contacts` refuses without `consent: true` and stamps `contacts.consent_at` | `api/routes.py` |
 | Session reads (K4) | The widget mints a per-session token and sends it as `X-Session-Token` to read its history or contact. Only `sha256(token)` is stored; a token value expires after `SESSION_TOKEN_TTL_SECONDS`, the whole chain dies after `SESSION_TOKEN_MAX_LIFETIME_SECONDS`, and rotation requires holding the current value | `services/session_tokens.py`, `POST /api/session-token` |
+| Embed token (K18) | Optional per-website `X-Embed-Token`. Only `sha256(token)` is stored, the 12-character prefix is the only readable part, one token is active per website (partial unique index) and rotation is a single transaction. `compat` accepts a missing token but refuses an invalid one; `enforce` requires it; a refusal is `403 {detail, reason}` with `invalid_embed_token` / `embed_token_required`. The value is public in the page and replayable, so this is a revocation and compatibility control — not origin authentication | `services/embed_tokens.py`, `services/embed_guard.py`, `api/website.py` |
 | Export / erasure | Admin-only JSON export per website and hard deletes for a conversation or a contact, both company-scoped | `api/privacy.py` |
 | Retention | `retention_days` per company: the worker's daily job hard-deletes `chat_messages`, `chat_feedback`, `handoff_requests`, `contacts` and `digest_log` rows older than the policy, scoped to that company's websites. `POST /api/privacy/retention` previews it (`dry_run`) or runs it on demand | `services/retention.py`, `api/privacy.py`, `worker.py` |
 | Logs | No raw API key, integration token or password is written to a log line; webhook bodies are not logged | `services/*` |
@@ -321,6 +322,21 @@ These are known, documented and deliberately deferred. They are not oversights.
   `CORS_ORIGINS` defaults to `*` if unset. The app does not refuse to boot with
   them. Treat §3 as the deployment checklist; a production boot that logs no
   configuration is indistinguishable from a misconfigured one.
+- **K18 — the soft origin check (accepted; V3 F4 does not close it).** The
+  `Origin`/`Referer` allowlist still accepts requests that carry neither header
+  (non-browser clients, forged headers, `referrerpolicy="no-referrer"`) and always
+  accepts loopback origins so local demos work. V3 adds an optional per-website
+  `X-Embed-Token` on top: a deployed snippet becomes revocable, the token can be
+  made mandatory (`EMBED_TOKEN_MODE=enforce`), and a wrong, revoked or
+  another-website token is refused with `invalid_embed_token`. But the token is
+  **public** — it ships in the page source and anyone who reads it can replay it —
+  so it deters casual copying and gives the operator a kill switch; it is not an
+  origin-authentication boundary and does not stop a determined caller from
+  spending the website's credits. Closing K18 needs a genuinely origin-bound
+  mechanism (for example short-lived signed requests), which is not implemented.
+  Treat `enforce` as a breaking rollout: a snippet that predates the token stops
+  working the moment it is switched on, and the rollback is `compat`, not a code
+  change.
 - **K8 — feedback is stored, not learned from automatically.** Ratings and
   reviewed answers feed the Q&A training document only after an admin approves
   them; nothing changes silently.
@@ -349,4 +365,15 @@ Copy this into the runbook for each environment:
 - [ ] An `/api/v1` key minted and revoked once, to confirm the flow works.
 - [ ] `SESSION_TOKEN_MODE` decided: `compat` only while an old embed must keep
       working, `enforce` once the token-aware snippet is live.
+- [ ] Embed tokens issued where wanted, and each snippet updated with
+      `embedToken` **before** its previous token is rotated (rotation kills the old
+      value immediately).
+- [ ] `EMBED_TOKEN_MODE` staged: `compat` until every embed on the customer's
+      sites sends the token, then `enforce`. Rollback is `compat` — missing tokens
+      are accepted again, a supplied invalid one stays refused with
+      `invalid_embed_token`, and no migration or data change is involved.
+- [ ] Token matrix checked by hand: tokenless snippet still chats in `compat`
+      after a token was issued; wrong/revoked token is `403 invalid_embed_token`;
+      tokenless request in `enforce` is `403 embed_token_required`; an embed
+      refusal does not reset the visitor's session.
 - [ ] Erasure rehearsed on a test session (export → delete → export is empty).
