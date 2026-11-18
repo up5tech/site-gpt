@@ -26,8 +26,23 @@ class HealthTests(unittest.TestCase):
             response = self.client.get("/health")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
-            response.json(), {"status": "ok", "db": True, "redis": True}
+            response.json(),
+            {
+                "status": "ok",
+                "db": True,
+                "redis": True,
+                "rate_limiter": {"backend": "memory", "degraded": False},
+            },
         )
+
+    def test_degraded_rate_limiter_marks_status_degraded(self):
+        with (
+            patch.object(routes, "redis_ping", self._redis(True)),
+            patch.object(routes, "limiter_degraded", lambda: True),
+        ):
+            response = self.client.get("/health")
+        self.assertEqual(response.json()["status"], "degraded")
+        self.assertTrue(response.json()["rate_limiter"]["degraded"])
 
     def test_degraded_when_redis_does_not_answer(self):
         with patch.object(routes, "redis_ping", self._redis(False)):

@@ -59,7 +59,7 @@ from site_gpt.app.services.quota import (
     quota_sse_events,
 )
 from site_gpt.app.services.rag import ask, ask_stream
-from site_gpt.app.services.ratelimit import rate_limit
+from site_gpt.app.services.ratelimit import limiter_backend, limiter_degraded, rate_limit_policy
 from site_gpt.app.services import session_tokens as session_token_queries
 from site_gpt.app.services.redis import enqueue_job, ping as redis_ping
 from site_gpt.app.services.website_state import ensure_website_active
@@ -73,7 +73,7 @@ async def ingest(
     request: Request,
     db: Session = Depends(get_db),
     user: models.User = Depends(get_manager_user),
-    _: None = Depends(rate_limit("ingest", max_requests=10, window_seconds=60)),
+    _: None = Depends(rate_limit_policy("ingest")),
 ):
     website = (
         db.query(models.Website)
@@ -107,7 +107,7 @@ async def chat(
     body: ChatRequest,
     request: Request,
     db: Session = Depends(get_db),
-    _: None = Depends(rate_limit("chat", max_requests=20, window_seconds=60)),
+    _: None = Depends(rate_limit_policy("chat")),
 ):
     website = (
         db.query(models.Website)
@@ -138,7 +138,7 @@ def chat_feedback(
     body: FeedbackRequest,
     request: Request,
     db: Session = Depends(get_db),
-    _: None = Depends(rate_limit("chat", max_requests=40, window_seconds=60)),
+    _: None = Depends(rate_limit_policy("feedback")),
 ):
     """Record a 👍/👎 rating for a chat answer. Public (no auth) so the
     embeddable widget can call it directly from any site."""
@@ -207,7 +207,7 @@ def upsert_contact(
     body: ContactCreate,
     request: Request,
     db: Session = Depends(get_db),
-    _: None = Depends(rate_limit("chat", max_requests=40, window_seconds=60)),
+    _: None = Depends(rate_limit_policy("contacts")),
 ):
     """Public: save the visitor's contact info before chatting.
 
@@ -403,7 +403,7 @@ def mint_session_token(
     request: Request,
     db: Session = Depends(get_db),
     x_session_token: str | None = Header(default=None, alias="X-Session-Token"),
-    _: None = Depends(rate_limit("session", max_requests=30, window_seconds=60)),
+    _: None = Depends(rate_limit_policy("session-token")),
 ):
     """K4: mint (or rotate) the token the widget uses to read its own session.
 
@@ -499,7 +499,7 @@ async def chat_stream(
     body: ChatRequest,
     request: Request,
     db: Session = Depends(get_db),
-    _: None = Depends(rate_limit("chat", max_requests=20, window_seconds=60)),
+    _: None = Depends(rate_limit_policy("stream")),
 ):
     website = (
         db.query(models.Website)
@@ -678,7 +678,16 @@ async def health(db: Session = Depends(get_db)):
         result["redis"] = await redis_ping()
     except Exception:
         pass
+    # V3 (F1): the limiter's own degraded signal — independent of the Redis
+    # ping above, because the fallback to the per-process cap is a weaker
+    # guarantee even while Redis answers again.
+    result["rate_limiter"] = {
+        "backend": limiter_backend(),
+        "degraded": limiter_degraded(),
+    }
     if not (result["db"] and result["redis"]):
+        result["status"] = "degraded"
+    if limiter_degraded():
         result["status"] = "degraded"
     return result
 
@@ -687,7 +696,7 @@ async def health(db: Session = Depends(get_db)):
 def register(
     registration: CompanyRegister,
     db: Session = Depends(get_db),
-    _: None = Depends(rate_limit("register", max_requests=3, window_seconds=3600)),
+    _: None = Depends(rate_limit_policy("register")),
 ):
     # check params
     if (
@@ -742,7 +751,7 @@ def get_token(
     login: UserLogin,
     db: Session = Depends(get_db),
     # Brute-force guard: the login endpoint is public and always reachable.
-    _: None = Depends(rate_limit("login", max_requests=10, window_seconds=60)),
+    _: None = Depends(rate_limit_policy("login")),
 ):
     user = (
         db.query(models.User)

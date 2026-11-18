@@ -19,7 +19,7 @@ from site_gpt.app.schemas.user import (
     UserUpdate,
 )
 from site_gpt.app.services.mail import send_email
-from site_gpt.app.services.ratelimit import rate_limit
+from site_gpt.app.services.ratelimit import rate_limit_policy
 
 router = APIRouter()
 
@@ -60,7 +60,7 @@ def forgot_password(
     body: ForgotPasswordRequest,
     db: Session = Depends(get_db),
     # Spam guard: every call can send an email through the configured SMTP.
-    _: None = Depends(rate_limit("reset", max_requests=3, window_seconds=3600)),
+    _: None = Depends(rate_limit_policy("reset")),
 ):
     # Always return success to avoid leaking which emails are registered.
     exist_user = (
@@ -100,7 +100,7 @@ def reset_password(
     # Token-guessing guard. Deliberately a separate bucket from "reset" so
     # requesting a link never blocks submitting the token it produced.
     _: None = Depends(
-        rate_limit("reset-confirm", max_requests=10, window_seconds=300)
+        rate_limit_policy("reset-confirm")
     ),
 ):
     exist_user = (

@@ -22,7 +22,7 @@ from site_gpt.app.services import company_settings
 from site_gpt.app.services.integrations import emit_event_async
 from site_gpt.app.services.mail import send_email_async
 from site_gpt.app.services.rag import get_chat_history
-from site_gpt.app.services.ratelimit import rate_limit
+from site_gpt.app.services.ratelimit import rate_limit_policy
 
 logger = logging.getLogger(__name__)
 
@@ -147,7 +147,7 @@ async def _notify(db: Session, website: models.Website, request: models.HandoffR
 async def create_handoff(
     body: HandoffCreate,
     db: Session = Depends(get_db),
-    _: None = Depends(rate_limit("chat", max_requests=10, window_seconds=60)),
+    _: None = Depends(rate_limit_policy("handoff")),
 ):
     """Public: the widget's "talk to a human" button.
 
