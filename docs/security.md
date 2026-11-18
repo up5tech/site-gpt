@@ -41,7 +41,7 @@ processes.
 | Integration secrets | Masked as `***` on every read; a PATCH echoing the mask keeps the stored value; provider errors are scrubbed of every stored secret before they reach a client **and** before they are stored on a delivery row | `api/integration.py`, `services/integrations.py` |
 | Delivery retention | Delivery rows keep the event payload (visitor contact details) for retries, but no API returns it: `/integrations/deliveries` exposes type, status, attempts and the scrubbed error only | `api/integration.py` |
 | Webhooks | HMAC-SHA256 over `<timestamp>.<body>`, header `X-SiteGPT-Signature`; receivers can reject replays by checking the timestamp | `services/integrations.py` |
-| Rate limits | Fixed window per client IP on public endpoints (in-memory, see accepted risk K5) | `services/ratelimit.py` |
+| Rate limits | Sliding window per client IP on public endpoints (`memory` per-process by default; shared via Redis with `RATE_LIMIT_BACKEND=redis`, see mitigated K5) | `services/ratelimit.py` |
 | Spend ceiling | Daily message cap per website, counted in Redis, reset at UTC midnight | `api/routes.py` |
 | Uploads | Size capped while streaming (`MAX_UPLOAD_MB`, 413 without buffering the body) | `api/upload.py` |
 | Consent | When `require_consent` is on, `POST /api/contacts` refuses without `consent: true` and stamps `contacts.consent_at` | `api/routes.py` |
@@ -307,10 +307,16 @@ These are known, documented and deliberately deferred. They are not oversights.
   customer sites you care about: set `SESSION_TOKEN_MODE=enforce` and reload.
   Nothing else changes; legacy sessions lose widget history and are still
   visible to admins.
-- **K5 — the rate limiter is per process.** The fixed window lives in memory, so
-  N workers allow N times the configured rate, and a restart resets the counters.
-  It stops accidents, not a determined attacker. Redis-based limiting is a V3
-  item; the Redis daily message cap is the hard spend ceiling today.
+- **K5 — the rate limiter (mitigated in V3, F1).** With `RATE_LIMIT_BACKEND=redis`
+  the sliding window lives in Redis (atomic Lua over a sorted set), so N API
+  processes share one budget and a restart does not reset it. Residual: the
+  default `memory` backend is still per process, and when Redis is unreachable
+  the `redis` backend falls back to that per-process cap — `/health` reports
+  this as `rate_limiter: {backend, degraded: true}` and the status becomes
+  `degraded`. During an outage, combined traffic may exceed one shared budget
+  (up to N × the per-process allowance); Redis is therefore an availability
+  dependency for the enforced path. The Redis daily message cap remains the
+  hard spend ceiling today.
 - **K6 — development defaults.** `JWT_SECRET_KEY` has a known fallback and
   `CORS_ORIGINS` defaults to `*` if unset. The app does not refuse to boot with
   them. Treat §3 as the deployment checklist; a production boot that logs no

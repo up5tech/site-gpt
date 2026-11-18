@@ -368,14 +368,14 @@ The migration chain is linear from that head; never edit an already-applied revi
 
 ### 4. Known limitations
 
-These are the known limitations. K4 was mitigated and K8 closed in V2/V2.1; K5 and
-K18 remain accepted. [`docs/security.md`](docs/security.md) §5 carries the same
+These are the known limitations. K4 was mitigated and K8 closed in V2/V2.1; K5
+was mitigated in V3 (F1). K18 remains accepted. [`docs/security.md`](docs/security.md) §5 carries the same
 list with the residual risk spelled out:
 
 | ID | Limitation | Impact / mitigation |
 |---|---|---|
 | K4 | `GET /api/conversations/{session_id}` and `GET /api/contacts/{session_id}` are **public by design** — the widget restores history and lead details without a login. A guessed `session_id` combined with a known `website_id` used to expose that session's transcript or contact details. | **Mitigated in V2.1** by a per-session token (`X-Session-Token`, stored only as a hash): once a session is claimed, its id alone reads nothing. Residual: `SESSION_TOKEN_MODE=compat` (the default) still allows a tokenless read of an *unclaimed* session so older embed snippets keep working, and sessions that already had data before the change can never be claimed — switch to `enforce` once your embeds ship the new snippet. See [`docs/security.md`](docs/security.md) §5.1. |
-| K5 | `services/ratelimit.py` is an in-memory fixed window, **per process**. Limits reset on restart and are not shared across workers. | Run one API process, or put a real limiter (Redis / edge) in front before scaling horizontally. |
+| K5 | `services/ratelimit.py` was an in-memory fixed window, **per process**. Limits reset on restart and were not shared across workers. | **Mitigated in V3 (F1)** with `RATE_LIMIT_BACKEND=redis`: one shared sliding-window budget (atomic Lua over a sorted set) across API processes, surviving restarts. Residual: with the default `memory` backend the limiter is still per process, and during a Redis outage the `redis` backend falls back to that same per-process cap (`/health` reports `rate_limiter.degraded`) — Redis is an availability dependency for the enforced path. The Redis daily message cap remains the hard spend ceiling. |
 | K18 | The widget's Origin/Referer check is **soft**: requests with no `Origin`/`Referer` (non-browser clients, forged headers, `referrerpolicy="no-referrer"`) are still accepted, and loopback origins are always allowed so local demos work. | It blocks ordinary cross-site embedding (copying a `website_id` into another page), not a determined API caller. A signed per-website embed token would close it and needs a schema change; it is still open after V2 and V2.1 (the session token of K4 is per session, not per website). |
 | K8 | 👍/👎 feedback is stored in `chat_feedback` and never influences answers on its own. | Closed in V2: an admin reviews it in `/training`, corrects an answer and approves the pair; approved pairs are re-embedded into one `__qa_training__` document per website (`POST /api/feedback/rebuild`). Nothing changes without approval. |
 
@@ -503,16 +503,31 @@ so `EMBEDDING_DIMENSIONS` must equal that model's native size.
   crawled active-page set are deleted (cascading their embeddings). Extra documents with no
   usable content have their embeddings dropped, so removed/empty sources stop surfacing.
   Guarded so a full crawl failure can't wipe a site's knowledge base.
-- **Rate limiting.** `services/ratelimit.py` (in-memory fixed window, per client IP) caps
+- **Rate limiting.** `services/ratelimit.py` (sliding window, per client IP) caps
   `/api/chat` + `/api/chat/stream` at 20 req/min, `/api/chat/feedback` at 40 req/min,
   `/api/ingest` at 10 req/min, `/api/token` (login, brute-force guard) at 10 req/min,
   `/api/register` + `/api/forgot-password` (spam/email-flood guard) at 3 req/hour and
   `/api/users/reset-password` (token-guessing guard, separate bucket from forgot-password)
-  at 10 req/5 min   (429 on exceed). `X-Forwarded-For` is only trusted when the direct peer is a loopback or
+  at 10 req/5 min (429 on exceed, with a `Retry-After` header; body unchanged).
+  All public limits resolve from one policy table, `RATE_LIMIT_POLICIES` in
+  `services/ratelimit.py`. `X-Forwarded-For` is only trusted when the direct peer is a loopback or
   private address (a reverse proxy on the same host/VPC) or is listed in
   `TRUSTED_PROXY_IPS`; direct clients are keyed by their socket IP, so the header cannot be
-  rotated to bypass a limit. Swap for a Redis counter if
-  you run multiple workers.
+  rotated to bypass a limit. Backends (`RATE_LIMIT_BACKEND`): `memory` (default, V2.1)
+  keeps the window in-process — per process, reset on restart; `redis` shares one
+  sliding-window budget (atomic Lua over a sorted set) across API processes and
+  survives restarts. If Redis is unreachable with the `redis` backend, the limiter
+  falls back to the per-process memory cap and `/health` reports it under
+  `rate_limiter.degraded` — a weaker local cap, not a shared/global guarantee
+  (combined outage traffic may exceed one shared budget, up to N × the per-process
+  allowance).
+- **Limit composition.** Three independent guards, in this order: (1) the per-IP
+  rate limiter is a burst guard — it runs as a FastAPI dependency before the
+  handler; (2) the daily per-website quota (`services/quota.py`, Redis counter)
+  is the spend ceiling, checked inside the chat handlers after the limiter;
+  (3) `/api/v1` is API-key authenticated (`X-API-Key` + scope) and has **no**
+  per-IP or per-key rate limiter — per-key abuse protection is deferred, not
+  implemented. The daily quota still applies to `/api/v1/chat`.
 - **Periodic re-crawl.** The worker now runs a `scheduler_loop` that, every
   `CRAWL_REFRESH_HOURS` (default 24, set `0` to disable), re-enqueues ingest for websites
   whose `ingest_status == 'completed'` and last update is older than the interval — keeping
