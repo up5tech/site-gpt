@@ -423,19 +423,51 @@ def purge_company(
     }
 
 
+# The span of one topic window. Kept next to the containment check so the
+# clustering schedule and the invalidation cannot drift apart.
+WINDOW_SPAN = timedelta(days=7)
+
+
 def _window_overlap(column, stamps: list[datetime]):
     """Rows whose weekly window contains at least one of `stamps`.
 
     Expressed as `period_start > min - 7d AND period_start <= max`, which is
     alignment-agnostic: it holds whether the company's windows start on Monday or
     on the `digest_day` it configured. A window is at most seven days, so this
-    cannot miss one, and it can only over-reach when a conversation spans weeks —
-    safe here, because these rows are rebuilt rather than authoritative.
+    cannot miss one.
+
+    It is exact only while `stamps` span no more than a week: past that, a start
+    in the middle belongs to a window that contains neither the first nor the last
+    stamp. Callers group stamps first (`_window_groups`) rather than passing a
+    whole conversation's timestamps.
     """
     return and_(
-        column > min(stamps) - timedelta(days=7),
+        column > min(stamps) - WINDOW_SPAN,
         column <= max(stamps),
     )
+
+
+def _window_groups(stamps: list[datetime]) -> list[list[datetime]]:
+    """Split stamps into runs that are at most one window apart.
+
+    Two moments more than seven days apart belong to different weeks under every
+    alignment, so they are matched separately: a conversation that goes quiet for
+    a fortnight must not erase the week in between. That week's clusters were built
+    from messages the erasure did not touch, so dropping them would delete derived
+    data nobody asked to remove (and cost the worker a needless rebuild).
+    """
+    groups: list[list[datetime]] = []
+    for stamp in sorted(set(stamps)):
+        if groups and stamp - groups[-1][-1] <= WINDOW_SPAN:
+            groups[-1].append(stamp)
+        else:
+            groups.append([stamp])
+    return groups
+
+
+def _window_any(column, stamps: list[datetime]):
+    """`or_` of one containment range per group of stamps."""
+    return or_(*[_window_overlap(column, group) for group in _window_groups(stamps)])
 
 
 def invalidate_topic_windows(
@@ -452,6 +484,13 @@ def invalidate_topic_windows(
     for that week"; the run row is deleted too, which is what lets the worker
     rebuild it later. No provider is called here — invalidation is local, cheap
     and unconditional.
+
+    Which window a moment fell in is decided by containment, not by reading the
+    company's `digest_day`: any seven-day window holding an erased message is
+    dropped, whatever day it starts on. Moments are matched week by week, not as
+    one min→max range, so a conversation spanning several weeks loses exactly the
+    weeks it holds messages in — the silent weeks between its first and last
+    message were not built from erased text and are left alone.
     """
     stamps = [
         moment if moment.tzinfo is not None else moment.replace(tzinfo=UTC)
@@ -465,13 +504,13 @@ def invalidate_topic_windows(
         "topic_clusters": db.query(models.TopicCluster)
         .filter(
             models.TopicCluster.company_id == company_id,
-            _window_overlap(models.TopicCluster.period_start, stamps),
+            _window_any(models.TopicCluster.period_start, stamps),
         )
         .delete(synchronize_session=False),
         "topic_cluster_runs": db.query(models.TopicClusterRun)
         .filter(
             models.TopicClusterRun.company_id == company_id,
-            _window_overlap(models.TopicClusterRun.period_start, stamps),
+            _window_any(models.TopicClusterRun.period_start, stamps),
         )
         .delete(synchronize_session=False),
     }

@@ -1042,6 +1042,49 @@ class TopicClusterInvalidationTests(unittest.TestCase):
         self.assertEqual(deleted, {"topic_clusters": 0, "topic_cluster_runs": 0})
         self.assertEqual(self.db.query(models.TopicCluster).count(), 1)
 
+    def test_a_conversation_spanning_two_weeks_loses_both_windows(self):
+        # A chat can carry over into the next week. Both weeks were built from its
+        # questions, so both go — and the week after is untouched.
+        _cluster(self.db, self.company, WINDOW, key="first")
+        _run(self.db, self.company, WINDOW)
+        _cluster(self.db, self.company, WINDOW + timedelta(days=7), key="second")
+        _run(self.db, self.company, WINDOW + timedelta(days=7))
+        _cluster(self.db, self.company, WINDOW + timedelta(days=14), key="later")
+        _run(self.db, self.company, WINDOW + timedelta(days=14))
+
+        deleted = retention.invalidate_topic_windows(
+            self.db,
+            self.company.id,
+            [WINDOW + timedelta(days=1), WINDOW + timedelta(days=8)],
+            commit=True,
+        )
+
+        self.assertEqual(deleted, {"topic_clusters": 2, "topic_cluster_runs": 2})
+        self.assertEqual(
+            [row.cluster_key for row in self.db.query(models.TopicCluster)], ["later"]
+        )
+        self.assertEqual(self.db.query(models.TopicClusterRun).count(), 1)
+
+    def test_the_silent_week_between_two_far_apart_messages_is_spared(self):
+        # Moments are matched week by week, not as one min→max range: the middle
+        # week was built from questions this erasure does not touch, so its labels
+        # are not a copy of the erased text and it must survive.
+        _cluster(self.db, self.company, WINDOW, key="first")
+        _cluster(self.db, self.company, WINDOW + timedelta(days=7), key="middle")
+        _cluster(self.db, self.company, WINDOW + timedelta(days=14), key="last")
+
+        deleted = retention.invalidate_topic_windows(
+            self.db,
+            self.company.id,
+            [WINDOW + timedelta(days=1), WINDOW + timedelta(days=15)],
+            commit=True,
+        )
+
+        self.assertEqual(deleted["topic_clusters"], 2)
+        self.assertEqual(
+            [row.cluster_key for row in self.db.query(models.TopicCluster)], ["middle"]
+        )
+
     def test_naive_moments_are_treated_as_utc(self):
         # SQLite hands back naive datetimes; a naive/aware mismatch must not make
         # the invalidation silently miss the window.
