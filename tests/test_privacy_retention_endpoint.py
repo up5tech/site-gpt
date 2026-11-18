@@ -46,6 +46,9 @@ class RetentionEndpointTests(unittest.TestCase):
                 models.Contact.__table__,
                 models.DigestLog.__table__,
                 models.Setting.__table__,
+                # M8: the purge sweeps derived topic rows with everything else.
+                models.TopicCluster.__table__,
+                models.TopicClusterRun.__table__,
             ],
         )
         self.db = sessionmaker(bind=self.engine)()

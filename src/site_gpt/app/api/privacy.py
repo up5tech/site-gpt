@@ -157,6 +157,11 @@ def erase_conversation(
     endpoint below. Anything pointing at the erased messages is cleared by the
     schema (`chat_feedback.message_id` is ON DELETE SET NULL), so no dangling
     reference survives.
+
+    Derived topic clusters for the weeks those messages fell in are dropped too:
+    their labels and summaries were generated from the erased questions, so
+    keeping them would keep a readable trace of text this call removed. The run
+    rows go with them, which is what lets the worker rebuild those windows later.
     """
     website = _scoped_website(db, website_id, user.company_id)
     session_id = session_id.strip()
@@ -164,6 +169,18 @@ def erase_conversation(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="session_id is required"
         )
+
+    # Taken before the delete: these timestamps decide which weekly topic-cluster
+    # windows were derived from this conversation.
+    erased_moments = [
+        created_at
+        for (created_at,) in db.query(models.ChatMessage.created_at)
+        .filter(
+            models.ChatMessage.website_id == website.id,
+            models.ChatMessage.session_id == session_id,
+        )
+        .all()
+    ]
 
     # Ratings and handoffs carry the visitor's words too, so they go with the
     # conversation; leaving them would make the erasure incomplete.
@@ -185,6 +202,11 @@ def erase_conversation(
     )
     db.commit()
     deleted_messages = delete_conversation(db, website.id, session_id)
+    # Local, unconditional and provider-free: derived rows are rebuilt by the
+    # worker, never kept as a copy of erased text.
+    deleted_clusters = retention.invalidate_topic_windows(
+        db, user.company_id, erased_moments, commit=True
+    )
 
     return PrivacyDeletionResult(
         website_id=website.id,
@@ -193,6 +215,7 @@ def erase_conversation(
             "chat_messages": deleted_messages,
             "chat_feedback": deleted_feedback,
             "handoff_requests": deleted_handoffs,
+            **deleted_clusters,
         },
     )
 

@@ -38,6 +38,10 @@ TABLES = [
     models.Attachment.__table__,
     models.Document.__table__,
     models.Embedding.__table__,
+    # Derived topic data (M8): expired windows expire with the messages they
+    # were built from, so the purge has to know about them.
+    models.TopicCluster.__table__,
+    models.TopicClusterRun.__table__,
 ]
 
 
@@ -718,6 +722,10 @@ class PurgeTests(unittest.TestCase):
                 "handoff_requests": 2,
                 "contacts": 2,
                 "digest_log": 2,
+                # M8 derived rows report through the same dict, so a new table
+                # cannot be deleted invisibly.
+                "topic_clusters": 0,
+                "topic_cluster_runs": 0,
                 "attachments": 0,
                 "extra_documents": 0,
             },
@@ -888,6 +896,163 @@ class PurgeTests(unittest.TestCase):
         self.db.commit()
 
         self.assertEqual(retention.companies_with_policy(self.db), [self.company.id])
+
+
+WINDOW = datetime(2026, 11, 9, tzinfo=UTC)  # a Monday, like `normalize_period`
+
+
+def _cluster(db, company, period_start, key="c1", created_at=None):
+    stamped = created_at or period_start
+    row = models.TopicCluster(
+        company_id=company.id,
+        period_start=period_start,
+        cluster_key=key,
+        label="Pricing questions",
+        sampled_messages=3,
+        eligible_messages=5,
+        created_at=stamped,
+        updated_at=stamped,
+    )
+    db.add(row)
+    db.commit()
+    return row
+
+
+def _run(db, company, period_start, status="completed", created_at=None):
+    stamped = created_at or period_start
+    row = models.TopicClusterRun(
+        company_id=company.id,
+        period_start=period_start,
+        status=status,
+        created_at=stamped,
+        updated_at=stamped,
+    )
+    db.add(row)
+    db.commit()
+    return row
+
+
+class TopicClusterRetentionTests(unittest.TestCase):
+    """Topic rows are derived from messages, so they expire on the same clock."""
+
+    def setUp(self):
+        self.engine, self.db = _session()
+        self.company = _company(self.db)
+
+    def tearDown(self):
+        self.db.close()
+        self.engine.dispose()
+
+    def test_an_expired_window_goes_with_its_run_and_a_fresh_one_stays(self):
+        old = NOW - timedelta(days=40)
+        _cluster(self.db, self.company, old)
+        _run(self.db, self.company, old)
+        _cluster(self.db, self.company, NOW, key="fresh")
+        _run(self.db, self.company, NOW)
+
+        result = retention.purge_company(
+            self.db, self.company.id, days=30, dry_run=False
+        )
+
+        self.assertEqual(result["deleted"]["topic_clusters"], 1)
+        self.assertEqual(result["deleted"]["topic_cluster_runs"], 1)
+        self.assertEqual(
+            [row.cluster_key for row in self.db.query(models.TopicCluster)], ["fresh"]
+        )
+        self.assertEqual(self.db.query(models.TopicClusterRun).count(), 1)
+
+    def test_a_dry_run_counts_without_deleting_either_table(self):
+        old = NOW - timedelta(days=40)
+        _cluster(self.db, self.company, old)
+        _run(self.db, self.company, old)
+
+        result = retention.purge_company(
+            self.db, self.company.id, days=30, dry_run=True
+        )
+
+        self.assertEqual(result["deleted"]["topic_clusters"], 1)
+        self.assertEqual(result["deleted"]["topic_cluster_runs"], 1)
+        self.assertEqual(self.db.query(models.TopicCluster).count(), 1)
+        self.assertEqual(self.db.query(models.TopicClusterRun).count(), 1)
+
+    def test_the_window_label_matches_the_table_the_rows_come_from(self):
+        # The purge builds its report from SCOPED_BY_COMPANY; a row deleted
+        # without a label in `deleted` would be an invisible deletion.
+        names = dict(retention.SCOPED_BY_COMPANY)
+
+        self.assertIs(names["topic_clusters"], models.TopicCluster)
+        self.assertIs(names["topic_cluster_runs"], models.TopicClusterRun)
+
+
+class TopicClusterInvalidationTests(unittest.TestCase):
+    """Erasing a conversation must not leave clusters built from its text."""
+
+    def setUp(self):
+        self.engine, self.db = _session()
+        self.company = _company(self.db)
+        self.other = _company(self.db, "Other")
+
+    def tearDown(self):
+        self.db.close()
+        self.engine.dispose()
+
+    def test_only_the_windows_touching_an_erased_moment_go(self):
+        _cluster(self.db, self.company, WINDOW, key="this-week")
+        _run(self.db, self.company, WINDOW)
+        _cluster(self.db, self.company, WINDOW - timedelta(days=21), key="older")
+        _run(self.db, self.company, WINDOW - timedelta(days=21))
+        _cluster(self.db, self.other, WINDOW, key="theirs")
+
+        deleted = retention.invalidate_topic_windows(
+            self.db, self.company.id, [WINDOW + timedelta(days=2)], commit=True
+        )
+
+        self.assertEqual(deleted, {"topic_clusters": 1, "topic_cluster_runs": 1})
+        self.assertEqual(
+            sorted((row.company_id == self.company.id, row.cluster_key) for row in self.db.query(models.TopicCluster)),
+            [(False, "theirs"), (True, "older")],
+        )
+        self.assertEqual(
+            [row.period_start.replace(tzinfo=UTC) if row.period_start.tzinfo is None else row.period_start
+             for row in self.db.query(models.TopicClusterRun)],
+            [WINDOW - timedelta(days=21)],
+        )
+
+    def test_a_window_is_dropped_whatever_day_it_starts_on(self):
+        # The containment check, not an assumption that weeks start on Monday:
+        # a company with `digest_day = "thursday"` still loses the window whose
+        # seven days cover the erased message.
+        thursday = WINDOW + timedelta(days=3)
+        _cluster(self.db, self.company, thursday, key="thu")
+
+        deleted = retention.invalidate_topic_windows(
+            self.db, self.company.id, [thursday + timedelta(days=6)], commit=True
+        )
+
+        self.assertEqual(deleted["topic_clusters"], 1)
+        self.assertEqual(self.db.query(models.TopicCluster).count(), 0)
+
+    def test_no_moments_means_nothing_is_deleted(self):
+        _cluster(self.db, self.company, WINDOW)
+
+        deleted = retention.invalidate_topic_windows(
+            self.db, self.company.id, [None], commit=True
+        )
+
+        self.assertEqual(deleted, {"topic_clusters": 0, "topic_cluster_runs": 0})
+        self.assertEqual(self.db.query(models.TopicCluster).count(), 1)
+
+    def test_naive_moments_are_treated_as_utc(self):
+        # SQLite hands back naive datetimes; a naive/aware mismatch must not make
+        # the invalidation silently miss the window.
+        _cluster(self.db, self.company, WINDOW)
+        naive = (WINDOW + timedelta(days=1)).replace(tzinfo=None)
+
+        deleted = retention.invalidate_topic_windows(
+            self.db, self.company.id, [naive], commit=True
+        )
+
+        self.assertEqual(deleted["topic_clusters"], 1)
 
 
 if __name__ == "__main__":

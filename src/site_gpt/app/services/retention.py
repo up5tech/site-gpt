@@ -59,7 +59,15 @@ SCOPED_BY_WEBSITE: tuple[tuple[str, type], ...] = (
 )
 
 # Tables that carry `company_id` directly.
-SCOPED_BY_COMPANY: tuple[tuple[str, type], ...] = (("digest_log", models.DigestLog),)
+SCOPED_BY_COMPANY: tuple[tuple[str, type], ...] = (
+    ("digest_log", models.DigestLog),
+    # Topic clusters are derived from messages in the same windows, so they expire
+    # on the same clock. Keeping the labels of deleted questions would keep a
+    # trace of text the policy removed; the run row goes with them so the worker
+    # can rebuild the window instead of treating it as done.
+    ("topic_clusters", models.TopicCluster),
+    ("topic_cluster_runs", models.TopicClusterRun),
+)
 
 # Where uploaded bytes live. Matches `api/upload.py` and `worker.py`, which both
 # build `uploads/<attachment.file_url>`: one constant here stays honest because the
@@ -413,6 +421,63 @@ def purge_company(
         "deleted": deleted,
         "total": sum(deleted.values()),
     }
+
+
+def _window_overlap(column, stamps: list[datetime]):
+    """Rows whose weekly window contains at least one of `stamps`.
+
+    Expressed as `period_start > min - 7d AND period_start <= max`, which is
+    alignment-agnostic: it holds whether the company's windows start on Monday or
+    on the `digest_day` it configured. A window is at most seven days, so this
+    cannot miss one, and it can only over-reach when a conversation spans weeks —
+    safe here, because these rows are rebuilt rather than authoritative.
+    """
+    return and_(
+        column > min(stamps) - timedelta(days=7),
+        column <= max(stamps),
+    )
+
+
+def invalidate_topic_windows(
+    db: Session,
+    company_id: UUID,
+    moments: list[datetime | None],
+    *,
+    commit: bool = False,
+) -> dict[str, int]:
+    """Drop the derived clusters for every window an erased moment fell in.
+
+    Called after a conversation is erased. The labels and summaries were built
+    from questions that no longer exist, so the only honest state is "no clusters
+    for that week"; the run row is deleted too, which is what lets the worker
+    rebuild it later. No provider is called here — invalidation is local, cheap
+    and unconditional.
+    """
+    stamps = [
+        moment if moment.tzinfo is not None else moment.replace(tzinfo=UTC)
+        for moment in moments
+        if moment is not None
+    ]
+    if not stamps:
+        return {"topic_clusters": 0, "topic_cluster_runs": 0}
+
+    deleted = {
+        "topic_clusters": db.query(models.TopicCluster)
+        .filter(
+            models.TopicCluster.company_id == company_id,
+            _window_overlap(models.TopicCluster.period_start, stamps),
+        )
+        .delete(synchronize_session=False),
+        "topic_cluster_runs": db.query(models.TopicClusterRun)
+        .filter(
+            models.TopicClusterRun.company_id == company_id,
+            _window_overlap(models.TopicClusterRun.period_start, stamps),
+        )
+        .delete(synchronize_session=False),
+    }
+    if commit:
+        db.commit()
+    return deleted
 
 
 def companies_with_policy(db: Session) -> list[UUID]:

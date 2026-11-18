@@ -8,6 +8,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Index,
+    Integer,
     String,
     Text,
     UniqueConstraint,
@@ -356,6 +357,91 @@ class DigestLog(BaseModel):
         DateTime(timezone=True), nullable=True
     )
     recipient_count: Mapped[int] = mapped_column(nullable=False, default=0)
+
+
+class TopicCluster(BaseModel):
+    """One named topic cluster for one company in one weekly window (V3 M8, F2).
+
+    Derived data only: labels, summaries, aggregates and a centroid — never the
+    visitor questions themselves. Chat messages carry no stored vector, so a run
+    embeds its bounded sample and keeps the centroid; the text stays wherever it
+    already lives and an erasure removes it from here by dropping the window.
+    """
+
+    __tablename__ = "topic_clusters"
+
+    __table_args__ = (
+        # A window's rebuild replaces rows through this identity: two runs over
+        # the same input cannot produce two rows for the same cluster.
+        UniqueConstraint("company_id", "period_start", "cluster_key"),
+        # The retention purge and the post-erasure invalidation both filter on
+        # company + created_at, like `digest_log`'s purge index.
+        Index("idx_topic_clusters_company_id_created_at", "company_id", "created_at"),
+    )
+
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
+    )
+    # Aligned with `digest.normalize_period`, never a rolling 7-day window.
+    period_start: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    # Stable within the window: derived from the ordered clusters, not a random
+    # uuid, so rebuilding identical input yields identical keys.
+    cluster_key: Mapped[str] = mapped_column(String(32), nullable=False)
+    label: Mapped[str] = mapped_column(String(120), nullable=False)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Same dimension as `Embedding`: M8 changes no dimension, so no re-ingest.
+    centroid: Mapped[list[float] | None] = mapped_column(
+        Vector(EMBEDDING_DIMENSIONS), nullable=True
+    )
+    # `eligible` counts every visitor question in the window, `sampled` the ones
+    # actually clustered; they differ when `TOPIC_CLUSTER_MAX_MESSAGES` truncates.
+    sampled_messages: Mapped[int] = mapped_column(nullable=False, default=0)
+    eligible_messages: Mapped[int] = mapped_column(nullable=False, default=0)
+
+
+class TopicClusterRun(BaseModel):
+    """The durable claim for one company + weekly window (V3 M8, F2).
+
+    One row per `(company_id, period_start)` is what makes clustering idempotent:
+    a run inserts its claim first, so a duplicate job or a second worker loses the
+    insert instead of building the window twice. `status` plus `claimed_at` also
+    make a crashed run recoverable — a row still `running` past the stale timeout
+    can be reclaimed, while `completed` is final.
+    """
+
+    __tablename__ = "topic_cluster_runs"
+
+    __table_args__ = (
+        UniqueConstraint("company_id", "period_start"),
+        CheckConstraint(
+            "status IN ('running', 'completed', 'failed')",
+            name="ck_topic_cluster_runs_status",
+        ),
+        # Stale-run recovery scans exactly this pair.
+        Index("idx_topic_cluster_runs_status_claimed_at", "status", "claimed_at"),
+        Index(
+            "idx_topic_cluster_runs_company_id_created_at", "company_id", "created_at"
+        ),
+    )
+
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
+    )
+    period_start: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="running")
+    claimed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # Bounded on purpose: a provider error can quote a URL or a key fragment, and
+    # this value is read back by the dashboard.
+    error: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
 
 class Integration(BaseModel):
