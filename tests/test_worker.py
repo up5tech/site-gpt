@@ -3,9 +3,13 @@ import unittest
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4
+from uuid import UUID, uuid4
 
-from site_gpt.app import worker
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+from site_gpt.app import models, worker
+from site_gpt.app.db.base import Base
 from site_gpt.app.worker import (
     STUCK_INGEST_AFTER,
     _is_stuck,
@@ -109,6 +113,147 @@ class RequeueStuckIngestsTests(unittest.TestCase):
 
         self.assertEqual(recovered, [])
         enqueue.assert_not_awaited()
+        db.close.assert_called_once()
+
+
+TOPIC_TABLES = [
+    models.Company.__table__,
+    models.Setting.__table__,
+    models.TopicClusterRun.__table__,
+]
+
+
+def _topic_session():
+    """An in-memory database with just the tables the topics scheduler touches."""
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine, tables=TOPIC_TABLES)
+    return engine, sessionmaker(bind=engine)()
+
+
+def _aware(moment):
+    return moment if moment.tzinfo is not None else moment.replace(tzinfo=UTC)
+
+
+class EnqueueDueTopicsTests(unittest.TestCase):
+    """The scheduler queues the last complete week, and only for opted-in companies."""
+
+    def setUp(self):
+        self.engine, self.db = _topic_session()
+        self.company = models.Company(name="Acme")
+        self.db.add(self.company)
+        self.db.commit()
+
+    def tearDown(self):
+        self.db.close()
+        self.engine.dispose()
+
+    def _setting(self, key, value):
+        self.db.add(
+            models.Setting(company_id=self.company.id, key=key, value=value)
+        )
+        self.db.commit()
+
+    def _run(self):
+        with patch.object(worker, "SessionLocal", return_value=self.db), patch.object(
+            worker, "enqueue_job", new=AsyncMock()
+        ) as enqueue:
+            queued = asyncio.run(worker.enqueue_due_topics(now=NOW))
+        return queued, enqueue
+
+    def _stored_run(self):
+        session = sessionmaker(bind=self.engine)()
+        try:
+            return session.query(models.TopicClusterRun).one()
+        finally:
+            session.close()
+
+    def test_flag_off_queues_nothing(self):
+        queued, enqueue = self._run()
+
+        self.assertEqual(queued, [])
+        enqueue.assert_not_awaited()
+
+    def test_flag_on_queues_the_last_complete_week(self):
+        self._setting("topic_clustering_enabled", "true")
+
+        queued, enqueue = self._run()
+
+        self.assertEqual(queued, [str(self.company.id)])
+        payload = enqueue.await_args.args[0]
+        self.assertEqual(payload["type"], "topic_clusters")
+        self.assertEqual(payload["company_id"], str(self.company.id))
+        # NOW is Saturday 2026-11-14: the week containing it starts Monday the
+        # 9th, so the complete window is the 2nd → the 9th.
+        self.assertEqual(payload["period_start"], "2026-11-02T00:00:00+00:00")
+        self.assertEqual(payload["period_end"], "2026-11-09T00:00:00+00:00")
+
+    def test_a_completed_window_is_not_queued_again(self):
+        self._setting("topic_clustering_enabled", "true")
+        self.db.add(
+            models.TopicClusterRun(
+                company_id=self.company.id,
+                period_start=datetime(2026, 11, 2, tzinfo=UTC),
+                status="completed",
+                claimed_at=NOW - timedelta(days=1),
+                completed_at=NOW - timedelta(days=1),
+            )
+        )
+        self.db.commit()
+
+        queued, enqueue = self._run()
+
+        self.assertEqual(queued, [])
+        enqueue.assert_not_awaited()
+
+    def test_a_dead_claim_is_recovered_and_retried(self):
+        self._setting("topic_clustering_enabled", "true")
+        self.db.add(
+            models.TopicClusterRun(
+                company_id=self.company.id,
+                period_start=datetime(2026, 11, 2, tzinfo=UTC),
+                status="running",
+                claimed_at=NOW - timedelta(hours=2),
+            )
+        )
+        self.db.commit()
+
+        queued, enqueue = self._run()
+
+        self.assertEqual(queued, [str(self.company.id)])
+        enqueue.assert_awaited_once()
+        run = self._stored_run()
+        self.assertEqual(run.status, "failed")
+        self.assertIn("stale", run.error)
+
+
+class HandleTopicClustersTests(unittest.TestCase):
+    def test_an_incomplete_job_never_opens_a_session(self):
+        with patch.object(worker, "SessionLocal") as session:
+            asyncio.run(worker.handle_topic_clusters({"type": "topic_clusters"}))
+
+        session.assert_not_called()
+
+    def test_the_job_parses_the_window_and_closes_its_session(self):
+        db = MagicMock()
+        run_window = MagicMock(return_value={"status": "completed"})
+        payload = {
+            "type": "topic_clusters",
+            "company_id": str(uuid4()),
+            "period_start": "2026-11-02T00:00:00+00:00",
+            "period_end": "2026-11-09T00:00:00+00:00",
+        }
+
+        with patch.object(worker, "SessionLocal", return_value=db), patch.object(
+            worker.topics, "run_window", run_window
+        ):
+            asyncio.run(worker.handle_topic_clusters(payload))
+
+        args, kwargs = run_window.call_args
+        self.assertIs(args[0], db)
+        self.assertEqual(args[1], UUID(payload["company_id"]))
+        self.assertEqual(args[2], datetime(2026, 11, 2, tzinfo=UTC))
+        self.assertEqual(args[3], datetime(2026, 11, 9, tzinfo=UTC))
+        self.assertIn("stale_before", kwargs)
         db.close.assert_called_once()
 
 

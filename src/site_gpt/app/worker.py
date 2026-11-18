@@ -17,10 +17,11 @@ from site_gpt.app.core.config import (
     DELIVERY_RETENTION_CHECK_SECONDS,
     DIGEST_CHECK_SECONDS,
     RETENTION_CHECK_SECONDS,
+    TOPIC_CLUSTER_INTERVAL_SECONDS,
     DIGEST_ENABLED,
     DIGEST_HOUR,
 )
-from site_gpt.app.services import company_settings, digest, retention
+from site_gpt.app.services import company_settings, digest, retention, topics
 from site_gpt.app.services.integrations import (
     process_due_deliveries,
     purge_deliveries,
@@ -131,6 +132,10 @@ async def worker():
     # Daily retention purge for companies that set a policy. Queued rather than
     # run inline so a large delete does not stall the job loop.
     asyncio.create_task(retention_loop())
+    # Topic clustering for companies that opted in (`topic_clustering_enabled`).
+    # The loop only reads settings, so with nobody opted in it makes no provider
+    # call and no job is ever queued.
+    asyncio.create_task(topic_loop())
     while True:
         try:
             _, job = await redis_client.brpop("queue:jobs")  # type: ignore
@@ -159,6 +164,12 @@ async def worker():
                 await handle_retention(data)
             except Exception as e:
                 print(f"[worker] retention purge failed: {e}")
+                traceback.print_exc()
+        elif data.get("type") == "topic_clusters":
+            try:
+                await handle_topic_clusters(data)
+            except Exception as e:
+                print(f"[worker] topic clustering failed: {e}")
                 traceback.print_exc()
 
 
@@ -437,6 +448,106 @@ async def enqueue_due_digests(now: datetime | None = None) -> list[str]:
     finally:
         db.close()
     return queued
+
+
+async def enqueue_due_topics(now: datetime | None = None) -> list[str]:
+    """Enqueue the last complete week for every company that opted in.
+
+    The switch is per company (`topic_clustering_enabled`, off by default), so a
+    deployment where nobody opted in makes no provider call. This loop only
+    enqueues: the job claims the window, so two workers finding the same company
+    still build it once, a completed window is skipped, and a claim left by a dead
+    worker is recovered here and retried by the job's own claim.
+    """
+    now = now or datetime.now(UTC)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=UTC)
+    stale_before = now - topics.STALE_RUN_AFTER
+
+    db = SessionLocal()
+    queued: list[str] = []
+    try:
+        recovered = topics.recover_stale_runs(db, stale_before=stale_before)
+        for company_id, period_start in recovered:
+            print(
+                f"[topics] recovered stale run for company {company_id} "
+                f"window {period_start}"
+            )
+
+        for company in db.query(models.Company).all():
+            settings = company_settings.values(
+                db,
+                company.id,
+                # `topic_cluster_count` is read by the run itself, when it builds
+                # the naming prompt; the scheduler only decides whether to queue.
+                ("topic_clustering_enabled", "digest_day"),
+            )
+            enabled = (
+                (settings.get("topic_clustering_enabled") or "").strip().lower()
+                in company_settings.TRUE_VALUES
+            )
+            if not enabled:
+                continue
+
+            period_start, period_end = topics.previous_window(
+                now, settings.get("digest_day") or "monday"
+            )
+            if topics.window_settled(
+                db, company.id, period_start, stale_before=stale_before
+            ):
+                continue
+
+            await enqueue_job(
+                {
+                    "type": "topic_clusters",
+                    "company_id": str(company.id),
+                    "period_start": period_start.isoformat(),
+                    "period_end": period_end.isoformat(),
+                }
+            )
+            queued.append(str(company.id))
+            print(f"[topics] queued company {company.id} for {period_start}")
+    finally:
+        db.close()
+    return queued
+
+
+async def handle_topic_clusters(data):
+    """Cluster one claimed week. The run row makes duplicates and retries safe."""
+    company_id = data.get("company_id")
+    period_start_raw = data.get("period_start")
+    period_end_raw = data.get("period_end")
+    if not company_id or not period_start_raw or not period_end_raw:
+        print(f"[topics] incomplete job: {data}")
+        return
+
+    db = SessionLocal()
+    try:
+        result = topics.run_window(
+            db,
+            UUID(str(company_id)),
+            datetime.fromisoformat(str(period_start_raw)),
+            datetime.fromisoformat(str(period_end_raw)),
+            stale_before=datetime.now(UTC) - topics.STALE_RUN_AFTER,
+        )
+        print(f"[topics] company {company_id}: {result}")
+    finally:
+        db.close()
+
+
+async def topic_loop():
+    """Wake every TOPIC_CLUSTER_INTERVAL_SECONDS and queue the opted-in companies.
+
+    The interval is only how often this check runs; the window boundaries come from
+    `normalize_period`/`digest_day`, so windows never overlap or leave a gap.
+    """
+    while True:
+        await asyncio.sleep(TOPIC_CLUSTER_INTERVAL_SECONDS)
+        try:
+            await enqueue_due_topics()
+        except Exception as e:
+            print(f"[topics] loop error: {e}")
+            traceback.print_exc()
 
 
 async def delivery_loop():
