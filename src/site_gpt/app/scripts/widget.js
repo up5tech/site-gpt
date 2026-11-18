@@ -21,6 +21,9 @@
     // F9: off by default, so a V1 embed renders exactly the same form.
     requireConsent: false,
     privacyPolicyUrl: '',
+    // V3 F4: optional per-website token. Empty keeps a V2.1 snippet byte-for-byte
+    // compatible — no header is sent and `compat` mode accepts that.
+    embedToken: '',
   };
 
   // ================= SANITIZE CONFIG =================
@@ -106,6 +109,9 @@
         500,
       ),
       position: cfg.position === 'bottom-left' ? 'bottom-left' : 'bottom-right',
+      // A token is opaque `emb_…` text; `safeText` only trims and caps it, and a
+      // non-string (someone setting an object) becomes no token at all.
+      embedToken: safeText(cfg.embedToken, '', 200),
       width: safeDimension(cfg.width, DEFAULT_CONFIG.width),
       height: safeDimension(cfg.height, DEFAULT_CONFIG.height),
       footerColor: safeColor(cfg.footerColor, DEFAULT_CONFIG.footerColor),
@@ -211,6 +217,19 @@
   );
   const hasWebsiteId = !!config.website_id;
 
+  // ================= EMBED TOKEN (V3 F4) =================
+  // `window.ChatWidgetConfig.embedToken` is optional and additive: when it is
+  // absent nothing is sent, so an older snippet keeps working. The token is
+  // public (it sits in the page HTML) — it exists to let an owner revoke the
+  // snippets they deployed, not to authenticate the origin.
+  //
+  // Keep this separate from the K4 session token: an embed-token refusal must
+  // never reset or re-mint the visitor's session, and this header never replaces
+  // `X-Session-Token`.
+  function embedTokenHeaders() {
+    return config.embedToken ? { 'X-Embed-Token': config.embedToken } : {};
+  }
+
   // ================= SESSION =================
   function newSession() {
     const id = crypto.randomUUID();
@@ -247,7 +266,10 @@
     const base = config.apiUrl.replace(/\/$/, '');
     return fetch(`${base}/api/session-token`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: Object.assign(
+        { 'Content-Type': 'application/json' },
+        embedTokenHeaders(),
+      ),
       body: JSON.stringify({
         website_id: config.website_id,
         session_id: sessionId,
@@ -834,7 +856,10 @@
       if (messageId) body.message_id = messageId;
       fetch(`${base}/api/chat/feedback`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: Object.assign(
+          { 'Content-Type': 'application/json' },
+          embedTokenHeaders(),
+        ),
         body: JSON.stringify(body),
       }).catch(() => {});
     };
@@ -913,12 +938,16 @@
       const url =
         `${base}/api/contacts/${encodeURIComponent(sessionId)}` +
         `?website_id=${encodeURIComponent(config.website_id)}`;
-      let res = await fetch(url, { headers: sessionTokenHeaders() });
+      let res = await fetch(url, {
+        headers: Object.assign(embedTokenHeaders(), sessionTokenHeaders()),
+      });
       if (res.status === 403 && sessionToken) {
         // Expired or stale (another tab rotated it): retry once without it, and
         // only while the server still allows a tokenless read.
         clearSessionToken();
-        res = await fetch(url);
+        // Retry without the stale session token, but never without the embed
+        // token: that one has nothing to do with the session.
+        res = await fetch(url, { headers: embedTokenHeaders() });
       }
       if (!res.ok) return false;
       const data = await res.json();
@@ -991,7 +1020,10 @@
         const base = (config.apiUrl || '').replace(/\/$/, '');
         const res = await fetch(`${base}/api/contacts`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: Object.assign(
+            { 'Content-Type': 'application/json' },
+            embedTokenHeaders(),
+          ),
           body: JSON.stringify({
             website_id: config.website_id,
             session_id: sessionId,
@@ -1076,7 +1108,10 @@
       const base = (config.apiUrl || '').replace(/\/$/, '');
       const res = await fetch(`${base}/api/chat/stream`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: Object.assign(
+          { 'Content-Type': 'application/json' },
+          embedTokenHeaders(),
+        ),
         body: JSON.stringify({
           question: text,
           website_id: config.website_id,
@@ -1184,7 +1219,10 @@
       const base = (config.apiUrl || '').replace(/\/$/, '');
       const res = await fetch(`${base}/api/handoff`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: Object.assign(
+          { 'Content-Type': 'application/json' },
+          embedTokenHeaders(),
+        ),
         body: JSON.stringify({
           website_id: config.website_id,
           session_id: sessionId,
@@ -1250,6 +1288,7 @@
       const base = config.apiUrl.replace(/\/$/, '');
       const res = await fetch(
         `${base}/api/widget-config?website_id=${encodeURIComponent(config.website_id)}`,
+        { headers: embedTokenHeaders() },
       );
       if (res.status === 403) {
         siteDisabled = true;
@@ -1354,10 +1393,14 @@
       const url =
         `${base}/api/conversations/${encodeURIComponent(sessionId)}` +
         `?website_id=${encodeURIComponent(config.website_id)}`;
-      let res = await fetch(url, { headers: sessionTokenHeaders() });
+      let res = await fetch(url, {
+        headers: Object.assign(embedTokenHeaders(), sessionTokenHeaders()),
+      });
       if (res.status === 403 && sessionToken) {
         clearSessionToken();
-        res = await fetch(url);
+        // Retry without the stale session token, but never without the embed
+        // token: that one has nothing to do with the session.
+        res = await fetch(url, { headers: embedTokenHeaders() });
       }
       if (!res.ok) return null;
       const data = await res.json();

@@ -3,10 +3,12 @@ import {
   DeleteOutlined,
   EditOutlined,
   GlobalOutlined,
+  KeyOutlined,
   PlusOutlined,
   ReloadOutlined,
 } from '@ant-design/icons';
 import {
+  Alert,
   Breadcrumb,
   Button,
   Card,
@@ -27,15 +29,20 @@ import useApp from 'antd/es/app/useApp';
 import type { ColumnsType } from 'antd/es/table';
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Website, WebsitePage } from '../types/api';
+import { useAuth } from '../context/AuthContext';
+import { EmbedToken, EmbedTokenCreated, Website, WebsitePage } from '../types/api';
 import api from '../utils/api';
 
-const { Title, Text } = Typography;
+const { Paragraph, Title, Text } = Typography;
 
 export function WebsiteDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { message } = useApp();
+  // The embed-token routes are admin-only on the server; hiding the card keeps a
+  // manager from clicking into a 403.
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
 
   const [website, setWebsite] = useState<Website | null>(null);
   const [pages, setPages] = useState<WebsitePage[]>([]);
@@ -48,6 +55,10 @@ export function WebsiteDetail() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingPage, setEditingPage] = useState<WebsitePage | null>(null);
   const [startingIngest, setStartingIngest] = useState(false);
+  const [embedToken, setEmbedToken] = useState<EmbedToken | null>(null);
+  const [tokenBusy, setTokenBusy] = useState(false);
+  const [rawToken, setRawToken] = useState('');
+  const [tokenModalOpen, setTokenModalOpen] = useState(false);
   const [form] = Form.useForm();
 
   // Mirrors the API's rule: a `processing` row is only "in flight" until
@@ -85,13 +96,70 @@ export function WebsiteDetail() {
     }
   }, [id, limit, page, message]);
 
+  const fetchEmbedToken = useCallback(async () => {
+    try {
+      const response = await api.get<EmbedToken>(`/websites/${id}/embed-token`);
+      setEmbedToken(response.data);
+    } catch (error) {
+      const status = (error as { response?: { status?: number } }).response?.status;
+      // 404 is the normal "nothing has ever been issued" answer.
+      if (status === 404) {
+        setEmbedToken(null);
+        return;
+      }
+      console.error('Fetch embed token error', error);
+    }
+  }, [id]);
+
+  const issueEmbedToken = async (mode: 'mint' | 'rotate') => {
+    setTokenBusy(true);
+    try {
+      const url = `/websites/${id}/embed-token${mode === 'rotate' ? '/rotate' : ''}`;
+      const response = await api.post<EmbedTokenCreated>(url);
+      setEmbedToken(response.data);
+      // The raw value exists in this answer only: show it, then never again.
+      setRawToken(response.data.token);
+      setTokenModalOpen(true);
+    } catch (error) {
+      const failure = (
+        error as { response?: { status?: number; data?: { detail?: string } } }
+      ).response;
+      if (failure?.status === 409) {
+        message.warning(
+          failure.data?.detail ||
+            'This website already has an active embed token.',
+        );
+        fetchEmbedToken();
+      } else {
+        message.error('Failed to issue an embed token');
+      }
+    } finally {
+      setTokenBusy(false);
+    }
+  };
+
+  const revokeEmbedToken = async () => {
+    setTokenBusy(true);
+    try {
+      await api.delete(`/websites/${id}/embed-token`);
+      message.success('Embed token revoked');
+      fetchEmbedToken();
+    } catch (error) {
+      console.error('Revoke embed token error', error);
+      message.error('Failed to revoke the embed token');
+    } finally {
+      setTokenBusy(false);
+    }
+  };
+
   useEffect(() => {
     if (id) {
       fetchWebsiteDetail();
       fetchPages();
+      if (isAdmin) fetchEmbedToken();
     }
     setLoading(false);
-  }, [id, fetchWebsiteDetail, fetchPages]);
+  }, [id, isAdmin, fetchWebsiteDetail, fetchEmbedToken, fetchPages]);
 
   const handleLoadSitemap = async () => {
     try {
@@ -335,6 +403,85 @@ export function WebsiteDetail() {
           </Card>
         </Col>
 
+        {isAdmin && (
+          <Col span={24}>
+            <Card
+              title={
+                <Space>
+                  <KeyOutlined />
+                  <span>Embed token</span>
+                </Space>
+              }
+              variant='borderless'
+              className='premium-card'
+            >
+              <Space direction='vertical' size='middle' style={{ width: '100%' }}>
+                <Text type='secondary'>
+                  A token lets you revoke the snippets you no longer deploy. It
+                  is visible in the page source, so it deters casual copying —
+                  it does not prove the request came from your site.
+                </Text>
+                {embedToken ? (
+                  <Space wrap>
+                    <Tag color={embedToken.active ? 'green' : 'default'}>
+                      {embedToken.active ? 'ACTIVE' : 'REVOKED'}
+                    </Tag>
+                    <Text code>{embedToken.token_prefix}…</Text>
+                    <Text type='secondary'>
+                      Created{' '}
+                      {new Date(embedToken.created_at).toLocaleString()}
+                    </Text>
+                    {embedToken.last_used_at && (
+                      <Text type='secondary'>
+                        Last used{' '}
+                        {new Date(embedToken.last_used_at).toLocaleString()}
+                      </Text>
+                    )}
+                  </Space>
+                ) : (
+                  <Text type='secondary'>
+                    No token has been issued for this website.
+                  </Text>
+                )}
+                <Space wrap>
+                  {embedToken ? (
+                    <Button
+                      icon={<ReloadOutlined />}
+                      loading={tokenBusy}
+                      onClick={() => issueEmbedToken('rotate')}
+                    >
+                      {embedToken.active ? 'Rotate token' : 'Issue new token'}
+                    </Button>
+                  ) : (
+                    <Button
+                      type='primary'
+                      icon={<KeyOutlined />}
+                      loading={tokenBusy}
+                      onClick={() => issueEmbedToken('mint')}
+                    >
+                      Create token
+                    </Button>
+                  )}
+                  {embedToken?.active && (
+                    <Popconfirm
+                      title='Revoke this token?'
+                      description='Every deployed snippet carrying it stops working immediately.'
+                      okText='Revoke'
+                      okButtonProps={{ danger: true }}
+                      cancelText='Cancel'
+                      onConfirm={revokeEmbedToken}
+                    >
+                      <Button danger loading={tokenBusy}>
+                        Revoke
+                      </Button>
+                    </Popconfirm>
+                  )}
+                </Space>
+              </Space>
+            </Card>
+          </Col>
+        )}
+
         <Col span={24}>
           <Card
             title={
@@ -402,6 +549,36 @@ export function WebsiteDetail() {
             <Input.TextArea rows={4} placeholder='Page description...' />
           </Form.Item>
         </Form>
+      </Modal>
+
+      <Modal
+        title='Copy your embed token'
+        open={tokenModalOpen}
+        onCancel={() => setTokenModalOpen(false)}
+        footer={[
+          <Button
+            key='done'
+            type='primary'
+            onClick={() => setTokenModalOpen(false)}
+          >
+            Done
+          </Button>,
+        ]}
+      >
+        <Alert
+          type='warning'
+          showIcon
+          style={{ marginBottom: 16 }}
+          message='This token is shown once'
+          description='Only its hash is stored, so it cannot be retrieved later. If you lose it, rotate the token.'
+        />
+        <Text code copyable={{ text: rawToken }} style={{ wordBreak: 'break-all' }}>
+          {rawToken}
+        </Text>
+        <Paragraph style={{ marginTop: 16, marginBottom: 0 }}>
+          Add it to your install snippet as <Text code>embedToken</Text> inside{' '}
+          <Text code>window.ChatWidgetConfig</Text>.
+        </Paragraph>
       </Modal>
     </div>
   );

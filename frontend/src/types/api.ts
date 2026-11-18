@@ -70,6 +70,21 @@ export interface WebsiteQuota {
   available: boolean;
 }
 
+export interface EmbedToken {
+  id: string;
+  website_id: string;
+  token_prefix: string;
+  active: boolean;
+  created_at: string;
+  last_used_at?: string | null;
+  revoked_at?: string | null;
+}
+
+/** Mint/rotate answer: the only response that ever carries the raw token. */
+export interface EmbedTokenCreated extends EmbedToken {
+  token: string;
+}
+
 export interface DashboardStats {
   total_websites: number;
   indexed_websites: number;

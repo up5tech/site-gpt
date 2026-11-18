@@ -108,10 +108,15 @@ check(
     /await sessionTokenReady;/.test(fetchHistory),
   { loadContact, fetchHistory },
 );
+// V3 F4 added the optional `X-Embed-Token` beside the session token, so both
+// reads merge the two header helpers; the retry path is covered behaviourally in
+// `widget_embed_token.test.mjs`.
+const SESSION_READ_HEADERS =
+  /headers: Object\.assign\(embedTokenHeaders\(\), sessionTokenHeaders\(\)\)/;
 check(
-  'session reads send the token header and retry once after a 403',
-  /headers: sessionTokenHeaders\(\)/.test(fetchHistory) &&
-    /headers: sessionTokenHeaders\(\)/.test(body(extractFn('loadServerContact'))),
+  'session reads send the token header',
+  SESSION_READ_HEADERS.test(fetchHistory) &&
+    SESSION_READ_HEADERS.test(body(extractFn('loadServerContact'))),
   { loadContact, fetchHistory },
 );
 
