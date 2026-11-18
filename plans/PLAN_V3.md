@@ -3,7 +3,7 @@
 | | | |
 |---|---|---|
 | Version | **V3** — implements what `V2` and `V2.1` deliberately left out (`plans/PLAN_V2.md` §14) |
-| Status | **In progress — Waves 0 and 1 done; Wave 2 has M7, the token service and the widget/snippet wiring (11 / 25 tasks; gates V3-0G and V3-1G signed off)** |
+| Status | **In progress — Waves 0 and 1 done; Wave 2 is down to its docs task (12 / 25 tasks; gates V3-0G and V3-1G signed off)** |
 | Created | 2026-11-16 |
 | Derived from | `plans/PLAN_V2.md` (§14, §11 risk register), `plans/SPEC.md`, `docs/security.md` §5 (accepted risks K5 / K18), `README.md` §4 |
 | Baseline | V2.1 tag `v2.1` = `4031b6f4a063e62bf5bdc6e20f3d8ac67781ae99`; current `master` HEAD `1616332ed8d1d32ee21bb628ddb2d270e1304374` is docs-only after that tag (the V3 plan); V3 work lives on `feat/v3`; Alembic head `c9d3e5a71b28`; baseline suite counts are historical and must be re-run at pre-flight |
@@ -324,8 +324,9 @@ prove origin. **Entry:** V3-1G.
   - Done when: the node suite proves header presence when configured, absence when
     not, and that no other request shape changed.
 
-- [ ] **V3-23 · Enforce in `embed_guard`** — `M`, depends: V3-22, migration: —
-  - Files: `services/embed_guard.py`, `api/routes.py`, `tests/test_embed_origin.py`.
+- [x] **V3-23 · Enforce in `embed_guard`** — `M`, depends: V3-22, migration: —
+  - Done: `ensure_embed_allowed` was extended, not forked, with `ensure_embed_token_allowed`: `compat` accepts a missing token even after issuance (deployed snippets keep working) and refuses a supplied token that does not resolve; `enforce` requires one. Refusals are `EmbedTokenRefused` rendered by `embed_token_error_response` in `main.py` as `{detail, reason}` — `embed_token_required` for a tokenless `enforce` request, `invalid_embed_token` for wrong/revoked/another website's token (one answer for all three, token never echoed). Those codes are disjoint from K4's four, and the widget's 403 handling is untouched: an embed refusal cannot reset a session. `services/embed_tokens.py` adds `find_active_token` (hash lookup + `compare_digest` + website scope + not revoked) and `record_use`, which throttles `last_used_at` in the row itself (≤ one UPDATE per minute per token) instead of an unbounded in-memory map. CORS stays a wildcard because replacing it with an allowlist would tighten existing embeds; a preflight test carrying `X-Embed-Token` pins that it is allowed. `/api/v1` passes `require_embed_token=False`: the API key already authenticates the caller, and `enforce` must not break server-to-server integrations. Tests: the full matrix in `tests/test_embed_origin.py` (compat with/without issuance, enforce missing/valid/invalid, reason codes, no token echo, authenticated bypass, API-key bypass, endpoint 403 bodies, preflight) plus lookup/throttle cases on a real SQLite database in `tests/test_embed_tokens.py`; suite 482 Python tests OK, 24 → 33 node checks, and a live-Postgres run confirms verify/throttle/rotation behaviour.
+  - Files: `services/embed_guard.py`, `services/embed_tokens.py`, `api/v1.py`, `main.py`, `tests/test_embed_origin.py`, `tests/test_embed_tokens.py`.
   - Do: extend `ensure_embed_allowed` (do not fork it). `compat` accepts a missing
     token whether or not one has been issued, preserving deployed snippets; any
     supplied token must match an active token. Add `X-Embed-Token` to the explicit
@@ -721,10 +722,10 @@ check that was not run.
 |---|---|---|---|
 | 0 — Foundation | 4 | 4 / 4 | ☑ V3-0G |
 | 1 — Redis rate limiting (F1) | 4 | 4 / 4 | ☑ V3-1G |
-| 2 — Embed token / K18 (F4) | 5 | 3 / 5 | ☐ V3-2G |
+| 2 — Embed token / K18 (F4) | 5 | 4 / 5 | ☐ V3-2G |
 | 3 — Topic clustering (F2) | 5 | 0 / 5 | ☐ V3-3G |
 | 4 — Live-agent inbox (F3) | 7 | 0 / 7 | ☐ V3-4G |
-| **Total** | **25 tasks + 5 gates** | **11 / 25** | **2 / 5 gates** |
+| **Total** | **25 tasks + 5 gates** | **12 / 25** | **2 / 5 gates** |
 
 ---
 
