@@ -3,7 +3,7 @@
 | | | |
 |---|---|---|
 | Version | **V3** — implements what `V2` and `V2.1` deliberately left out (`plans/PLAN_V2.md` §14) |
-| Status | **In progress — Waves 0 and 1 done; V3-20 (M7) landed, Wave 2 continues (9 / 25 tasks; gates V3-0G and V3-1G signed off)** |
+| Status | **In progress — Waves 0 and 1 done; Wave 2 has M7, the token service and the widget/snippet wiring (11 / 25 tasks; gates V3-0G and V3-1G signed off)** |
 | Created | 2026-11-16 |
 | Derived from | `plans/PLAN_V2.md` (§14, §11 risk register), `plans/SPEC.md`, `docs/security.md` §5 (accepted risks K5 / K18), `README.md` §4 |
 | Baseline | V2.1 tag `v2.1` = `4031b6f4a063e62bf5bdc6e20f3d8ac67781ae99`; current `master` HEAD `1616332ed8d1d32ee21bb628ddb2d270e1304374` is docs-only after that tag (the V3 plan); V3 work lives on `feat/v3`; Alembic head `c9d3e5a71b28`; baseline suite counts are historical and must be re-run at pre-flight |
@@ -296,8 +296,9 @@ prove origin. **Entry:** V3-1G.
     single head chained from `c9d3e5a71b28`, duplicate active tokens are rejected
     by the database, and a pre-existing website with no row remains unaffected.
 
-- [ ] **V3-21 · Token issue / rotate / revoke** — `M`, depends: V3-20, migration: —
-  - Files: `services/embed_tokens.py` (new), `api/website.py`, `schemas/embed_token.py` (new), website detail UI and snippet generator.
+- [x] **V3-21 · Token issue / rotate / revoke** — `M`, depends: V3-20, migration: —
+  - Done: `services/embed_tokens.py` (`mint` / `rotate` / `revoke` / `latest_token`; plain `sha256`, no pepper, with the reason stated; rotation revokes and inserts in one transaction so a lost race leaves the old token valid; `IntegrityError` maps to the same 409 as the pre-check), `api/website.py` GET / POST / POST `…/rotate` / DELETE under `/api/websites/{id}/embed-token` guarded by `get_admin_user` and the shared `_owned_website` 404, `schemas/embed_token.py` (`EmbedTokenCreated.token` is the only place a raw value appears). The model's partial index now also carries `sqlite_where` so the SQLite test database enforces the real one-active-token rule. `tests/test_embed_tokens.py` (19 tests: format/hash, mint-once, DB-level duplicate rejection, rotation keeps history with exactly one active row, revoke then 404, endpoint 201/409/404/403 plus a foreign website 404 on all four routes). Real Postgres: mint → second mint refused → rotate leaves one active row with the old prefix revoked → revoke leaves none, and the raw token appears in no stored column. Suite 464 Python tests OK, 24 node checks. The snippet/UI wiring stays with V3-22.
+  - Files: `services/embed_tokens.py` (new), `api/website.py`, `schemas/embed_token.py` (new), `tests/test_embed_tokens.py`.
   - Do: `POST /api/websites/{id}/embed-token` mints (raw value returned **once**),
     `POST …/embed-token/rotate` revokes the previous row and mints a new one,
     `DELETE …/embed-token` revokes, `GET` returns prefix/created/revoked only.
@@ -308,9 +309,9 @@ prove origin. **Entry:** V3-1G.
     leaves the old prefix invalid and the new one valid; another company's website
     id is a 404.
 
-- [ ] **V3-22 · Widget and snippet carry the token** — `M`, depends: V3-21, migration: —
-  - Files: `scripts/widget.js`, `frontend/src/utils/widgetSnippet.ts`, website
-    detail/snippet UI, `tests/widget_embed_token.test.mjs`.
+- [x] **V3-22 · Widget and snippet carry the token** — `M`, depends: V3-21, migration: —
+  - Done: `widget.js` gains an optional `embedToken` (default `''`, trimmed/capped by the config sanitiser) and `embedTokenHeaders()`, merged into every public request the widget makes — session-token mint, chat stream, feedback, contacts POST/GET, conversations GET, handoff and widget-config — including both 403 retry paths, which drop the stale `X-Session-Token` but keep `X-Embed-Token`. An embed refusal never resets the session. `widgetSnippet.ts` emits an `embedToken` line only when one is given (the tokenless snippet is asserted byte-for-byte against the V2.1 text) and scrubs the token to the alphabet the server mints, so a tampered value cannot close the string. `WebsiteDetail.tsx` shows an admin-only card (create / rotate / revoke, prefix + dates) and opens a one-time modal with the raw token for copying; a 409 means the website already has an active token. `tests/widget_embed_token.test.mjs` (9 checks) evaluates the real helper and two real request paths: header present only when configured, request body/URL unchanged, retry keeps the token. Node suite 33 checks, Python suite 464 tests, `npm run build` + `npm run lint` clean. Enforcing the header stays in V3-23; the raw token is not yet threaded into the Settings snippet UI.
+  - Files: `scripts/widget.js`, `frontend/src/utils/widgetSnippet.ts`, `frontend/src/pages/WebsiteDetail.tsx`, `frontend/src/types/api.ts`, `tests/widget_embed_token.test.mjs`.
   - Do: add an explicit operator UI flow to copy the raw token once and regenerate
     the installation snippet with it; never put the token in public widget-config
     or persist it in a public setting. Optional `window.ChatWidgetConfig.embedToken`
@@ -720,10 +721,10 @@ check that was not run.
 |---|---|---|---|
 | 0 — Foundation | 4 | 4 / 4 | ☑ V3-0G |
 | 1 — Redis rate limiting (F1) | 4 | 4 / 4 | ☑ V3-1G |
-| 2 — Embed token / K18 (F4) | 5 | 1 / 5 | ☐ V3-2G |
+| 2 — Embed token / K18 (F4) | 5 | 3 / 5 | ☐ V3-2G |
 | 3 — Topic clustering (F2) | 5 | 0 / 5 | ☐ V3-3G |
 | 4 — Live-agent inbox (F3) | 7 | 0 / 7 | ☐ V3-4G |
-| **Total** | **25 tasks + 5 gates** | **9 / 25** | **2 / 5 gates** |
+| **Total** | **25 tasks + 5 gates** | **11 / 25** | **2 / 5 gates** |
 
 ---
 
