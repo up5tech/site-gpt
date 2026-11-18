@@ -3,7 +3,7 @@
 | | | |
 |---|---|---|
 | Version | **V3** — implements what `V2` and `V2.1` deliberately left out (`plans/PLAN_V2.md` §14) |
-| Status | **In progress — Waves 0–2 done and signed off (13 / 25 tasks, 3 / 5 gates); Wave 3 (topic clustering) starts at V3-30, gated by V3-3G** |
+| Status | **In progress — Waves 0–2 signed off; Wave 3 running: M8 schema + retention/invalidation landed (14 / 25 tasks, 3 / 5 gates), the clustering service is next at V3-31** |
 | Created | 2026-11-16 |
 | Derived from | `plans/PLAN_V2.md` (§14, §11 risk register), `plans/SPEC.md`, `docs/security.md` §5 (accepted risks K5 / K18), `README.md` §4 |
 | Baseline | V2.1 tag `v2.1` = `4031b6f4a063e62bf5bdc6e20f3d8ac67781ae99`; current `master` HEAD `1616332ed8d1d32ee21bb628ddb2d270e1304374` is docs-only after that tag (the V3 plan); V3 work lives on `feat/v3`; Alembic head `c9d3e5a71b28`; baseline suite counts are historical and must be re-run at pre-flight |
@@ -378,8 +378,9 @@ Re-run on the final tree: 20/20 manual checks, 482 Python tests, 33 node checks,
 **Goal:** replace term counts with named clusters, and put them in the digest and
 `/analytics`. **Entry:** V3-2G.
 
-- [ ] **V3-30 · Migration M8 — topic clusters + run claims** — `M`, depends: V3-2G, migration: **M8**
-  - Files: `models.py`, `alembic/versions/<rev>_v3_m8_topic_clusters.py`, `services/retention.py`, `api/privacy.py`.
+- [x] **V3-30 · Migration M8 — topic clusters + run claims** — `M`, depends: V3-2G, migration: **M8**
+  - Done: revision `afef1e91e0b5` (parent `76f46b510350`, single head) adds `topic_clusters` — company-scoped, `period_start` weekly window, `cluster_key` (stable, derived not random), `label`/`summary`, `centroid VECTOR(1536)` nullable, `sampled_messages`/`eligible_messages`, with unique `(company_id, period_start, cluster_key)` — and `topic_cluster_runs` — unique `(company_id, period_start)`, `status` bounded by `ck_topic_cluster_runs_status` to running/completed/failed, `claimed_at`/`completed_at`, `error` bounded to 500 chars — plus `(status, claimed_at)` for stale-run recovery and `(company_id, created_at)` on both tables for the purge. Autogenerate's four known drift changes were stripped; a test now asserts the migration contains no `alter_column`/`drop_constraint` at all. Retention: `topic_clusters` and `topic_cluster_runs` joined `SCOPED_BY_COMPANY`, so a policy expires derived windows on the same clock and reports them in `deleted` instead of deleting them invisibly. Privacy: `DELETE /api/privacy/conversations/{sid}` reads the message timestamps *before* deleting, then `retention.invalidate_topic_windows` drops every window containing one of them plus its run row (so the worker may rebuild), provider-free and company-scoped; alignment is by containment, so a non-Monday `digest_day` cannot keep a stale window, and naive SQLite timestamps are normalised to UTC. Verified on real Postgres: downgrade drops both tables, upgrade restores the unique constraints, the check and `vector(1536)`; 512 Python tests OK (85 in the three touched files), 33 node checks pass, no `CONCURRENTLY` and no `EMBEDDING_DIMENSIONS` change → no re-ingest.
+  - Files: `models.py`, `alembic/versions/afef1e91e0b5_v3_m8_topic_clusters.py`, `services/retention.py`, `api/privacy.py`, `tests/test_models_indexes.py`, `tests/test_retention.py`, `tests/test_privacy_erasure_topics.py`.
   - Do: `topic_clusters` stores company-scoped clusters by weekly window:
     `company_id` FK CASCADE, `label`, `summary`, `centroid`
     `Vector(EMBEDDING_DIMENSIONS)`, stable `cluster_key`, sampled/eligible counts,
@@ -731,9 +732,9 @@ check that was not run.
 | 0 — Foundation | 4 | 4 / 4 | ☑ V3-0G |
 | 1 — Redis rate limiting (F1) | 4 | 4 / 4 | ☑ V3-1G |
 | 2 — Embed token / K18 (F4) | 5 | 5 / 5 | ☑ V3-2G |
-| 3 — Topic clustering (F2) | 5 | 0 / 5 | ☐ V3-3G |
+| 3 — Topic clustering (F2) | 5 | 1 / 5 | ☐ V3-3G |
 | 4 — Live-agent inbox (F3) | 7 | 0 / 7 | ☐ V3-4G |
-| **Total** | **25 tasks + 5 gates** | **13 / 25** | **3 / 5 gates** |
+| **Total** | **25 tasks + 5 gates** | **14 / 25** | **3 / 5 gates** |
 
 ---
 
