@@ -32,6 +32,7 @@ TABLES = [
     models.ChatMessage.__table__,
     models.Setting.__table__,
     models.TopicCluster.__table__,
+    models.TopicClusterRun.__table__,
 ]
 
 PRICING = (
@@ -89,6 +90,11 @@ def _message(db, website, text, created, role="user"):
     return row
 
 
+def _aware(moment: datetime) -> datetime:
+    """SQLite hands timestamps back naive; compare them as UTC."""
+    return moment if moment.tzinfo is not None else moment.replace(tzinfo=UTC)
+
+
 def _vector(axis: int) -> list[float]:
     """A one-hot embedding: same topic → similarity 1, different topic → 0."""
     vector = [0.0] * EMBEDDING_DIMENSIONS
@@ -122,6 +128,64 @@ class _FakeLLM:
         if self.error is not None:
             raise self.error
         return SimpleNamespace(content=self.reply)
+
+
+def _quadratic_assign(vectors):
+    """The previous `_assign`, kept here as the reference implementation.
+
+    It re-added every member of a cluster on every join. The running-sum version
+    must produce the same members and the same centroids bit-for-bit, so a cheaper
+    update can never quietly move a cluster.
+    """
+    members: list[list[int]] = []
+    centroids: list[list[float]] = []
+    for index, vector in enumerate(vectors):
+        best, best_similarity = -1, -1.0
+        for position, centroid in enumerate(centroids):
+            similarity = topics._cosine(vector, centroid)
+            if similarity > best_similarity:
+                best, best_similarity = position, similarity
+        joins = best >= 0 and (
+            best_similarity >= topics.CLUSTER_SIMILARITY
+            or len(centroids) >= topics.MAX_CLUSTERS
+        )
+        if joins:
+            members[best].append(index)
+            grouped = [vectors[i] for i in members[best]]
+            # Plain left-to-right accumulation, exactly like the old `_mean`:
+            # `sum()` on floats uses compensated summation since Python 3.12 and
+            # would differ in the last bit, which is not what we are comparing.
+            total = [0.0] * len(grouped[0])
+            for item in grouped:
+                for position, value in enumerate(item):
+                    total[position] += value
+            centroids[best] = [value / len(grouped) for value in total]
+        else:
+            members.append([index])
+            centroids.append(topics._unit(vector))
+    return members, centroids
+
+
+class AssignmentEquivalenceTests(unittest.TestCase):
+    def test_the_running_centroid_is_the_old_recomputed_mean(self):
+        # A big near-identical cluster (the worst case the running sum exists for)
+        # plus vectors that open new clusters until `MAX_CLUSTERS` forces a join,
+        # so both branches of the update are compared.
+        vectors = [
+            [1.0 + ((index * (position + 1)) % 7) / 100.0 for position in range(16)]
+            for index in range(24)
+        ]
+        vectors += [
+            [1.0 if position == axis else 0.0 for position in range(16)]
+            for axis in range(9)
+        ]
+
+        members, centroids = topics._assign(vectors)
+        old_members, old_centroids = _quadratic_assign(vectors)
+
+        self.assertGreater(len(members), 1)
+        self.assertEqual(members, old_members)
+        self.assertEqual(centroids, old_centroids)
 
 
 class TopicClusteringTests(unittest.TestCase):
@@ -176,6 +240,32 @@ class TopicClusteringTests(unittest.TestCase):
             [row.period_start.replace(tzinfo=UTC) for row in self.db.query(models.TopicCluster)],
             [datetime(2026, 11, 12, tzinfo=UTC)],
         )
+
+    def test_an_embedding_failure_leaves_the_previous_clusters_in_place(self):
+        # The worker records a failed run and commits; a `DELETE` left pending by
+        # the failed attempt would then wipe a window nobody rebuilt.
+        self.db.add(
+            models.TopicCluster(
+                company_id=self.company.id,
+                period_start=WINDOW_START,
+                cluster_key="c1",
+                label="Pricing",
+                sampled_messages=3,
+                eligible_messages=3,
+            )
+        )
+        self.db.commit()
+        self._seed_week()
+
+        def unavailable(texts):
+            raise RuntimeError("embedding provider down")
+
+        with self.assertRaises(RuntimeError):
+            self._run(embeddings=unavailable)
+        self.db.commit()
+
+        rows = self.db.query(models.TopicCluster).all()
+        self.assertEqual([row.label for row in rows], ["Pricing"])
 
     def test_two_runs_over_the_same_input_produce_the_same_clusters(self):
         self._seed_week()
@@ -328,6 +418,292 @@ class TopicClusteringTests(unittest.TestCase):
         # Six near-identical questions, one cluster: the prompt quotes only the
         # first `NAMING_SAMPLES` of them.
         self.assertEqual(human.content.count("\n- "), topics.NAMING_SAMPLES)
+
+
+class TopicRunLifecycleTests(unittest.TestCase):
+    """The durable claim that makes a window build once, and can be recovered."""
+
+    def setUp(self):
+        self.engine, self.db = _session()
+        self.company = _company(self.db)
+        self.website = _website(self.db, self.company)
+
+    def tearDown(self):
+        self.db.close()
+        self.engine.dispose()
+
+    def _seed_week(self):
+        for position, question in enumerate(PRICING + REFUNDS):
+            _message(
+                self.db,
+                self.website,
+                question,
+                WINDOW_START + timedelta(days=1, minutes=position),
+            )
+
+    def _setting(self, key, value):
+        self.db.add(
+            models.Setting(company_id=self.company.id, key=key, value=value)
+        )
+        self.db.commit()
+
+    def test_a_completed_window_is_never_rebuilt(self):
+        run = topics.claim_run(self.db, self.company.id, WINDOW_START)
+        topics.complete_run(self.db, run)
+
+        self.assertIsNone(topics.claim_run(self.db, self.company.id, WINDOW_START))
+        self.assertTrue(topics.window_settled(self.db, self.company.id, WINDOW_START))
+
+    def test_a_live_claim_is_not_taken_over(self):
+        topics.claim_run(self.db, self.company.id, WINDOW_START)
+
+        again = topics.claim_run(
+            self.db,
+            self.company.id,
+            WINDOW_START,
+            stale_before=datetime.now(UTC) - timedelta(minutes=5),
+        )
+
+        self.assertIsNone(again)
+        self.assertEqual(self.db.query(models.TopicClusterRun).count(), 1)
+
+    def test_a_stale_claim_is_taken_over_in_place(self):
+        run = topics.claim_run(self.db, self.company.id, WINDOW_START)
+
+        taken = topics.claim_run(
+            self.db,
+            self.company.id,
+            WINDOW_START,
+            stale_before=datetime.now(UTC) + timedelta(minutes=1),
+        )
+
+        self.assertIsNotNone(taken)
+        self.assertEqual(taken.id, run.id)
+        self.assertEqual(taken.status, "running")
+        self.assertEqual(self.db.query(models.TopicClusterRun).count(), 1)
+
+    def test_a_failed_run_can_be_retried(self):
+        run = topics.claim_run(self.db, self.company.id, WINDOW_START)
+        topics.fail_run(self.db, run, RuntimeError("provider down"))
+
+        self.assertFalse(topics.window_settled(self.db, self.company.id, WINDOW_START))
+        again = topics.claim_run(self.db, self.company.id, WINDOW_START)
+
+        self.assertIsNotNone(again)
+        self.assertEqual(again.status, "running")
+        self.assertIsNone(again.error)
+        self.assertEqual(self.db.query(models.TopicClusterRun).count(), 1)
+
+    def test_recover_stale_runs_marks_only_dead_claims(self):
+        dead = topics.claim_run(self.db, self.company.id, WINDOW_START)
+        dead.claimed_at = datetime.now(UTC) - timedelta(hours=2)
+        self.db.commit()
+        live = topics.claim_run(
+            self.db, self.company.id, WINDOW_START + timedelta(days=7)
+        )
+
+        recovered = topics.recover_stale_runs(self.db)
+
+        self.assertEqual(
+            [(company_id, _aware(period_start)) for company_id, period_start in recovered],
+            [(self.company.id, WINDOW_START)],
+        )
+        self.assertEqual(dead.status, "failed")
+        self.assertIn("stale", dead.error)
+        self.assertEqual(live.status, "running")
+
+    def test_the_scheduled_window_is_the_week_that_just_ended(self):
+        start, end = topics.previous_window(datetime(2026, 11, 18, 12, 0, tzinfo=UTC))
+
+        self.assertEqual(start, datetime(2026, 11, 9, tzinfo=UTC))
+        self.assertEqual(end, datetime(2026, 11, 16, tzinfo=UTC))
+
+    def test_run_window_commits_the_clusters_with_the_completion_status(self):
+        self._seed_week()
+        fake = _FakeLLM()
+        with patch.object(
+            topics, "embed_texts", side_effect=_stub_embeddings
+        ) as embed, patch.object(topics, "get_llm", lambda **_: fake):
+            result = topics.run_window(
+                self.db, self.company.id, WINDOW_START, WINDOW_START + timedelta(days=7)
+            )
+
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["clusters"], 2)
+        run = self.db.query(models.TopicClusterRun).one()
+        self.assertEqual(run.status, "completed")
+        self.assertIsNotNone(run.completed_at)
+        self.assertEqual(self.db.query(models.TopicCluster).count(), 2)
+
+        # A duplicate job loses the claim and spends nothing.
+        with patch.object(
+            topics, "embed_texts", side_effect=AssertionError("no provider call")
+        ):
+            second = topics.run_window(
+                self.db, self.company.id, WINDOW_START, WINDOW_START + timedelta(days=7)
+            )
+        self.assertEqual(second["status"], "skipped")
+        self.assertEqual(embed.call_count, 1)
+
+    def test_a_failed_run_keeps_the_previous_clusters_and_is_retryable(self):
+        self._seed_week()
+        self.db.add(
+            models.TopicCluster(
+                company_id=self.company.id,
+                period_start=WINDOW_START,
+                cluster_key="c1",
+                label="Pricing",
+                sampled_messages=3,
+                eligible_messages=3,
+            )
+        )
+        self.db.commit()
+
+        def unavailable(texts):
+            raise RuntimeError("embedding provider down")
+
+        with patch.object(topics, "embed_texts", side_effect=unavailable), patch.object(
+            topics, "get_llm", lambda **_: _FakeLLM()
+        ):
+            with self.assertRaises(RuntimeError):
+                topics.run_window(
+                    self.db,
+                    self.company.id,
+                    WINDOW_START,
+                    WINDOW_START + timedelta(days=7),
+                )
+
+        run = self.db.query(models.TopicClusterRun).one()
+        self.assertEqual(run.status, "failed")
+        self.assertIn("embedding provider down", run.error)
+        self.assertEqual(
+            [row.label for row in self.db.query(models.TopicCluster)], ["Pricing"]
+        )
+
+    def test_the_cluster_count_setting_bounds_the_run(self):
+        self._setting("topic_cluster_count", "1")
+        self._seed_week()
+
+        with patch.object(
+            topics, "embed_texts", side_effect=_stub_embeddings
+        ), patch.object(topics, "get_llm", lambda **_: _FakeLLM()):
+            result = topics.run_window(
+                self.db, self.company.id, WINDOW_START, WINDOW_START + timedelta(days=7)
+            )
+
+        self.assertEqual(result["clusters"], 1)
+        self.assertEqual(self.db.query(models.TopicCluster).count(), 1)
+
+    def test_the_cluster_count_setting_is_clamped(self):
+        self._setting("topic_cluster_count", "1")  # a row must exist to be updated
+        for raw, expected in (
+            ("0", 1),
+            ("99", topics.MAX_CLUSTERS),
+            ("abc", topics.DEFAULT_CLUSTER_COUNT),
+            ("", topics.DEFAULT_CLUSTER_COUNT),
+        ):
+            with self.subTest(raw=raw):
+                self.db.query(models.Setting).update(
+                    {"value": raw}, synchronize_session=False
+                )
+                self.db.commit()
+                self.assertEqual(
+                    topics.cluster_count_for(self.db, self.company.id), expected
+                )
+
+
+class CompletedWindowsTests(unittest.TestCase):
+    """The read side only sees intervals every window of which was built."""
+
+    def setUp(self):
+        self.engine, self.db = _session()
+        self.company = _company(self.db)
+        self.start = WINDOW_START
+        self.end = WINDOW_START + timedelta(days=14)
+
+    def tearDown(self):
+        self.db.close()
+        self.engine.dispose()
+
+    def _complete(self, period_start, label="Pricing"):
+        self.db.add(
+            models.TopicClusterRun(
+                company_id=self.company.id,
+                period_start=period_start,
+                status="completed",
+                claimed_at=period_start,
+                completed_at=period_start,
+            )
+        )
+        self.db.add(
+            models.TopicCluster(
+                company_id=self.company.id,
+                period_start=period_start,
+                cluster_key="c1",
+                label=label,
+                sampled_messages=1,
+                eligible_messages=1,
+            )
+        )
+        self.db.commit()
+
+    def test_two_complete_weeks_come_back_in_order(self):
+        self._complete(self.start, "First")
+        self._complete(self.start + timedelta(days=7), "Second")
+
+        windows = topics.completed_windows(
+            self.db, self.company.id, self.start, self.end
+        )
+
+        self.assertEqual(
+            [_aware(window_start) for window_start, _ in windows],
+            [self.start, self.start + timedelta(days=7)],
+        )
+        self.assertEqual(
+            [[row.label for row in clusters] for _, clusters in windows],
+            [["First"], ["Second"]],
+        )
+
+    def test_a_missing_or_unfinished_window_returns_none(self):
+        self._complete(self.start)
+        self.assertIsNone(
+            topics.completed_windows(self.db, self.company.id, self.start, self.end)
+        )
+
+        self.db.add(
+            models.TopicClusterRun(
+                company_id=self.company.id,
+                period_start=self.start + timedelta(days=7),
+                status="failed",
+                claimed_at=self.start,
+            )
+        )
+        self.db.commit()
+
+        self.assertIsNone(
+            topics.completed_windows(self.db, self.company.id, self.start, self.end)
+        )
+
+    def test_an_unaligned_partial_or_backwards_interval_returns_none(self):
+        self._complete(self.start)
+        self._complete(self.start + timedelta(days=7))
+
+        self.assertIsNone(
+            topics.completed_windows(
+                self.db, self.company.id, self.start + timedelta(days=1), self.end
+            )
+        )
+        self.assertIsNone(
+            topics.completed_windows(
+                self.db,
+                self.company.id,
+                self.start,
+                self.start + timedelta(days=10),
+            )
+        )
+        self.assertIsNone(
+            topics.completed_windows(self.db, self.company.id, self.end, self.start)
+        )
 
 
 if __name__ == "__main__":
