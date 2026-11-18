@@ -1,11 +1,21 @@
+import asyncio
 import ipaddress
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
+from fastapi import HTTPException
 from starlette.requests import Request
 
 from site_gpt.app.services import ratelimit
-from site_gpt.app.services.ratelimit import _client_ip, _trusted_networks
+from site_gpt.app.services.ratelimit import (
+    RATE_LIMIT_POLICIES,
+    _client_ip,
+    _trusted_networks,
+    allow,
+    limiter_degraded,
+    rate_limit,
+    rate_limit_policy,
+)
 
 
 def make_request(headers=None, client=("127.0.0.1", 1234)):
@@ -114,6 +124,117 @@ class TrustedProxyAllowlistTests(unittest.TestCase):
     def test_empty_configuration_trusts_nothing_public(self):
         self.assertEqual(_trusted_networks([]), [])
 
+
+class MemoryBackendTests(unittest.TestCase):
+    def test_memory_backend_is_the_default_and_limits(self):
+        self.assertEqual(ratelimit.RATE_LIMIT_BACKEND, "memory")
+        self.assertFalse(limiter_degraded())
+
+        async def go():
+            key = f"test:{id(self)}"
+            self.assertTrue(await allow(key, 2, 60))
+            self.assertTrue(await allow(key, 2, 60))
+            self.assertFalse(await allow(key, 2, 60))
+
+        asyncio.run(go())
+
+
+class RedisBackendTests(unittest.TestCase):
+    def _patch(self, fake_client):
+        return patch.object(ratelimit, "RATE_LIMIT_BACKEND", "redis"), patch(
+            "site_gpt.app.services.redis.redis_client", fake_client
+        )
+
+    def test_redis_backend_allows_and_denies_via_lua(self):
+        fake = MagicMock()
+        fake.eval = AsyncMock(side_effect=[1, 1, 0])
+        p1, p2 = self._patch(fake)
+        with p1, p2:
+            async def go():
+                self.assertTrue(await allow("k", 2, 60))
+                self.assertTrue(await allow("k", 2, 60))
+                self.assertFalse(await allow("k", 2, 60))
+            asyncio.run(go())
+        self.assertEqual(fake.eval.await_count, 3)
+        # Lua script must prune + count + conditionally add atomically.
+        script = fake.eval.call_args.args[0]
+        for token in ("ZREMRANGEBYSCORE", "ZCOUNT", "ZADD", "PEXPIRE"):
+            self.assertIn(token, script)
+
+    def test_redis_error_falls_back_to_memory_and_marks_degraded(self):
+        fake = MagicMock()
+        fake.eval = AsyncMock(side_effect=ConnectionError("down"))
+        p1, p2 = self._patch(fake)
+        with p1, p2:
+            async def go():
+                key = f"fb:{id(self)}"
+                # Memory fallback still enforces a per-process cap.
+                self.assertTrue(await allow(key, 1, 60))
+                self.assertFalse(await allow(key, 1, 60))
+                self.assertTrue(limiter_degraded())
+            asyncio.run(go())
+
+    def test_successful_redis_call_clears_degraded(self):
+        fake = MagicMock()
+        fake.eval = AsyncMock(side_effect=[1])
+        p1, p2 = self._patch(fake)
+        with patch.object(ratelimit, "_redis_degraded", True), p1, p2:
+            asyncio.run(allow("k", 5, 60))
+            self.assertFalse(limiter_degraded())
+
+    def test_fallback_is_per_process_not_shared(self):
+        # Documents D5: two processes each get their own memory budget during
+        # an outage, so combined traffic may exceed one shared budget.
+        fake = MagicMock()
+        fake.eval = AsyncMock(side_effect=ConnectionError("down"))
+        p1, p2 = self._patch(fake)
+        with p1, p2:
+            async def go():
+                # Same key, but each "process" has its own _hits deque.
+                self.assertTrue(await allow("shared", 1, 60))
+                ratelimit._hits.clear()  # simulate the other process
+                self.assertTrue(await allow("shared", 1, 60))
+            asyncio.run(go())
+
+
+class PolicyTableTests(unittest.TestCase):
+    def test_policy_table_matches_pre_v3_literals(self):
+        expected = {
+            "chat": ("chat", 20, 60),
+            "stream": ("chat", 20, 60),
+            "feedback": ("chat", 40, 60),
+            "contacts": ("chat", 40, 60),
+            "handoff": ("chat", 10, 60),
+            "session-token": ("session", 30, 60),
+            "ingest": ("ingest", 10, 60),
+            "register": ("register", 3, 3600),
+            "login": ("login", 10, 60),
+            "reset": ("reset", 3, 3600),
+            "reset-confirm": ("reset-confirm", 10, 300),
+            "v1": ("v1", 60, 60),
+        }
+        self.assertEqual(RATE_LIMIT_POLICIES, expected)
+
+    def test_rate_limit_policy_builds_a_dependency(self):
+        dep = rate_limit_policy("chat")
+        self.assertTrue(asyncio.iscoroutinefunction(dep))
+
+    def test_429_carries_retry_after_and_unchanged_body(self):
+        async def go():
+            dep = rate_limit("chat", max_requests=1, window_seconds=7)
+            request = make_request()
+            await dep(request)
+            with self.assertRaises(HTTPException) as ctx:
+                await dep(request)
+            exc = ctx.exception
+            self.assertEqual(exc.status_code, 429)
+            self.assertEqual(exc.headers["Retry-After"], "7")
+            self.assertEqual(
+                exc.detail,
+                "Too many requests. Limit is 1 per 7s. Please slow down.",
+            )
+
+        asyncio.run(go())
 
 if __name__ == "__main__":
     unittest.main()
