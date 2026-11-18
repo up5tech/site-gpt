@@ -212,7 +212,8 @@ processes and survives restarts, without changing any caller's contract. An outa
 fallback remains per-process and is an explicitly weaker mitigation.
 **Entry:** V3-0G.
 
-- [ ] **V3-10 · Sliding-window limiter with a memory fallback** — `M`, depends: V3-0G, migration: —
+- [x] **V3-10 · Sliding-window limiter with a memory fallback** — `M`, depends: V3-0G, migration: —
+  - Done: atomic Lua (ZREMRANGEBYSCORE/ZCOUNT/ZADD/PEXPIRE, unique member) on sorted set; memory deque for `memory` backend; Redis error → throttled log + memory fallback + `_redis_degraded` flag cleared on success; `/health` reports `rate_limiter: {backend, degraded}`. Commit `648467e`; 23 ratelimit tests.
   - Files: `services/ratelimit.py`, `services/redis.py`, `tests/test_ratelimit.py`.
   - Do: keep `allow(key, max_requests, window_seconds)` and `rate_limit(...)` as
     the public surface — call sites keep working. For the sliding window, use a
@@ -228,7 +229,8 @@ fallback remains per-process and is an explicitly weaker mitigation.
     each process locally and document that combined outage traffic may exceed one
     shared budget.
 
-- [ ] **V3-11 · One policy table for public limits** — `S`, depends: V3-10, migration: —
+- [x] **V3-11 · One policy table for public limits** — `S`, depends: V3-10, migration: —
+  - Done: `RATE_LIMIT_POLICIES` (12 entries incl. reserved `v1`, not wired); all public routes migrated to `rate_limit_policy()` with identical (scope,max,window); 429 gains `Retry-After`, body unchanged. Commit `696e996`.
   - Files: `api/routes.py`, `api/handoff.py`, `api/v1.py`, `core/config.py`.
   - Do: route limits are currently scattered literal arguments. Collect them in a
     module-level policy table (`chat`, `stream`, `contacts`, `handoff`,
@@ -241,7 +243,8 @@ fallback remains per-process and is an explicitly weaker mitigation.
   - Done when: every public route resolves its limit from the table, the 429 body
     is unchanged apart from the added header, and a test pins the table.
 
-- [ ] **V3-12 · Compose with quota and API keys** — `S`, depends: V3-11, migration: —
+- [x] **V3-12 · Compose with quota and API keys** — `S`, depends: V3-11, migration: —
+  - Done: `tests/test_limit_ordering.py` pins limiter-before-quota ordering and /api/v1 key-only auth (no per-key limiter, deferred); README "Limit composition" documents precedence. Commit `7fe1f05`.
   - Files: `services/quota.py`, `api/v1.py`, `README.md`.
   - Do: document precedence — the existing per-IP limiter is a burst guard and
     daily Redis quota is the spend ceiling. Do not claim API-key-specific limiting
@@ -250,7 +253,8 @@ fallback remains per-process and is an explicitly weaker mitigation.
   - Done when: tests/docs prove the actual auth, limiter and quota ordering; do not
     claim independent per-key buckets unless they are implemented.
 
-- [ ] **V3-13 · Docs: K5 leaves the accepted list** — `S`, depends: V3-12, migration: —
+- [x] **V3-13 · Docs: K5 leaves the accepted list** — `S`, depends: V3-12, migration: —
+  - Done: README §4 K5 mitigated + security.md §5 K5 residual (memory per-process, Redis availability dependency, fallback named explicitly) + AGENTS.md ownership note. Commit `7cd6081`.
   - Files: `README.md` §4, `docs/security.md` §5, `AGENTS.md`.
   - Do: rewrite K5 as mitigated (with the honest residual: a single process with
     the `memory` backend is still per process, and Redis is a availability
@@ -261,10 +265,13 @@ fallback remains per-process and is an explicitly weaker mitigation.
 
 #### Gate V3-1G
 
-- [ ] Two uvicorn processes on different ports share one budget (proved by hand, recorded here).
-- [ ] `RATE_LIMIT_BACKEND=memory` reproduces V2.1 behaviour exactly (same numbers, same 429 body).
-- [ ] Both suites + widget suite + build + lint + `trail build` pass; `alembic current` unchanged.
-- [ ] commit `chore(v3): V3-1G gate — Redis rate limiting`.
+- [x] Two uvicorn processes on different ports share one budget (proved by hand, recorded here).
+  Done: ports 8001+8002 with `RATE_LIMIT_BACKEND=redis`, 50× `POST /api/chat/feedback` (policy 40/min) split across both → exactly 40 allowed (404), 10 × 429 with `Retry-After: 60`. One shared budget, not 2×40.
+- [x] `RATE_LIMIT_BACKEND=memory` reproduces V2.1 behaviour exactly (same numbers, same 429 body).
+  Done: policy-table test pins every (scope,max,window) to the pre-V3 literals; 429 body test asserts the exact V2.1 string.
+- [x] Both suites + widget suite + build + lint + `trail build` pass; `alembic current` unchanged.
+  Done: 432 Python tests OK, 24 node pass, build+lint clean, `trail build` done, head still `c9d3e5a71b28`.
+- [x] commit `chore(v3): V3-1G gate — Redis rate limiting`.
 
 ---
 
@@ -711,11 +718,11 @@ check that was not run.
 | Wave | Tasks | Done | Gate |
 |---|---|---|---|
 | 0 — Foundation | 4 | 4 / 4 | ☑ V3-0G |
-| 1 — Redis rate limiting (F1) | 4 | 0 / 4 | ☐ V3-1G |
+| 1 — Redis rate limiting (F1) | 4 | 4 / 4 | ☑ V3-1G |
 | 2 — Embed token / K18 (F4) | 5 | 0 / 5 | ☐ V3-2G |
 | 3 — Topic clustering (F2) | 5 | 0 / 5 | ☐ V3-3G |
 | 4 — Live-agent inbox (F3) | 7 | 0 / 7 | ☐ V3-4G |
-| **Total** | **25 tasks + 5 gates** | **4 / 25** | **not started** |
+| **Total** | **25 tasks + 5 gates** | **8 / 25** | **not started** |
 
 ---
 
