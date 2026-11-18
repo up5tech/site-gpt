@@ -3,10 +3,10 @@
 | | | |
 |---|---|---|
 | Version | **V3** — implements what `V2` and `V2.1` deliberately left out (`plans/PLAN_V2.md` §14) |
-| Status | **Planned — not started.** No task below is ticked and no migration exists yet |
+| Status | **In progress — Waves 0 and 1 done; V3-20 (M7) landed, Wave 2 continues (9 / 25 tasks; gates V3-0G and V3-1G signed off)** |
 | Created | 2026-11-16 |
 | Derived from | `plans/PLAN_V2.md` (§14, §11 risk register), `plans/SPEC.md`, `docs/security.md` §5 (accepted risks K5 / K18), `README.md` §4 |
-| Baseline | V2.1 tag `v2.1` = `4031b6f4a063e62bf5bdc6e20f3d8ac67781ae99`; current `master` HEAD `15747659e3fdd8c2e7e05c1e49e4611b48e025b5` adds the V3 plan after that tag; Alembic head `c9d3e5a71b28`; baseline suite counts are historical and must be re-run at pre-flight |
+| Baseline | V2.1 tag `v2.1` = `4031b6f4a063e62bf5bdc6e20f3d8ac67781ae99`; current `master` HEAD `1616332ed8d1d32ee21bb628ddb2d270e1304374` is docs-only after that tag (the V3 plan); V3 work lives on `feat/v3`; Alembic head `c9d3e5a71b28`; baseline suite counts are historical and must be re-run at pre-flight |
 | Scope | 4 features (F1–F4), 5 waves (W0–W4), 5 gates, 3 migrations (M7–M9), 25 tasks |
 | Review note | Pre-implementation plan review; security and data-model assumptions are clarified below before any feature work starts |
 | Out of scope | SOC 2 Type II / HIPAA BAA / signed DPA / "GDPR certification" (legal, not code — unchanged from V2), trial & pricing, the "95+ languages" claim (V2 D2), an application-level encryption layer or HSM (V2 D6), a charting library (Ant Design only), a Redis-backed **quota** rewrite (the daily message cap already counts in Redis), and any backport of V3 work into V2 |
@@ -281,8 +281,9 @@ fallback remains per-process and is an explicitly weaker mitigation.
 breaking deployed snippets by default. This does not close deliberate copying or
 prove origin. **Entry:** V3-1G.
 
-- [ ] **V3-20 · Migration M7 — `embed_tokens`** — `M`, depends: V3-1G, migration: **M7**
-  - Files: `models.py`, `alembic/versions/<rev>_v3_m7_embed_tokens.py`, `tests/test_models_indexes.py`.
+- [x] **V3-20 · Migration M7 — `embed_tokens`** — `M`, depends: V3-1G, migration: **M7**
+  - Done: revision `76f46b510350` (parent `c9d3e5a71b28`) creates `embed_tokens` with unique `token_hash` and the partial unique index `uq_embed_tokens_website_id_active` (`website_id WHERE revoked_at IS NULL`). Autogenerate proposed the new table plus only the four known drift changes, which were removed; a second autogenerate after `upgrade` detects nothing about `embed_tokens`. `upgrade → downgrade -1 → upgrade` clean, `alembic heads` = `76f46b510350` alone. DB-level checks: a second active token for one website raises `IntegrityError`, inserting after revoking the old row succeeds, a reused `token_hash` is refused, deleting the company cascades to 0 token rows. No separate history index — the partial unique index serves the active lookup by website and the hash unique serves verification. `tests/test_models_indexes.py` (13 tests); suite 445 Python tests OK, 24 node checks; `trail build` re-run (3 files parsed: the model, migration and test module). The remaining doc sweep belongs to the V3-2G gate.
+  - Files: `models.py`, `alembic/versions/76f46b510350_v3_m7_embed_tokens.py`, `tests/test_models_indexes.py`.
   - Do: table `embed_tokens`: `website_id` FK `ondelete="CASCADE"`,
     `token_prefix` (String 12), `token_hash` (String 64, unique), `created_at`,
     `revoked_at`, `last_used_at`. Enforce one active token per website with a
@@ -593,7 +594,7 @@ autogenerate chain it, then confirm the parent is the head above.
 
 | ID | Revision file | Contents | Task | Chains from |
 |---|---|---|---|---|
-| M7 | `<rev>_v3_m7_embed_tokens.py` | `embed_tokens` (website FK cascade, prefix, unique hash, revoked/last-used), partial unique active-token index and history index | V3-20 | `c9d3e5a71b28` |
+| M7 | `76f46b510350_v3_m7_embed_tokens.py` ✅ | `embed_tokens` (website FK cascade, prefix, unique hash, revoked/last-used) + partial unique active-token index `website_id WHERE revoked_at IS NULL`, which also serves the active lookup — no separate history index | V3-20 | `c9d3e5a71b28` |
 | M8 | `<rev>_v3_m8_topic_clusters.py` | Company/window `topic_clusters` plus unique durable `topic_cluster_runs` claim/status table, both with CASCADE company FKs | V3-30 | M7 |
 | M9 | `<rev>_v3_m9_inbox.py` | `conversations` (unique website+session, state, assignee, timestamps) + `chat_messages.author_user_id` + transactional indexes on the new table; privacy/retention updates and any index on existing busy tables concurrently | V3-40 | M8 |
 
@@ -643,10 +644,10 @@ source .venv/bin/activate
 uv run python -c "import site_gpt.app.main"
 uv run python -c "import site_gpt.app.worker"
 uv run alembic upgrade head && uv run alembic current   # single head
-uv run python -m unittest discover -s tests -v          # 35 modules / 406 tests at V2.1; grows with V3
-node --test tests/*.mjs                                 # 6 widget files / 24 checks at V2.1
+uv run python -m unittest discover -s tests -v          # 38 modules / 445 tests at V3-20; grows every wave
+node --test tests/*.mjs                                 # 6 widget files / 24 checks
 uv run uvicorn site_gpt.app.main:app --reload           # :8000
-uv run python -m site_gpt.app.worker                    # ingest + digest + cluster loops
+uv run python -m site_gpt.app.worker                    # ingest + digest loops (cluster loop arrives in V3-32)
 cd frontend && npm run build && npm run lint
 trail build
 curl -s http://localhost:8000/health
@@ -719,10 +720,10 @@ check that was not run.
 |---|---|---|---|
 | 0 — Foundation | 4 | 4 / 4 | ☑ V3-0G |
 | 1 — Redis rate limiting (F1) | 4 | 4 / 4 | ☑ V3-1G |
-| 2 — Embed token / K18 (F4) | 5 | 0 / 5 | ☐ V3-2G |
+| 2 — Embed token / K18 (F4) | 5 | 1 / 5 | ☐ V3-2G |
 | 3 — Topic clustering (F2) | 5 | 0 / 5 | ☐ V3-3G |
 | 4 — Live-agent inbox (F3) | 7 | 0 / 7 | ☐ V3-4G |
-| **Total** | **25 tasks + 5 gates** | **8 / 25** | **not started** |
+| **Total** | **25 tasks + 5 gates** | **9 / 25** | **2 / 5 gates** |
 
 ---
 
