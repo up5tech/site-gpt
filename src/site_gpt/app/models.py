@@ -444,6 +444,10 @@ class EmbedToken(BaseModel):
             "website_id",
             unique=True,
             postgresql_where=text("revoked_at IS NULL"),
+            # The test suite runs on SQLite; without the same predicate there it
+            # would build a plain unique index and reject the revoked history
+            # that rotation depends on, so the tests could not see the real rule.
+            sqlite_where=text("revoked_at IS NULL"),
         ),
     )
 

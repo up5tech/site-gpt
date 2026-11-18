@@ -70,6 +70,12 @@ class EmbedTokenModelTests(unittest.TestCase):
             str(index.dialect_options["postgresql"]["where"]),
             "revoked_at IS NULL",
         )
+        # The test suite runs on SQLite; the same predicate there keeps
+        # `test_embed_tokens` able to prove that rotation may keep revoked rows.
+        self.assertEqual(
+            str(index.dialect_options["sqlite"]["where"]),
+            "revoked_at IS NULL",
+        )
 
     def test_compiled_ddl_is_a_partial_unique_index(self):
         ddl = str(

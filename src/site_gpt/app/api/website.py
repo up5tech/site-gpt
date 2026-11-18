@@ -5,11 +5,12 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from site_gpt.app import models
-from site_gpt.app.core.auth import get_current_user, get_manager_user
+from site_gpt.app.core.auth import get_admin_user, get_current_user, get_manager_user
 from site_gpt.app.core.config import SITEMAP_SYNC_MAX_URLS
 from site_gpt.app.db.session import get_db
 from site_gpt.app.models import Website
 from site_gpt.app.schemas.app import DashboardStats, PaginatedResponse
+from site_gpt.app.schemas.embed_token import EmbedTokenCreated, EmbedTokenRes
 from site_gpt.app.api.setting import company_daily_message_limit
 from site_gpt.app.schemas.website import (
     WebsiteCreate,
@@ -22,11 +23,40 @@ from site_gpt.app.schemas.website_page import (
     WebsitePageRes,
     WebsitePageUpdate,
 )
+from site_gpt.app.services import embed_tokens
 from site_gpt.app.services.crawler import extract_urls_from_sitemap
 from site_gpt.app.services.net_guard import UnsafeUrl
 from site_gpt.app.services.quota import usage as quota_usage
 
 router = APIRouter()
+
+
+def _owned_website(db: Session, website_id: UUID, user: models.User) -> Website:
+    """The caller's website, or 404.
+
+    A foreign id is a 404, never a 403 (same rule as `api/privacy.py`): the
+    existence of another company's website is not the caller's business.
+    """
+    website = (
+        db.query(Website)
+        .filter(Website.id == website_id, Website.company_id == user.company_id)
+        .first()
+    )
+    if not website:
+        raise HTTPException(status_code=404, detail="Website not found")
+    return website
+
+
+def _token_res(row: models.EmbedToken) -> EmbedTokenRes:
+    return EmbedTokenRes(
+        id=row.id,
+        website_id=row.website_id,
+        token_prefix=row.token_prefix,
+        active=row.revoked_at is None,
+        created_at=row.created_at,
+        last_used_at=row.last_used_at,
+        revoked_at=row.revoked_at,
+    )
 
 
 @router.get("/", response_model=PaginatedResponse)
@@ -491,3 +521,89 @@ def load_website_site_map(
         "truncated": truncated,
         "limit": SITEMAP_SYNC_MAX_URLS,
     }
+
+
+# --- Embed token (V3 F4) ------------------------------------------------------
+#
+# The token ships inside a public HTML page, so it is a revocation/"require a
+# token" control, not a secret: reads return the prefix only and the raw value
+# exists in exactly one response. Admin-only because rotating it breaks every
+# deployed snippet for that website.
+
+
+@router.get("/{website_id}/embed-token", response_model=EmbedTokenRes)
+def get_embed_token(
+    website_id: UUID,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_admin_user),
+):
+    """The website's latest token as metadata — never the raw value."""
+    website = _owned_website(db, website_id, user)
+    row = embed_tokens.latest_token(db, website.id)
+    if row is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No embed token has been issued for this website",
+        )
+    return _token_res(row)
+
+
+@router.post(
+    "/{website_id}/embed-token",
+    response_model=EmbedTokenCreated,
+    status_code=201,
+)
+def mint_embed_token(
+    website_id: UUID,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_admin_user),
+):
+    """Issue the website's first token. The raw value is in this response only.
+
+    A website that already has an active token gets 409: issuing a second live
+    token would make revocation a lie, so the caller has to rotate.
+    """
+    website = _owned_website(db, website_id, user)
+    try:
+        row, raw_token = embed_tokens.mint(db, website.id)
+    except embed_tokens.EmbedTokenExists as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return EmbedTokenCreated(**_token_res(row).model_dump(), token=raw_token)
+
+
+@router.post(
+    "/{website_id}/embed-token/rotate",
+    response_model=EmbedTokenCreated,
+    status_code=201,
+)
+def rotate_embed_token(
+    website_id: UUID,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_admin_user),
+):
+    """Revoke the current token and return a new one (raw value, once).
+
+    One transaction covers both rows: snippets carrying the old token stop
+    working the moment this returns.
+    """
+    website = _owned_website(db, website_id, user)
+    try:
+        row, raw_token = embed_tokens.rotate(db, website.id)
+    except embed_tokens.EmbedTokenExists as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return EmbedTokenCreated(**_token_res(row).model_dump(), token=raw_token)
+
+
+@router.delete("/{website_id}/embed-token")
+def revoke_embed_token(
+    website_id: UUID,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_admin_user),
+):
+    """Revoke the active token. The row stays as history (`revoked_at`)."""
+    website = _owned_website(db, website_id, user)
+    try:
+        embed_tokens.revoke(db, website.id)
+    except embed_tokens.EmbedTokenMissing as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return {"status": "revoked"}
