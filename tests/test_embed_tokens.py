@@ -19,6 +19,7 @@ active tokens fails here instead of in production.
 
 import hashlib
 import unittest
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -237,6 +238,87 @@ class RotateAndRevokeTests(unittest.TestCase):
         embed_tokens.mint(self.db, self.site.id)
 
         self.assertIsNone(embed_tokens.active_token(self.db, other.id))
+
+
+class LookupAndThrottleTests(unittest.TestCase):
+    """The two read paths V3-23 adds: verifying a presented token and stamping
+    its use."""
+
+    def setUp(self):
+        self.engine, self.db = _session()
+        self.site = _website(self.db, _company(self.db))
+        self.other = _website(self.db, _company(self.db, "Other"), "other")
+
+    def tearDown(self):
+        self.db.close()
+        self.engine.dispose()
+
+    def _issued(self, site=None, revoked=False):
+        target = site or self.site
+        row, raw = embed_tokens.mint(self.db, target.id)
+        if revoked:
+            embed_tokens.revoke(self.db, target.id)
+        return row, raw
+
+    def _stamped(self, row):
+        value = row.last_used_at
+        return value.replace(tzinfo=UTC) if value and value.tzinfo is None else value
+
+    def test_an_active_token_is_found_for_its_website(self):
+        row, raw = self._issued()
+
+        found = embed_tokens.find_active_token(
+            self.db, raw, website_id=self.site.id
+        )
+
+        self.assertEqual(found.id, row.id)
+
+    def test_unknown_and_empty_tokens_resolve_to_none(self):
+        self._issued()
+
+        self.assertIsNone(
+            embed_tokens.find_active_token(
+                self.db, "emb_never-issued", website_id=self.site.id
+            )
+        )
+        self.assertIsNone(
+            embed_tokens.find_active_token(self.db, "", website_id=self.site.id)
+        )
+
+    def test_a_revoked_token_no_longer_resolves(self):
+        _, raw = self._issued(revoked=True)
+
+        self.assertIsNone(
+            embed_tokens.find_active_token(self.db, raw, website_id=self.site.id)
+        )
+
+    def test_another_websites_token_does_not_resolve(self):
+        _, raw = self._issued(self.other)
+
+        self.assertIsNone(
+            embed_tokens.find_active_token(self.db, raw, website_id=self.site.id)
+        )
+        self.assertIsNotNone(
+            embed_tokens.find_active_token(self.db, raw, website_id=self.other.id)
+        )
+
+    def test_a_use_is_stamped_at_most_once_per_minute(self):
+        row, _ = self._issued()
+        start = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+
+        self.assertTrue(embed_tokens.record_use(self.db, row, now=start))
+        self.assertEqual(self._stamped(row), start)
+
+        # Inside the window the row is left alone: a busy widget costs one
+        # UPDATE a minute, not one per message.
+        self.assertFalse(
+            embed_tokens.record_use(self.db, row, now=start + timedelta(seconds=59))
+        )
+        self.assertEqual(self._stamped(row), start)
+
+        later = start + timedelta(seconds=61)
+        self.assertTrue(embed_tokens.record_use(self.db, row, now=later))
+        self.assertEqual(self._stamped(row), later)
 
 
 class EmbedTokenEndpointTests(unittest.TestCase):

@@ -18,6 +18,10 @@ from site_gpt.app.api.user import router as user_router
 from site_gpt.app.api.v1 import router as v1_router
 from site_gpt.app.api.website import router as website_router
 from site_gpt.app.core.config import CORS_ORIGINS
+from site_gpt.app.services.embed_guard import (
+    EmbedTokenRefused,
+    embed_token_error_response,
+)
 from site_gpt.app.services.session_tokens import SessionTokenError, error_response
 
 DESCRIPTION = """
@@ -59,6 +63,12 @@ app = FastAPI(
 # prose.
 app.add_exception_handler(SessionTokenError, error_response)
 
+# Embed-token refusals (V3 F4) carry `reason` too — `embed_token_required` in
+# `enforce` mode, `invalid_embed_token` for a wrong/revoked/foreign token. These
+# are deliberately separate codes: an embed refusal must never make the widget
+# reset the visitor's session.
+app.add_exception_handler(EmbedTokenRefused, embed_token_error_response)
+
 # Browsers reject `allow_credentials=True` together with a wildcard origin,
 # so credentials are only enabled for explicit (non-wildcard) origin lists.
 origins = [o.strip() for o in CORS_ORIGINS.split(",") if o.strip()]
@@ -69,6 +79,12 @@ app.add_middleware(
     allow_origins=origins,
     allow_credentials=allow_credentials,
     allow_methods=["*"],
+    # Deliberately a wildcard, not a list: widget requests now carry
+    # `X-Session-Token` (K4) and `X-Embed-Token` (V3 F4) beside `Content-Type`,
+    # and the dashboard adds `Authorization`. Replacing this with an allowlist
+    # would tighten CORS for existing embeds, so the preflight carrying
+    # `X-Embed-Token` is pinned by a test in `tests/test_embed_origin.py`
+    # instead.
     allow_headers=["*"],
     # The admin Settings page reads this header off /widget.js to build a
     # cache-busting ?v= token for the install snippet; without exposing it the

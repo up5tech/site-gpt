@@ -17,8 +17,10 @@ The check is intentionally soft, because a strict one breaks real embeds:
 
 This raises the bar rather than fully closing the hole: a determined attacker
 calling the API directly with no headers (or a forged ``Referer``) is still
-accepted. Closing that needs a signed embed token per website (a schema change,
-so V2).
+accepted. V3 F4 adds an optional per-website `X-Embed-Token` on top (see
+``ensure_embed_token_allowed``): it makes a deployed snippet revocable and can be
+made mandatory, but it lives in the page source and can be replayed, so it does
+not make the origin decision trustworthy.
 
 The module also owns the two request gates every public endpoint shares, so new
 routes (e.g. the versioned `/api/v1`) reuse them instead of copying the logic:
@@ -29,10 +31,12 @@ routes (e.g. the versioned `/api/v1`) reuse them instead of copying the logic:
 from urllib.parse import urlparse
 
 from fastapi import HTTPException, status
+from fastapi.responses import JSONResponse
 
 from site_gpt.app import models
 from site_gpt.app.core.auth import verify_token
-from site_gpt.app.core.config import JWT_ALGORITHM, JWT_SECRET_KEY
+from site_gpt.app.core.config import EMBED_TOKEN_MODE, JWT_ALGORITHM, JWT_SECRET_KEY
+from site_gpt.app.services import embed_tokens
 
 # Origins that are always fine: local development and demos.
 LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
@@ -113,12 +117,78 @@ def is_authenticated(request, db) -> bool:
     )
 
 
+class EmbedTokenRefused(Exception):
+    """A 403 from the embed-token gate, with a machine-readable `reason`.
+
+    `reason` exists for the same purpose as the K4 session-token codes: the
+    widget has to tell "your snippet is out of date" from "another tab holds
+    this session", and it must never guess from prose. These reasons are
+    deliberately **not** the session ones — an embed refusal never resets the
+    visitor's session.
+    """
+
+    status_code = status.HTTP_403_FORBIDDEN
+
+    def __init__(self, detail: str, reason: str):
+        super().__init__(detail)
+        self.detail = detail
+        self.reason = reason
+
+
+# Rendered by `embed_token_error_response` (registered in `main.py`).
+async def embed_token_error_response(request, exc: EmbedTokenRefused):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail, "reason": exc.reason},
+    )
+
+
+# Stable reason codes (never branch on `detail`).
+EMBED_TOKEN_REQUIRED = "embed_token_required"
+INVALID_EMBED_TOKEN = "invalid_embed_token"
+EMBED_TOKEN_HEADER = "x-embed-token"
+
+
+def ensure_embed_token_allowed(request, db, website) -> None:
+    """The per-website token gate (V3 F4).
+
+    `compat` (default): a missing token is accepted — every snippet deployed
+    before V3 sends none — but a token that *is* supplied must be valid, so a
+    revoked snippet stops working immediately after rotation.
+
+    `enforce`: a valid token is required. This is a deliberate breaking rollout,
+    and it still is not an origin guarantee: the token is visible in the page and
+    can be replayed (K18 stays accepted).
+
+    The check is additive to the Origin/Referer one, never a replacement.
+    """
+    raw_token = (request.headers.get(EMBED_TOKEN_HEADER) or "").strip()
+    if not raw_token:
+        if EMBED_TOKEN_MODE == "enforce":
+            raise EmbedTokenRefused(
+                "This assistant requires an embed token.", EMBED_TOKEN_REQUIRED
+            )
+        return
+
+    row = embed_tokens.find_active_token(
+        db, raw_token, website_id=getattr(website, "id", None)
+    )
+    if row is None:
+        # Wrong, revoked, or another website's token: one answer for all three.
+        # The value is never echoed back.
+        raise EmbedTokenRefused(
+            "This embed token is not valid for this website.", INVALID_EMBED_TOKEN
+        )
+    embed_tokens.record_use(db, row)
+
+
 def ensure_embed_allowed(
     request,
     db,
     website,
     *,
     allow_authenticated: bool = False,
+    require_embed_token: bool = True,
 ) -> None:
     """Refuse requests whose Origin/Referer names a foreign site.
 
@@ -126,6 +196,11 @@ def ensure_embed_allowed(
     embedding another customer's bot from their own site. Shared by every public
     endpoint (chat, stream, contacts, widget config, `/api/v1`), so no caller can
     forget the check or ship a subtly different version of it.
+
+    `require_embed_token=False` is for callers that already authenticated with a
+    secret (`/api/v1`'s `X-API-Key`): the embed token is a *browser* control and
+    requiring it there would break a server-to-server integration the moment an
+    operator switches on `EMBED_TOKEN_MODE=enforce`.
     """
     if allow_authenticated and is_authenticated(request, db):
         return
@@ -134,3 +209,5 @@ def ensure_embed_allowed(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="This origin is not allowed to embed that assistant.",
         )
+    if require_embed_token:
+        ensure_embed_token_allowed(request, db, website)

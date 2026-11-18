@@ -10,7 +10,7 @@ from site_gpt.app.api import routes
 from site_gpt.app.core.auth import create_access_token
 from site_gpt.app.core.config import JWT_ALGORITHM, JWT_SECRET_KEY
 from site_gpt.app.db.session import get_db
-from site_gpt.app.services import embed_guard
+from site_gpt.app.services import embed_guard, embed_tokens
 
 WEBSITE_ID = str(uuid4())
 WEBSITE_URL = "https://customer.example.com"
@@ -322,6 +322,203 @@ class EndpointOriginTests(unittest.TestCase):
             headers={"Origin": WEBSITE_URL},
         )
         self.assertNotEqual(response.status_code, 403, response.text)
+
+
+class EmbedTokenMatrixTests(unittest.TestCase):
+    """V3 F4: `compat` vs `enforce`, and the reason the widget branches on.
+
+    Two things matter more than the happy path: a deployed V2.1 snippet keeps
+    working in `compat` even after the owner issued a token (otherwise the
+    rollout would break every customer at once), and a refusal is never
+    mistakable for a K4 session refusal.
+    """
+
+    def setUp(self):
+        self.site = website()
+
+    def guard(self, headers, *, mode="compat", row=None, authenticated=False):
+        request = MagicMock()
+        request.headers = {"origin": WEBSITE_URL, **headers}
+        with patch.object(embed_guard, "EMBED_TOKEN_MODE", mode), patch.object(
+            embed_tokens, "find_active_token", return_value=row
+        ) as find, patch.object(embed_tokens, "record_use") as use, patch.object(
+            embed_guard, "is_authenticated", return_value=authenticated
+        ):
+            refusal = None
+            try:
+                embed_guard.ensure_embed_allowed(
+                    request, MagicMock(), self.site, allow_authenticated=True
+                )
+            except embed_guard.EmbedTokenRefused as exc:
+                refusal = exc
+        return refusal, find, use
+
+    def test_compat_allows_a_tokenless_snippet(self):
+        # Whether or not a token was issued: the old snippet cannot know it.
+        refusal, find, use = self.guard({})
+
+        self.assertIsNone(refusal)
+        find.assert_not_called()
+        use.assert_not_called()
+
+    def test_compat_allows_a_valid_token_and_stamps_the_use(self):
+        row = MagicMock()
+
+        refusal, find, use = self.guard({"x-embed-token": "emb_ok"}, row=row)
+
+        self.assertIsNone(refusal)
+        self.assertEqual(find.call_args.kwargs["website_id"], self.site.id)
+        self.assertIs(use.call_args.args[1], row)
+
+    def test_a_wrong_revoked_or_foreign_token_is_refused_in_both_modes(self):
+        # The service returns None for all three, so the guard has one answer.
+        for mode in ("compat", "enforce"):
+            with self.subTest(mode=mode):
+                refusal, _, use = self.guard({"x-embed-token": "emb_nope"}, mode=mode)
+
+                self.assertIsNotNone(refusal)
+                self.assertEqual(refusal.status_code, 403)
+                self.assertEqual(refusal.reason, "invalid_embed_token")
+                use.assert_not_called()
+
+    def test_enforce_requires_a_token(self):
+        refusal, find, _ = self.guard({}, mode="enforce")
+
+        self.assertIsNotNone(refusal)
+        self.assertEqual(refusal.reason, "embed_token_required")
+        find.assert_not_called()
+
+    def test_enforce_accepts_a_valid_token(self):
+        refusal, _, use = self.guard(
+            {"x-embed-token": "emb_ok"}, mode="enforce", row=MagicMock()
+        )
+
+        self.assertIsNone(refusal)
+        use.assert_called_once()
+
+    def test_reasons_are_not_the_session_ones(self):
+        # The widget resets a session only for `session_expired`; an embed reason
+        # must be unusable as a session reason, and vice versa.
+        session_reasons = {
+            "session_expired",
+            "session_claimed",
+            "invalid_token",
+            "token_required",
+        }
+
+        self.assertNotIn(embed_guard.INVALID_EMBED_TOKEN, session_reasons)
+        self.assertNotIn(embed_guard.EMBED_TOKEN_REQUIRED, session_reasons)
+
+    def test_a_refusal_never_echoes_the_token(self):
+        refusal, _, _ = self.guard(
+            {"x-embed-token": "emb_super_secret"}, mode="enforce"
+        )
+
+        self.assertNotIn("emb_super_secret", refusal.detail)
+
+    def test_an_authenticated_request_skips_the_token_gate(self):
+        # The dashboard playground is not a browser embed.
+        refusal, find, _ = self.guard({}, mode="enforce", authenticated=True)
+
+        self.assertIsNone(refusal)
+        find.assert_not_called()
+
+    def test_api_key_callers_can_skip_the_token_gate(self):
+        request = MagicMock()
+        request.headers = {"origin": WEBSITE_URL}
+        with patch.object(embed_guard, "EMBED_TOKEN_MODE", "enforce"), patch.object(
+            embed_tokens, "find_active_token"
+        ) as find:
+            embed_guard.ensure_embed_allowed(
+                request, MagicMock(), self.site, require_embed_token=False
+            )
+        find.assert_not_called()
+
+
+class EmbedTokenEndpointTests(unittest.TestCase):
+    """The shape the widget actually receives when the gate refuses."""
+
+    def setUp(self):
+        self.site = website()
+
+        def query(model):
+            if model is routes.models.Website:
+                return FakeQuery(self.site)
+            return FakeQuery(None) if model is routes.models.User else FakeQuery([])
+
+        self.db = MagicMock()
+        self.db.query.side_effect = query
+
+        app = FastAPI()
+        app.include_router(routes.router)
+        app.add_exception_handler(
+            embed_guard.EmbedTokenRefused, embed_guard.embed_token_error_response
+        )
+        app.dependency_overrides[get_db] = lambda: self.db
+        self.client = TestClient(app)
+
+    def test_an_invalid_token_is_403_with_a_reason_beside_the_detail(self):
+        with patch.object(embed_tokens, "find_active_token", return_value=None):
+            response = self.client.post(
+                "/api/session-token",
+                json={"website_id": WEBSITE_ID, "session_id": "s1"},
+                headers={"Origin": WEBSITE_URL, "X-Embed-Token": "emb_wrong"},
+            )
+
+        self.assertEqual(response.status_code, 403, response.text)
+        body = response.json()
+        self.assertEqual(body["reason"], "invalid_embed_token")
+        self.assertIn("not valid", body["detail"])
+        self.assertNotIn("emb_wrong", response.text)
+
+    def test_enforce_refuses_a_tokenless_widget_config_read(self):
+        with patch.object(embed_guard, "EMBED_TOKEN_MODE", "enforce"):
+            response = self.client.get(
+                "/api/widget-config",
+                params={"website_id": WEBSITE_ID},
+                headers={"Origin": WEBSITE_URL},
+            )
+
+        self.assertEqual(response.status_code, 403, response.text)
+        self.assertEqual(response.json()["reason"], "embed_token_required")
+
+    def test_a_valid_token_is_allowed_and_its_use_is_recorded(self):
+        row = MagicMock()
+        row.last_used_at = None
+
+        with patch.object(
+            embed_tokens, "find_active_token", return_value=row
+        ), patch.object(embed_guard, "EMBED_TOKEN_MODE", "enforce"):
+            response = self.client.get(
+                "/api/widget-config",
+                params={"website_id": WEBSITE_ID},
+                headers={"Origin": WEBSITE_URL, "X-Embed-Token": "emb_ok"},
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.db.commit.assert_called()
+        self.assertIsNotNone(row.last_used_at)
+
+
+class CorsPreflightTests(unittest.TestCase):
+    def test_a_preflight_carrying_the_embed_token_header_is_allowed(self):
+        from site_gpt.app.main import app
+
+        response = TestClient(app).options(
+            "/api/chat/stream",
+            headers={
+                "Origin": WEBSITE_URL,
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "content-type,x-embed-token,x-session-token",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        allowed = (response.headers.get("access-control-allow-headers") or "").lower()
+        self.assertTrue(
+            allowed == "*" or "x-embed-token" in allowed,
+            f"preflight did not allow X-Embed-Token: {allowed!r}",
+        )
 
 
 if __name__ == "__main__":

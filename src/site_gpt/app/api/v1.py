@@ -80,7 +80,10 @@ async def ingest(
     website = _scoped_website(db, api_key, website_id)
 
     ensure_website_active(website)
-    ensure_embed_allowed(request, db, website)
+    # The caller authenticated with a secret key, so the browser-oriented embed
+    # token is not required here: turning on `EMBED_TOKEN_MODE=enforce` must not
+    # break an existing `/api/v1` integration.
+    ensure_embed_allowed(request, db, website, require_embed_token=False)
 
     if not claim_ingest(db, website.id, api_key.company_id):
         raise HTTPException(
