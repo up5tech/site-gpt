@@ -633,15 +633,33 @@ handoff email remains the fallback when nobody is there. **Entry:** V3-3G.
 
 #### Gate V3-4G (release gate)
 
-- Scripts: `scripts/gate_v3_4g/run_all.sh` reruns these checks on a throwaway
-  database (`GATE_DB`, default `v3_gate_4g`, dropped and recreated by the first
-  step) against the Postgres + pgvector and Redis in `.env`: `00_migrations.sh`
-  (M7→M9 replay with each downgrade/upgrade), `01_db_checks.py` (10 schema
-  checks), `02_http_smoke.py` (11 HTTP checks, `compat`), `03_enforce.py`
-  (`EMBED_TOKEN_MODE=enforce`), `04_redis.sh` (two API processes on one Redis
-  budget + Redis-down degradation) and `05_clustering_opt_in.py` (flag off queues
-  nothing and writes no run row). The provider-bound and browser steps stay out,
-  as the blocked item below records.
+- Scripts: `scripts/gate_v3_4g/run_all.sh` reruns these checks, in order, on a
+  throwaway database — `GATE_DB` (default `v3_gate_4g`). `00_migrations.sh`
+  **drops and recreates** that database, so never point `GATE_DB` at one you care
+  about. The connection URL is `GATE_DATABASE_URL` or `DATABASE_URL` (`.env`); the
+  helper swaps only the database name, so no credential is copied into the
+  scripts. Per step:
+  - `00_migrations.sh` — M7→M9 replay from an empty database with each
+    downgrade/upgrade. Needs Postgres with `pgvector`.
+  - `01_db_checks.py` — 10 schema and invariant checks (same database).
+  - `02_http_smoke.py` — 11 HTTP checks in `EMBED_TOKEN_MODE=compat`; no Redis
+    needed (the limiter falls back in-process), and it writes `.state/smoke.json`
+    for the next two steps.
+  - `03_enforce.py` — `EMBED_TOKEN_MODE=enforce`, reusing that state.
+  - `04_redis.sh` — **needs the real Redis from `.env`**: two uvicorn processes on
+    `:8011`/`:8012` sharing one login budget, then a third on `:8013` pointed at
+    a closed port for the degradation path. Those ports must be free; it kills
+    only the PIDs it started, and it fails (never skips) when Redis is off.
+  - `05_clustering_opt_in.py` — **also needs the real Redis**: it enqueues into
+    `queue:jobs` with the flag on, then removes its own job. With Redis down the
+    step fails.
+
+  Blocked and unexecuted, because this environment cannot supply them (no token
+  is spent and no browser is driven): ingest → embed → `chat`/`chat/stream` (no
+  LLM or embedding provider), handoff/digest email (no SMTP), crawling a live
+  sitemap, and the browser steps (`/inbox` UI, the widget stream in a real page).
+  `scripts/gate_v3_4g/README.md` carries the same list with each script's checks,
+  and the task-level blocked item below records what the smoke itself could not do.
 
 - [x] M7 → M8 → M9 applies from empty DB with `pgvector`, replaying from
       `c9d3e5a71b28`; each downgrade/upgrade is proved, including cluster-run and
@@ -660,7 +678,8 @@ handoff email remains the fallback when nobody is there. **Entry:** V3-3G.
     pgvector centroid round-trip, and retention removing a conversation past
     `last_message_at`.
 - [x] Full smoke (see §9) passes on a throwaway database.
-  - Done: 11 HTTP checks against that database — `/health`, register + admin
+  - Done: 11 HTTP checks (`02_http_smoke.py`) plus the 2 enforce-mode checks
+    (`03_enforce.py`) against that database — `/health`, register + admin
     login, website create, `/api/widget-config` publishing exactly 14 public keys
     with no internal key, embed token in `compat` (tokenless accepted, invalid
     token 403 `invalid_embed_token` without claiming or resetting the K4 session)
