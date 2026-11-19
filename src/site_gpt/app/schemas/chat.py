@@ -63,6 +63,9 @@ class WidgetMessagesResponse(BaseModel):
 
     items: list[WidgetMessage] = []
     next_cursor: str | None = None
+    # The inbox state, so the widget knows whether an agent is handling this
+    # session at all (and can stop polling when it closed).
+    state: str | None = None
 
 
 class ConversationSummary(BaseModel):
@@ -93,6 +96,9 @@ class ConversationMessagesResponse(BaseModel):
     """All messages of a single conversation, oldest first."""
 
     items: list[ConversationMessage] = []
+    # Same signal as the widget message endpoint: a restored history that is
+    # still `waiting`/`human` turns the widget's live path on after a reload.
+    state: str | None = None
 
 
 class RecentConversation(BaseModel):

@@ -80,7 +80,11 @@ class ReplyTestCase(unittest.TestCase):
 
         # Both notifications leave the request thread; unit tests stub them so
         # no Redis connection is opened. Tests that assert on them patch again.
-        for target, name in ((inbox, "publish_after_commit"), (rag, "publish_agent_reply")):
+        for target, name in (
+            (inbox, "publish_after_commit"),
+            (rag, "publish_agent_reply"),
+            (rag, "publish_widget_state"),
+        ):
             patcher = patch.object(target, name)
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -298,6 +302,26 @@ class AgentReplyTests(ReplyTestCase):
                 self.assertEqual(response.status_code, 400, response.text)
         self.assertEqual(self.stored(), [])
 
+    def test_claiming_wakes_the_visitors_widget(self):
+        waiting = self._conversation(session_id="s9", state="waiting")
+
+        with patch.object(rag, "publish_widget_state") as publish:
+            response = self.client.post(
+                f"/api/inbox/conversations/{waiting.id}/claim"
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        publish.assert_called_once_with(self.site.id, "s9", "human")
+
+    def test_closing_stops_the_visitors_widget(self):
+        with patch.object(rag, "publish_widget_state") as publish:
+            response = self.client.post(
+                f"/api/inbox/conversations/{self.row.id}/close"
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        publish.assert_called_once_with(self.site.id, "s1", "closed")
+
     def test_the_inbox_transcript_shows_the_agent_and_its_author(self):
         self._message(body="can someone help?")
         self.reply("Sure — what's the order number?")
@@ -419,7 +443,28 @@ class WidgetMessageTests(ReplyTestCase):
 
         self.assertEqual(response.status_code, 403, response.text)
 
+    def test_the_read_reports_whether_an_agent_handles_the_session(self):
+        self._message(body="one", when=NOW)
+        self.assertEqual(self.send().json()["state"], "bot")
+
+        self._conversation(assigned=self.agent)
+
+        self.assertEqual(self.send().json()["state"], "human")
+
+    def test_the_stream_is_refused_while_nobody_handles_the_session(self):
+        self._message(body="one", when=NOW)
+
+        with patch.object(routes, "redis_ping", AsyncMock(return_value=True)):
+            response = self.send(path="/api/chat/messages/stream")
+
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertEqual(response.json()["detail"], routes.WIDGET_STREAM_IDLE)
+
     def test_the_stream_is_503_before_streaming_when_redis_is_down(self):
+        # A queued session: the stream is only offered once an agent (or the
+        # handoff queue) is involved, which is checked before Redis.
+        self._conversation(state="waiting")
+
         with patch.object(routes, "redis_ping", AsyncMock(return_value=False)):
             response = self.send(path="/api/chat/messages/stream")
 
@@ -427,6 +472,7 @@ class WidgetMessageTests(ReplyTestCase):
         self.assertEqual(response.json()["detail"], routes.WIDGET_STREAM_UNAVAILABLE)
 
     def test_the_stream_replays_from_the_cursor_before_going_live(self):
+        self._conversation(state="waiting")
         message = self._message(role="agent", body="live", when=NOW)
         seen = {}
 
@@ -451,6 +497,43 @@ class WidgetMessageTests(ReplyTestCase):
             [item["id"] for item in seen["replay"]], [str(message.id)]
         )
         self.assertIn(f"id: {message.id}", response.text)
+
+
+    def test_the_stream_follows_a_handoff_then_stops_when_it_closes(self):
+        waiting = self._conversation(state="waiting")
+        opened = []
+
+        async def finite(website_id, session_id, replay, *, disconnect=None):
+            opened.append(session_id)
+            yield "retry: 3000\n\n"
+
+        with patch.object(routes, "redis_ping", AsyncMock(return_value=True)), patch.object(
+            routes.rag, "message_stream", finite
+        ):
+            response = self.send(path="/api/chat/messages/stream")
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(opened, ["s1"])
+
+        conversations.close(self.db, waiting)
+        self.db.commit()
+
+        with patch.object(routes, "redis_ping", AsyncMock(return_value=True)):
+            response = self.send(path="/api/chat/messages/stream")
+
+        self.assertEqual(response.status_code, 409, response.text)
+
+    def test_history_reports_a_live_handoff_after_a_reload(self):
+        self._message(body="hello", when=NOW)
+        self._conversation(assigned=self.agent)
+
+        response = self.client.get(
+            "/api/conversations/s1",
+            params={"website_id": str(self.site.id)},
+            headers={"Origin": WEBSITE_URL, "X-Session-Token": self.token},
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["state"], "human")
 
 
 class FakePubSub:
@@ -539,6 +622,23 @@ class MessageStreamBodyTests(ReplyTestCase):
 
         self.assertIn("event: error", chunks[2])
         self.assertIn("stream_interrupted", chunks[2])
+
+
+    def test_a_state_frame_is_forwarded_as_state_not_a_message(self):
+        pubsub = FakePubSub(
+            messages=[
+                {
+                    "type": "message",
+                    "data": json.dumps({"event": "state", "state": "closed"}),
+                }
+            ]
+        )
+
+        chunks = self._collect(pubsub, count=3)
+
+        self.assertEqual(chunks[2], rag.widget_state_frame("closed"))
+        self.assertIn("event: state", chunks[2])
+        self.assertIn('"state": "closed"', chunks[2])
 
 
 class ChatWhileHumanTests(ReplyTestCase):
@@ -652,6 +752,24 @@ class ChatWhileHumanTests(ReplyTestCase):
         self.assertFalse(conversations.human_handling(self.db, self.site.id, "nope"))
         self._conversation(session_id="s4", state="waiting")
         self.assertFalse(conversations.human_handling(self.db, self.site.id, "s4"))
+
+
+class WidgetGatingTests(ReplyTestCase):
+    def test_only_a_queued_or_agent_held_session_is_engaged(self):
+        for state, expected in (
+            ("bot", False),
+            ("waiting", True),
+            ("human", True),
+            ("closed", False),
+        ):
+            with self.subTest(state=state):
+                self.assertIs(conversations.agent_engaged(state), expected)
+
+    def test_a_session_without_an_inbox_row_reads_as_bot(self):
+        self.assertEqual(
+            conversations.widget_state(self.db, self.site.id, "never-seen"),
+            "bot",
+        )
 
 
 class HistoryRoleTests(unittest.TestCase):

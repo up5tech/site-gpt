@@ -335,12 +335,34 @@ def publish_agent_reply(
     )
 
 
+def widget_state_frame(state: str) -> str:
+    """One SSE frame telling the widget whether an agent handles the session."""
+    payload = json.dumps({"event": "state", "state": state})
+    return f"event: state\ndata: {payload}\n\n"
+
+
+def publish_widget_state(website_id: UUID, session_id: str, state: str) -> None:
+    """Tell an open widget that the session's inbox state moved.
+
+    Called by the console routes **after** the transition committed, so a widget
+    that just had nothing to watch stops instead of holding a socket, and one
+    whose session an agent claimed starts listening. A notification that is
+    lost costs a poll: the read endpoints also report the state.
+    """
+    redis_service.enqueue_publish(
+        widget_channel(website_id, session_id),
+        {"event": "state", "state": state},
+    )
+
+
 def _live_frame(raw: str) -> str:
-    """A published widget message as an SSE frame."""
+    """A published widget message (or state) as an SSE frame."""
     try:
         payload = json.loads(raw)
     except (TypeError, ValueError):
         return f"event: message\ndata: {raw}\n\n"
+    if isinstance(payload, dict) and payload.get("event") == "state":
+        return widget_state_frame(str(payload.get("state") or ""))
     if not isinstance(payload, dict) or "id" not in payload:
         return f"event: message\ndata: {raw}\n\n"
     return message_frame(payload)

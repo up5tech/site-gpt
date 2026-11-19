@@ -184,7 +184,8 @@ check(
 );
 check(
   'server history is painted only after the gate',
-  init.indexOf('renderServerHistory(historyItems)') > init.indexOf('showContactForm'),
+  init.indexOf('renderServerHistory(history ? history.items : null)') >
+    init.indexOf('showContactForm'),
   init,
 );
 check(

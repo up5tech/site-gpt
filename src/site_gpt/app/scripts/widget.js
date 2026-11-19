@@ -1099,6 +1099,40 @@
   let agentPollTimer = null;
   let agentPollDelay = AGENT_POLL_MS;
   let agentLiveAbort = null;
+  // Live/poll runs only while a teammate is queued for, or answering, this
+  // session. Every other visitor opens no socket and sends no poll, so the
+  // background cost is proportional to human-handled chats, not page views.
+  let agentLive = false;
+
+  function agentEngaged(state) {
+    return state === 'waiting' || state === 'human';
+  }
+
+  function stopAgentLive() {
+    agentLive = false;
+    if (agentPollTimer) {
+      clearTimeout(agentPollTimer);
+      agentPollTimer = null;
+    }
+    agentPollDelay = AGENT_POLL_MS;
+    if (agentLiveAbort) {
+      try {
+        agentLiveAbort.abort();
+      } catch (e) {
+        // already finished
+      }
+      agentLiveAbort = null;
+    }
+  }
+
+  // Server truth, from a read response or a `state` frame: stop as soon as the
+  // session leaves the agent's hands (back to the bot, or closed).
+  function applyAgentState(state) {
+    if (!state) return true;
+    if (agentEngaged(state)) return true;
+    stopAgentLive();
+    return false;
+  }
 
   function agentCursorOf(item) {
     if (!item || !item.created_at || !item.id) return '';
@@ -1148,6 +1182,22 @@
     return Object.assign({}, embedTokenHeaders(), sessionTokenHeaders());
   }
 
+  // A `state` frame is what the console publishes when it claims, releases or
+  // closes a conversation, so the widget starts or stops without waiting for a
+  // poll tick.
+  function parseAgentState(part) {
+    const lines = String(part || '').split('\n');
+    if (!lines.some((line) => line.startsWith('event: state'))) return null;
+    const dataLine = lines.find((line) => line.startsWith('data:'));
+    if (!dataLine) return null;
+    try {
+      const payload = JSON.parse(dataLine.slice(5).trim());
+      return payload && typeof payload.state === 'string' ? payload.state : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
   function parseAgentFrame(part) {
     const lines = String(part || '').split('\n');
     if (!lines.some((line) => line.startsWith('event: message'))) return null;
@@ -1162,7 +1212,7 @@
   }
 
   async function fetchAgentMessages() {
-    if (!hasWebsiteId || !config.apiUrl) return false;
+    if (!hasWebsiteId || !config.apiUrl || !agentLive) return false;
     await sessionTokenReady;
     const base = config.apiUrl.replace(/\/$/, '');
     const params = new URLSearchParams({
@@ -1175,12 +1225,15 @@
     });
     if (!res.ok) return false;
     const data = await res.json();
+    // The poll carries the state too, so a closed session stops from here even
+    // if the stream's notification was missed.
+    if (!applyAgentState(data.state)) return true;
     showAgentMessages(data.items);
     return true;
   }
 
   function scheduleAgentPoll(delay = AGENT_POLL_MS) {
-    if (agentPollTimer) return;
+    if (!agentLive || agentPollTimer) return;
     agentPollTimer = setTimeout(async () => {
       agentPollTimer = null;
       let ok = false;
@@ -1189,6 +1242,7 @@
       } catch (e) {
         ok = false;
       }
+      if (!agentLive) return;
       // Back off while the API is unreachable, but keep trying: an agent may
       // reply minutes after the visitor wrote.
       agentPollDelay = ok
@@ -1201,8 +1255,10 @@
   // SSE first (instant), polling if it cannot connect or drops. A blocked
   // stream is not an error: the visitor still gets the reply on the next poll.
   async function startAgentLive() {
-    if (!hasWebsiteId || !config.apiUrl || agentLiveAbort) return;
+    if (!hasWebsiteId || !config.apiUrl || agentLive) return;
+    agentLive = true;
     await sessionTokenReady;
+    if (!agentLive) return;
     const base = config.apiUrl.replace(/\/$/, '');
     const params = new URLSearchParams({
       website_id: String(config.website_id),
@@ -1217,6 +1273,11 @@
         headers: agentHeaders(),
         signal: controller ? controller.signal : undefined,
       });
+      if (res.status === 409) {
+        // Nobody is handling the session any more: stop, do not poll.
+        stopAgentLive();
+        return;
+      }
       if (!res.ok || !res.body) throw new Error('stream unavailable');
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
@@ -1229,15 +1290,21 @@
         buffer = parts.pop() || '';
         for (const part of parts) {
           const item = parseAgentFrame(part);
-          if (item) showAgentMessages([item]);
+          if (item) {
+            showAgentMessages([item]);
+            continue;
+          }
+          const state = parseAgentState(part);
+          if (state) applyAgentState(state);
         }
       }
     } catch (e) {
       // Blocked, offline or closed: the poll below covers it.
     } finally {
-      agentLiveAbort = null;
+      if (agentLiveAbort === controller) agentLiveAbort = null;
     }
-    scheduleAgentPoll();
+    // Only fall back to polling while the session is still with an agent.
+    if (agentLive) scheduleAgentPoll();
   }
 
   // ================= SEND =================
@@ -1293,6 +1360,7 @@
       let reply = '';
       let pendingSources = [];
       let pendingMessageId = null;
+      let queuedReply = false;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -1316,6 +1384,9 @@
               if (Array.isArray(data.sources)) pendingSources = data.sources;
               if (typeof data.message_id === 'string')
                 pendingMessageId = data.message_id;
+              // The session is human-held: this reply was stored for the team,
+              // so the widget starts watching for their answer.
+              if (data.queued === true) queuedReply = true;
             }
           } catch (e) {
             // ignore malformed SSE line
@@ -1331,6 +1402,7 @@
 
       scrollToBottom();
       saveHistory('bot', reply);
+      if (queuedReply) startAgentLive();
     } catch (err) {
       thinkingMsg.textContent = t('error', 'Error!');
     }
@@ -1386,6 +1458,9 @@
       });
       if (!res.ok) throw new Error('handoff failed: ' + res.status);
       showHandoffAck();
+      // The handoff put the session in the queue; an agent may claim and answer
+      // without waiting for another visitor message.
+      startAgentLive();
     } catch (e) {
       handoffBtn.disabled = false;
       addMessage(
@@ -1399,6 +1474,8 @@
 
   // ================= CLEAR =================
   clearBtn.onclick = () => {
+    // The old session's live path ends with it; the new one starts idle.
+    stopAgentLive();
     sessionId = newSession();
     messagesEl.innerHTML = '';
     clearHandoffAck();
@@ -1560,8 +1637,9 @@
       }
       if (!res.ok) return null;
       const data = await res.json();
-      const items = data.items || [];
-      return items.length ? items : null;
+      // The state comes with the transcript so a reload mid-handoff resumes the
+      // live path without a second request.
+      return { items: data.items || [], state: data.state || '' };
     } catch (e) {
       return null;
     }
@@ -1595,7 +1673,7 @@
     // instead of waiting for a separate round trip.
     const configRequest = loadServerConfig();
     sessionTokenReady = configRequest.then(() => ensureSessionToken());
-    const [, , restoredContact, historyItems] = await Promise.all([
+    const [, , restoredContact, history] = await Promise.all([
       configRequest,
       sessionTokenReady,
       contactRequired ? loadServerContact() : Promise.resolve(false),
@@ -1615,7 +1693,7 @@
     setChatInputVisible(true);
 
     // Painted only now: the contact form above clears the message list.
-    const loadedFromServer = renderServerHistory(historyItems);
+    const loadedFromServer = renderServerHistory(history ? history.items : null);
     if (!loadedFromServer) loadHistory();
 
     if (
@@ -1630,8 +1708,11 @@
 
     scrollToBottomForce();
 
-    // Agent replies arrive after the page settled: stream them, poll as backup.
-    startAgentLive();
+    // Live replies only matter once a teammate handles the session: a queued
+    // handoff (`waiting`) or one already with an agent (`human`), including a
+    // visitor who reloaded mid-conversation. Everyone else stays idle, so a
+    // plain bot chat opens no stream and sends no poll.
+    if (history && agentEngaged(history.state)) startAgentLive();
   }
 
   init();

@@ -80,7 +80,8 @@ check(
 );
 check(
   'history is not painted for a disabled site',
-  init.indexOf('renderServerHistory(historyItems)') > init.indexOf('if (siteDisabled)'),
+  init.indexOf('renderServerHistory(history ? history.items : null)') >
+    init.indexOf('if (siteDisabled)'),
   init,
 );
 

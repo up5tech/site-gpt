@@ -30,7 +30,15 @@ function helpers() {
     ${extractFunction('agentCursorOf')}
     ${extractFunction('agentMessagesToShow')}
     ${extractFunction('parseAgentFrame')}
-    return { agentCursorOf, agentMessagesToShow, parseAgentFrame };
+    ${extractFunction('agentEngaged')}
+    ${extractFunction('parseAgentState')}
+    return {
+      agentCursorOf,
+      agentMessagesToShow,
+      parseAgentFrame,
+      agentEngaged,
+      parseAgentState,
+    };
   `);
   return factory();
 }
@@ -155,4 +163,55 @@ test('agent replies restore from history and are saved with their role', () => {
   assert.ok(source.includes("addMessage(text, 'agent')"));
   assert.ok(source.includes("saveHistory('agent', text)"));
   assert.ok(source.includes('rememberAgentCursor(newest)'));
+});
+
+test('live stays off unless a teammate is queued for or answering', () => {
+  const { agentEngaged } = helpers();
+
+  assert.equal(agentEngaged('waiting'), true);
+  assert.equal(agentEngaged('human'), true);
+  for (const state of ['bot', 'closed', '', null, undefined]) {
+    assert.equal(agentEngaged(state), false, `state ${state}`);
+  }
+});
+
+test('a state frame is parsed and a malformed one is ignored', () => {
+  const { parseAgentState } = helpers();
+
+  assert.equal(
+    parseAgentState('event: state\ndata: {"event":"state","state":"closed"}'),
+    'closed',
+  );
+  assert.equal(parseAgentState('event: state\ndata: not json'), null);
+  assert.equal(parseAgentState('event: state\ndata: {"state":7}'), null);
+  assert.equal(parseAgentState('event: message\ndata: {"id":"x"}'), null);
+  assert.equal(parseAgentState(': heartbeat'), null);
+});
+
+test('the widget only starts its live path for an engaged session', () => {
+  // A plain bot chat opens no stream and sends no poll: init starts live only
+  // when the restored session is queued/held, and a queued reply or a handoff
+  // starts it. The old unconditional call at the end of init is gone.
+  assert.ok(
+    source.includes('if (history && agentEngaged(history.state)) startAgentLive();'),
+  );
+  assert.ok(source.includes('if (queuedReply) startAgentLive();'));
+  const handoff = source.slice(
+    source.indexOf('async function requestHandoff('),
+    source.indexOf('handoffBtn.onclick'),
+  );
+  assert.ok(handoff.includes('startAgentLive()'));
+  assert.equal(source.includes('\n    startAgentLive();\n'), false);
+});
+
+test('a closed or released session stops the stream and the poll', () => {
+  assert.ok(source.includes('function stopAgentLive() {'));
+  assert.ok(source.includes('clearTimeout(agentPollTimer)'));
+  assert.ok(source.includes('agentLiveAbort.abort()'));
+  assert.ok(source.includes('if (res.status === 409)'));
+  assert.ok(source.includes('if (!agentLive) return;'));
+  assert.ok(source.includes('if (agentLive) scheduleAgentPoll();'));
+  // Both reads carry the state, so a missed notification still stops the widget.
+  assert.ok(source.includes('if (!applyAgentState(data.state)) return true;'));
+  assert.ok(source.includes("startsWith('event: state')"));
 });

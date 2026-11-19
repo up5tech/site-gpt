@@ -149,6 +149,7 @@ def claim_conversation(
     inbox.publish_after_commit(
         user.company_id, inbox.conversation_event(row, "claimed")
     )
+    rag.publish_widget_state(row.website_id, row.session_id, row.state)
     return item
 
 
@@ -180,6 +181,7 @@ def assign_conversation(
     inbox.publish_after_commit(
         user.company_id, inbox.conversation_event(row, "assigned")
     )
+    rag.publish_widget_state(row.website_id, row.session_id, row.state)
     return item
 
 
@@ -204,6 +206,7 @@ def release_conversation(
     inbox.publish_after_commit(
         user.company_id, inbox.conversation_event(row, "released")
     )
+    rag.publish_widget_state(row.website_id, row.session_id, row.state)
     return item
 
 
@@ -228,6 +231,8 @@ def close_conversation(
     inbox.publish_after_commit(
         user.company_id, inbox.conversation_event(row, "closed")
     )
+    # The visitor's widget stops streaming on this frame.
+    rag.publish_widget_state(row.website_id, row.session_id, row.state)
     return item
 
 

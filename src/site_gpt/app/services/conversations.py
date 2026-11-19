@@ -353,6 +353,21 @@ def human_handling(db: Session, website_id: UUID, session_id: str) -> bool:
     return row is not None and row.state == STATE_HUMAN
 
 
+def widget_state(db: Session, website_id: UUID, session_id: str) -> str:
+    """The inbox state the public widget should act on (`bot` without a row)."""
+    row = conversation_for(db, website_id, session_id)
+    return row.state if row is not None else STATE_BOT
+
+
+def agent_engaged(state: str) -> bool:
+    """Whether a teammate is queued for, or already answering, this session.
+
+    Only these two states justify the widget's live/poll path: a session nobody
+    escalated reads nothing in the background, and a closed one stops.
+    """
+    return state in (STATE_WAITING, STATE_HUMAN)
+
+
 def question_for_answer(
     db: Session, website_id: UUID, session_id: str, answer: models.ChatMessage
 ) -> models.ChatMessage | None:

@@ -49,11 +49,13 @@ from site_gpt.app.schemas.session_token import (
 from site_gpt.app.schemas.user import UserLogin
 from site_gpt.app.services import rag
 from site_gpt.app.services.conversations import (
+    agent_engaged,
     delete_conversation,
     get_conversation_messages,
     human_handling,
     list_conversations,
     list_recent_conversations,
+    widget_state,
 )
 from site_gpt.app.services.embed_guard import ensure_embed_allowed
 from site_gpt.app.services.ingest_claim import claim_ingest
@@ -549,6 +551,9 @@ async def chat_stream(
 WIDGET_STREAM_UNAVAILABLE = (
     "Live updates need Redis; the widget keeps polling the message endpoint"
 )
+WIDGET_STREAM_IDLE = (
+    "No agent is handling this conversation; live updates are off"
+)
 
 
 def _widget_session(
@@ -592,6 +597,7 @@ def widget_messages(
     return WidgetMessagesResponse(
         items=[WidgetMessage(**rag.widget_message(m)) for m in rows],
         next_cursor=rag.message_cursor(rows[-1]) if rows else after,
+        state=widget_state(db, website.id, session_id),
     )
 
 
@@ -612,6 +618,13 @@ async def widget_message_stream(
     Redis outage degrades to the cursor endpoint rather than a hanging socket.
     """
     website = _widget_session(db, website_id, session_id, request, x_session_token)
+    # A session nobody escalated (or one an agent already closed) has nothing to
+    # stream: refuse before a socket is held, and the widget stops its live path
+    # instead of leaving a per-visitor connection open for every page view.
+    if not agent_engaged(widget_state(db, website.id, session_id)):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=WIDGET_STREAM_IDLE
+        )
     if not await redis_ping():
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -731,7 +744,8 @@ def get_conversation_endpoint(
                 "created_at": m.created_at,
             }
             for m in rows
-        ]
+        ],
+        state=widget_state(db, website.id, session_id),
     )
 
 
