@@ -3,7 +3,7 @@
 | | | |
 |---|---|---|
 | Version | **V3** — implements what `V2` and `V2.1` deliberately left out (`plans/PLAN_V2.md` §14) |
-| Status | **Released — annotated tag `v3` on the release record, whose code is the verified commit `2e5ab73` (the tag was moved two docs-only commits forward with `git tag -f -a v3` + `git push -f origin v3`), `master` fast-forwarded from `feat/v3`; all 25 tasks and 5 gates signed off. Gate `V3-4G` ran M7→M9 from an empty Postgres 16 + pgvector, the §9 smoke and negative checks on a throwaway database, the flags-off V2.1 comparison, both suites + `npm run build`/`lint` + `trail build`, and recorded what it could not run (LLM/embedding ingest + chat, SMTP mail, browser/UI) as blocked and unexecuted** |
+| Status | **Released — annotated tag `v3` on the verified commit `2e5ab73`, immutable (§8 release-tag policy); `master` carries the release record and the docs fixes above it, untagged; all 25 tasks and 5 gates signed off. Gate `V3-4G` ran M7→M9 from an empty Postgres 16 + pgvector, the §9 smoke and negative checks on a throwaway database, the flags-off V2.1 comparison, both suites + `npm run build`/`lint` + `trail build`, and recorded what it could not run (LLM/embedding ingest + chat, SMTP mail, browser/UI) as blocked and unexecuted** |
 | Created | 2026-11-16 |
 | Derived from | `plans/PLAN_V2.md` (§14, §11 risk register), `plans/SPEC.md`, `docs/security.md` §5 (accepted risks K5 / K18), `README.md` §4 |
 | Baseline | V2.1 tag `v2.1` = `4031b6f4a063e62bf5bdc6e20f3d8ac67781ae99`; current `master` HEAD `1616332ed8d1d32ee21bb628ddb2d270e1304374` is docs-only after that tag (the V3 plan); V3 work lives on `feat/v3`; Alembic head `c9d3e5a71b28`; baseline suite counts are historical and must be re-run at pre-flight |
@@ -724,12 +724,13 @@ handoff email remains the fallback when nobody is there. **Entry:** V3-3G.
 - [x] Merge the verified release commit from `feat/v3` to `master`, then create
       and push tag `v3` on the merged release commit.
   - Done: `master` fast-forwarded `1616332 → 2e5ab73` (no merge commit needed —
-    `feat/v3` contained `master`) and was pushed. The annotated tag `v3` was first
-    created on `2e5ab73`, the verified tree, with the gate summary in its message;
-    after the two docs-only commits that record the release (`8845aeb`) and audit
-    §13 (`a4ffd04`) it was moved onto that release record with `git tag -f -a v3`
-    and `git push -f origin v3`, so the tag and `master` now name the same commit
-    while the tagged **code** stays exactly the one the checks above ran against.
+    `feat/v3` contained `master`) and was pushed, and the annotated tag `v3` was
+    created on `2e5ab73`, the tree the checks above ran against, with the gate
+    summary in its message. The tag was force-moved three times while the release
+    record, the §13 audit and the README fixes landed after it; §8's
+    **release-tag policy** ends that: the tag is restored to `2e5ab73` once and
+    never rewritten again, and those documentation commits stay on `master`
+    untagged.
 
 ---
 
@@ -794,6 +795,24 @@ Rules that still apply:
 - Before each gate: re-read §4. Then `trail build` and the doc updates, in the gate
   commit — never a follow-up "docs" commit after the tag (that is exactly the drift
   V2.1 had to clean up).
+
+### Release tags are immutable
+
+V3's tag was moved three times because documentation kept landing after it. The
+rule from here on:
+
+- A release tag is created **once**, on the exact commit the gate verified, and
+  is never moved, deleted or force-pushed. `v3` therefore stays on `2e5ab73`
+  for good.
+- Everything committed after that — docs included — lands on `master` and stays
+  **untagged**. That is the expected state, not drift: the tag names the verified
+  artifact, not the branch head.
+- Anything that must be inside a tagged release is committed **before** the tag
+  is cut; the gate commit is where the plan, README and AGENTS updates belong.
+  Tagging is the last step of a release, never a step in the middle of it.
+- A mistake that is already inside a tagged release is fixed by cutting a new tag
+  (`v3.0.1`), not by rewriting `v3`. `git push --force` on a tag appears in no
+  release procedure here.
 
 ---
 
@@ -913,7 +932,7 @@ check that was not run.
   - Done: **718 Python tests / 47 modules** and **46 node checks** on the tagged tree (`tests/test_gate_scripts.py` included); `npm run build` and `npm run lint` exit 0 with `frontend/` unchanged since the run; `trail build` rebuilt the graph (2516 nodes / 5629 edges / 192 cards). Docs are consistent — the new `tests/test_gate_scripts.py` fails if the gate section, `scripts/gate_v3_4g/`, its README and `run_all.sh` ever list different steps — and this pass corrected README's stale V3 status, migration head and upgrade chain to the released state.
 - [x] Verified release commit is merged to `master`; tag `v3` points to that commit
   and is pushed; README describes V3 as the current version.
-  - Done: `master` fast-forwarded to `2e5ab73` and later to the release record; annotated tag `v3` was created on `2e5ab73` and moved forward with `git tag -f -a v3` + `git push -f origin v3`, so `master` and `v3^{commit}` agree and the tagged code is the verified commit (see Gate V3-4G's last item); README's section is now headed "V3 (released — tag v3)" and states that every feature is off by default.
+  - Done: the verified commit `2e5ab73` was merged (fast-forward) to `master`, and the annotated tag `v3` points at exactly that commit — it is immutable under §8's release-tag policy, so the docs commits that record and correct the release sit on `master` above it, untagged, rather than inside the tag (see Gate V3-4G's last item); README's section is now headed "V3 (released — tag v3)" and states that every feature is off by default.
 
 ---
 
