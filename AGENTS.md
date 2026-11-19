@@ -32,7 +32,7 @@ V3 (Wave 0: `plans/PLAN_V3.md` §5) extends these same suites — no new runner:
 
 ## Planning docs
 
-`plans/` holds the version plans: `PLAN_V1.md` (V1 baseline), `SPEC.md` (V2 requirements), `PLAN_V2.md` (the current release — V2 and V2.1, tagged `v2.1`), and `PLAN_V3.md` (**in progress on `feat/v3`** — Waves 0–2 are done: Redis rate limiting (F1) and the per-website embed token (F4); topic clustering and the live-agent inbox are still unticked). Trust §12's dashboard and each task's own `Done:` line over the section prose, and don't start a task whose dependency or gate is unticked.
+`plans/` holds the version plans: `PLAN_V1.md` (V1 baseline), `SPEC.md` (V2 requirements), `PLAN_V2.md` (the current release — V2 and V2.1, tagged `v2.1`), and `PLAN_V3.md` (**in progress on `feat/v3`** — Waves 0–3 are done: Redis rate limiting (F1), the per-website embed token (F4) and topic clustering (F2); the live-agent inbox (F3) is still unticked). Trust §12's dashboard and each task's own `Done:` line over the section prose, and don't start a task whose dependency or gate is unticked.
 
 ## Conventions
 

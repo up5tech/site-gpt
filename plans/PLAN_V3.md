@@ -3,7 +3,7 @@
 | | | |
 |---|---|---|
 | Version | **V3** — implements what `V2` and `V2.1` deliberately left out (`plans/PLAN_V2.md` §14) |
-| Status | **In progress — Waves 0–2 signed off; Wave 3 complete in code and docs: M8 schema + retention/invalidation, the clustering service, its worker job, the digest/analytics read side and the F2 docs have landed (18 / 25 tasks, 3 / 5 gates); gate V3-3G is next** |
+| Status | **In progress — Waves 0–3 signed off: Redis rate limiting (F1), the embed token (F4) and topic clustering (F2) are implemented, documented and gated (18 / 25 tasks, 4 / 5 gates); Wave 4 — the live-agent inbox (F3, V3-40…V3-46) — is next** |
 | Created | 2026-11-16 |
 | Derived from | `plans/PLAN_V2.md` (§14, §11 risk register), `plans/SPEC.md`, `docs/security.md` §5 (accepted risks K5 / K18), `README.md` §4 |
 | Baseline | V2.1 tag `v2.1` = `4031b6f4a063e62bf5bdc6e20f3d8ac67781ae99`; current `master` HEAD `1616332ed8d1d32ee21bb628ddb2d270e1304374` is docs-only after that tag (the V3 plan); V3 work lives on `feat/v3`; Alembic head `c9d3e5a71b28`; baseline suite counts are historical and must be re-run at pre-flight |
@@ -455,17 +455,57 @@ Re-run on the final tree: 20/20 manual checks, 482 Python tests, 33 node checks,
 
 #### Gate V3-3G
 
-- [ ] M8 applied from M7; `downgrade -1 && upgrade head` clean; single head.
-- [ ] A seeded full weekly UTC window produces clusters; the weekly digest shows
+- [x] M8 applied from M7; `downgrade -1 && upgrade head` clean; single head.
+  Done: `alembic heads`/`current` = `afef1e91e0b5`, one head, before and after the
+  round-trip. `downgrade -1` ran `afef1e91e0b5 -> 76f46b510350` and `to_regclass`
+  then answered `None` for both `topic_clusters` and `topic_cluster_runs`;
+  `upgrade head` rebuilt them with `topic_clusters_company_id_period_start_cluster_key_key`,
+  `topic_cluster_runs_company_id_period_start_key`, `ck_topic_cluster_runs_status`,
+  `idx_topic_cluster_runs_status_claimed_at` and `(company_id, created_at)` on both
+  tables, and `centroid` as `vector(1536)`. Both tables held 0 rows before the
+  round-trip, so no cluster data was lost.
+- [x] A seeded full weekly UTC window produces clusters; the weekly digest shows
       them; analytics displays them only when complete weekly partitions cover its
       requested interval exactly. Partial/missing coverage uses term-count fallback.
-- [ ] Flag off reproduces the V2.1 digest (diffed, recorded here). Diff one fixed window
+  Done: fixed window `2026-11-09T00:00Z → 2026-11-16T00:00Z` (what
+  `previous_period(2026-11-19)` returns), seeded in the real Postgres DB as one
+  company + website with 8 visitor questions in three groups, 3 assistant rows,
+  `digest_day=monday`, `topic_clustering_enabled=true`, `topic_cluster_count=3`.
+  Against the **real** provider (`LLM_AI=custom_openai`; embeddings 1536-d),
+  `topics.run_window` returned `completed`, 3 clusters — `Pro Plan Pricing and
+  Billing`, `Refund Policy and Requests`, `API and Integrations` — with
+  `sampled = eligible = 8`, `truncated=false`, keys `c1..c3` in size order, and a
+  `completed` run row stamped on the window. `build_digest` for that window carried
+  the same 3 `topic_groups` (8/8 on every group, `top_topics` still populated) and
+  `render_digest_html` printed `Topic groups`, the labels and `Named from 8 of 8
+  visitor questions` **instead of** the term list. The analytics shape (rolling
+  `days` window ending now, never digest-aligned) returned no `topic_groups` and
+  the non-empty term list; a two-week range that covers the built week plus an
+  unbuilt one returned no groups (`completed_windows` → `None`), so partial
+  coverage falls back. Fixture deleted afterwards: the `topic_clusters` /
+  `topic_cluster_runs` counts are back to 0 and no `V3-3G Gate Co` row remains.
+- [x] Flag off reproduces the V2.1 digest (diffed, recorded here). Diff one fixed window
       through both versions: the digest period is now the last complete week
       (V3-33 follow-up), so the scheduler's period choice is a documented fix and
       not a payload difference — the same `build_digest`/`render_digest_html` input
       must produce the same output.
-- [ ] Both suites + widget suite + build + lint + `trail build` pass.
-- [ ] commit `chore(v3): V3-3G gate — topic clustering`.
+  Done: same fixed window, same DB rows, `topic_clustering_enabled=false`. The
+  current `build_digest` payload deep-equals the `v2.1` tag's payload (the same ten
+  keys, no `topic_groups`) and `render_digest_html` is byte-identical (651 bytes
+  each; `difflib` reported no lines). The v2.1 side ran from a `git archive v2.1`
+  checkout with its own `site_gpt` package (`site_gpt.__file__` confirmed), so the
+  comparison is code-to-code and not a stubbed copy. Both sides were fed the same
+  `[start, end)`: the V3-33 fix changed which week the **scheduler** asks for
+  (`previous_period`), not what `build_digest`/`render_digest_html` render for a
+  given period.
+- [x] Both suites + widget suite + build + lint + `trail build` pass.
+  Done: 559 Python tests OK (41 modules, 2.58 s), 33/33 node checks, `npm run
+  build` ✓ (1.97 s), `npm run lint` exit 0 (`--max-warnings 0`), `trail build`
+  exit 0 (2069 nodes / 4581 edges; `.trail/cache/` is git-ignored, tree clean).
+  Also verified `import site_gpt.app.main` and `import site_gpt.app.worker`.
+- [x] commit `chore(v3): V3-3G gate — topic clustering`.
+  Done: this commit carries the five ticks, their evidence, the dashboard/status
+  update and the README state change; no code changed at the gate.
 
 ---
 
@@ -742,9 +782,9 @@ check that was not run.
 | 0 — Foundation | 4 | 4 / 4 | ☑ V3-0G |
 | 1 — Redis rate limiting (F1) | 4 | 4 / 4 | ☑ V3-1G |
 | 2 — Embed token / K18 (F4) | 5 | 5 / 5 | ☑ V3-2G |
-| 3 — Topic clustering (F2) | 5 | 4 / 5 | ☐ V3-3G |
+| 3 — Topic clustering (F2) | 5 | 4 / 5 | ☑ V3-3G |
 | 4 — Live-agent inbox (F3) | 7 | 0 / 7 | ☐ V3-4G |
-| **Total** | **25 tasks + 5 gates** | **18 / 25** | **3 / 5 gates** |
+| **Total** | **25 tasks + 5 gates** | **18 / 25** | **4 / 5 gates** |
 
 ---
 

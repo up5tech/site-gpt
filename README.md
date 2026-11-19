@@ -343,8 +343,8 @@ ticked. Landed so far: the Redis-backed rate limiter (K5,
 `RATE_LIMIT_BACKEND`), the per-website embed token (F4,
 `EMBED_TOKEN_MODE` + `X-Embed-Token`) — a revocation and compatibility control
 that does **not** close the soft Origin check, so K18 stays accepted — and LLM
-topic clustering (F2), whose gate (`V3-3G`) is still open. Still pending: the
-live-agent inbox.
+topic clustering (F2), signed off at gate `V3-3G`. Still pending: the live-agent
+inbox.
 
 #### Topic clustering (F2)
 
