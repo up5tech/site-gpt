@@ -665,7 +665,9 @@ async def presence(db: Session, company_id: UUID) -> list[dict]:
     """
     keys = await redis_service.lease_keys(presence_pattern(company_id))
     counts: dict[UUID, int] = {}
-    for key in keys:
+    # `SCAN` can hand the same key back twice while the keyspace changes, and a
+    # repeated key would count one tab as two connections.
+    for key in set(keys):
         user_id = _presence_user(key)
         if user_id is not None:
             counts[user_id] = counts.get(user_id, 0) + 1

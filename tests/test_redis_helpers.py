@@ -134,5 +134,44 @@ class IncrementTests(unittest.TestCase):
             self.assertIsNone(asyncio.run(redis_mod.increment("rl:x", 60)))
 
 
+class LeaseKeyTests(unittest.TestCase):
+    """Presence leases are read with `SCAN`, never with the blocking `KEYS`."""
+
+    def test_lease_keys_scans_the_pattern(self):
+        seen = []
+        wanted = ["inbox:presence:c:u:1", "inbox:presence:c:u:2"]
+
+        async def pages():
+            for key in wanted:
+                yield key
+
+        def scan_iter(match=None):
+            seen.append(match)
+            return pages()
+
+        fake = MagicMock()
+        fake.scan_iter = scan_iter
+        fake.keys = AsyncMock()
+        with patch.object(redis_mod, "redis_client", fake):
+            keys = asyncio.run(redis_mod.lease_keys("inbox:presence:c:*"))
+
+        self.assertEqual(keys, wanted)
+        self.assertEqual(seen, ["inbox:presence:c:*"])
+        # `KEYS` holds the server for the whole keyspace; presence must not use it.
+        fake.keys.assert_not_awaited()
+
+    def test_lease_keys_is_empty_on_error(self):
+        async def failing():
+            yield "inbox:presence:c:u:1"
+            raise ConnectionError("down")
+
+        fake = MagicMock()
+        fake.scan_iter = lambda match=None: failing()
+        with patch.object(redis_mod, "redis_client", fake):
+            self.assertEqual(
+                asyncio.run(redis_mod.lease_keys("inbox:presence:c:*")), []
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

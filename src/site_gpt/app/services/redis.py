@@ -127,12 +127,24 @@ async def delete_lease(key: str) -> bool:
 
 
 async def lease_keys(pattern: str) -> list[str]:
-    """Every key matching `pattern`, or [] when Redis is unreachable."""
+    """Every key matching `pattern`, or [] when Redis is unreachable.
+
+    `SCAN` in batches, never `KEYS`: `KEYS` walks the entire keyspace while
+    holding the server, so one presence read would stall every other command on
+    a shared Redis. `SCAN` asks for a cursor at a time and is safe to run
+    against a live server, which is the whole reason presence can be a scan.
+
+    The trade-off is that `SCAN` may return the same key twice if the keyspace
+    changes underneath it, so callers count distinct keys, not list entries.
+    """
+    keys: list[str] = []
     try:
-        return list(await get_client().keys(pattern))  # type: ignore[attr-defined]
+        async for key in get_client().scan_iter(match=pattern):  # type: ignore[attr-defined]
+            keys.append(key)
     except Exception as e:  # noqa: BLE001 - callers treat [] as "nobody online"
-        print(f"[redis] keys {pattern} failed: {e}")
+        print(f"[redis] scan {pattern} failed: {e}")
         return []
+    return keys
 
 
 async def increment(key: str, ttl_seconds: int | None = None) -> int | None:

@@ -416,6 +416,18 @@ class PresenceTests(StreamTestCase):
 
         self.assertEqual([row["user_id"] for row in rows], [self.agent.id])
 
+    def test_a_key_seen_twice_by_scan_is_one_connection(self):
+        # `SCAN` may repeat a key while the keyspace changes; counting the list
+        # instead of the set would show one tab as two connections.
+        keys = self._keys((self.company.id, self.agent.id, 1)) * 2
+
+        with patch.object(
+            inbox.redis_service, "lease_keys", AsyncMock(return_value=keys)
+        ):
+            rows = asyncio.run(inbox.presence(self.db, self.company.id))
+
+        self.assertEqual([row["connections"] for row in rows], [1])
+
     def test_a_redis_outage_reads_as_nobody_online(self):
         with patch.object(
             inbox.redis_service, "lease_keys", AsyncMock(return_value=[])
