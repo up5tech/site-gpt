@@ -68,7 +68,7 @@ src/site_gpt/app/
   scripts/widget.js    # embeddable chat widget (window.ChatWidgetConfig)
   worker.py            # Redis queue consumer (ingest jobs)
 frontend/src/
-  pages/ (Dashboard, Websites, WebsiteDetail, ExtraDocuments, Playground, Contacts, Users, Settings, Login, Register)
+  pages/ (Dashboard, Websites, WebsiteDetail, ExtraDocuments, Playground, Contacts, Handoffs, Inbox, Users, Settings, Login, Register)
   components/ (Layout, Chat, WidgetPreview, ProtectedRoute, WebsiteTable, CompanyTable, UserTable)
   context/ (AuthContext, ChatContext), utils/api.ts, types/api.ts
 alembic/                # DB migrations
@@ -172,6 +172,10 @@ npm install && npm run dev   # :5173
   key-authenticated surface is `/api/v1` (`ingest`, `settings`, `conversations`,
   `contacts`, `chat`, `analytics/summary`), documented in
   [`docs/api-v1.md`](docs/api-v1.md) and in `/docs`
+- `/api/inbox` — live-agent console (manager+ **and** `live_inbox_enabled`): paginated
+  queue, detail/transcript, `claim`/`assign`/`release`/`close`, the agent reply
+  (`POST /conversations/{id}/messages`), `GET /events` (fetch-based SSE) and
+  `GET /presence`; `GET /status` answers `{enabled}` so the UI can hide the page
 - `/api/companies`, `/api/users` (+`/me`, `/forgot-password`, `/reset-password`), `/api/websites` (+`/{id}/pages`, `/{id}/load-site-map`), `/api/documents`, `/api/extra_documents`, `/api/settings`, `/api/uploads`
 
 ## Embed widget
@@ -324,7 +328,8 @@ Keys understood by `widget_ui_strings`: `clear`, `send`, `thinking`, `sources`,
   keeps older embeds working; `enforce` requires the token everywhere. See
   [`docs/security.md`](docs/security.md) §5.1.
 - **Admin pages** — `/websites`, `/documents`, `/contacts`, `/handoffs`,
-  `/feedback`, `/analytics`, `/integrations`, `/users` and `/settings` (with the
+  `/feedback`, `/analytics`, `/integrations`, `/inbox` (shown only when the
+  company has `live_inbox_enabled=true`), `/users` and `/settings` (with the
   API keys tab). The widget itself has no separate build step: `GET /widget.js`.
 - **Weekly digest and analytics** — `GET /api/analytics/summary`,
   `POST /api/digest/preview` and `POST /api/digest/send-now`, plus the `/analytics`
@@ -344,8 +349,14 @@ ticked. Landed so far: the Redis-backed rate limiter (K5,
 `RATE_LIMIT_BACKEND`), the per-website embed token (F4,
 `EMBED_TOKEN_MODE` + `X-Embed-Token`) — a revocation and compatibility control
 that does **not** close the soft Origin check, so K18 stays accepted — and LLM
-topic clustering (F2), signed off at gate `V3-3G`. Still pending: the live-agent
-inbox.
+topic clustering (F2), signed off at gate `V3-3G`. Wave 4 lands the live-agent
+inbox (F3): the `/inbox` console, its queue/detail/reply routes, the fetch-based
+SSE stream with presence, and agent replies rendered in the widget. The console
+and its routes exist only for a company with `live_inbox_enabled=true` (the page
+and its navigation link read `GET /api/inbox/status`), the bot stays silent while
+a session is with an agent, and the widget opens its live stream/poll only for a
+`waiting`/`human` session — an ordinary bot chat carries no background connection
+and stops as soon as the console closes the conversation.
 
 #### Topic clustering (F2)
 
