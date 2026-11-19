@@ -230,7 +230,7 @@ an *unclaimed* session is allowed; see §5 for the trade-off.
 | `contacts` | Name, email, `session_id`, `consent_at` | Yes |
 | `chat_feedback` | 👍/👎, optional comment, reviewed answer | Yes — the comment is free text |
 | `handoff_requests` | Request message, status, channel | Yes — free text |
-| `conversations` | One inbox row per `(website_id, session_id)`: state (`bot`/`waiting`/`human`/`closed`), assigned agent, claim/close and last-message timestamps, first-question title from `chat_messages` | Yes — links a session to the teammate who handled it. Expires on `last_message_at` under `retention_days`, and the privacy erasure of a conversation deletes it |
+| `conversations` | One inbox row per `(website_id, session_id)`: state (`bot`/`waiting`/`human`/`closed`), the holder while a session is being handled (cleared on release/close, by design), claim/close and last-message timestamps, first-question title from `chat_messages` | Yes — the lasting attribution of who answered is `chat_messages.author_user_id` on the `agent` rows, not the cleared assignee. Expires on `last_message_at` under `retention_days`, and the privacy erasure deletes it with that session's messages |
 | `documents`, `extra_documents`, `embeddings` | Owner's knowledge base | Usually no; may quote the owner's pages |
 | `users` | Name, email, argon2 password hash, reset tokens | Yes |
 | `api_keys` | Prefix, peppered hash, scopes, timestamps | No raw secret |

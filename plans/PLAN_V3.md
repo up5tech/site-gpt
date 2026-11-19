@@ -3,7 +3,7 @@
 | | | |
 |---|---|---|
 | Version | **V3** — implements what `V2` and `V2.1` deliberately left out (`plans/PLAN_V2.md` §14) |
-| Status | **In progress — Waves 0–3 signed off; Wave 4 is in progress: M9 (`conversations` + `chat_messages.author_user_id`), the lazy conversation creation / state machine / erasure / retention paths, the agent inbox service with its routes, the agent SSE stream with presence, agent replies reaching the widget and the `/inbox` console page (V3-44) and the handoff-to-queue entry (V3-45) and the inbox documentation pass (V3-46) have landed (25 / 25 tasks, 4 / 5 gates); release gate `V3-4G` is next** |
+| Status | **Verification complete — Waves 0–4 landed (25 / 25 tasks) and gate `V3-4G`'s verification items are signed off: M7→M9 replayed from an empty Postgres 16 + pgvector, the §9 smoke and negative checks on a throwaway database, the flags-off V2.1 comparison, both suites + `npm run build`/`lint` + `trail build`. Blocked and unexecuted, recorded in the gate: LLM/embedding ingest + chat, SMTP mail, and browser/UI steps. Remaining: the release step — merge `feat/v3` → `master`, tag `v3`** |
 | Created | 2026-11-16 |
 | Derived from | `plans/PLAN_V2.md` (§14, §11 risk register), `plans/SPEC.md`, `docs/security.md` §5 (accepted risks K5 / K18), `README.md` §4 |
 | Baseline | V2.1 tag `v2.1` = `4031b6f4a063e62bf5bdc6e20f3d8ac67781ae99`; current `master` HEAD `1616332ed8d1d32ee21bb628ddb2d270e1304374` is docs-only after that tag (the V3 plan); V3 work lives on `feat/v3`; Alembic head `c9d3e5a71b28`; baseline suite counts are historical and must be re-run at pre-flight |
@@ -633,16 +633,68 @@ handoff email remains the fallback when nobody is there. **Entry:** V3-3G.
 
 #### Gate V3-4G (release gate)
 
-- [ ] M7 → M8 → M9 applies from empty DB with `pgvector`, replaying from
+- [x] M7 → M8 → M9 applies from empty DB with `pgvector`, replaying from
       `c9d3e5a71b28`; each downgrade/upgrade is proved, including cluster-run and
       per-window cluster uniqueness plus conversation/message deletion paths.
-- [ ] Full smoke (see §9) passes on a throwaway database.
-- [ ] With every V3 flag off (including `live_inbox_enabled=false` and
+  - Done: throwaway `v3_gate_4g` on real Postgres 16.13 with pgvector 0.8.2 —
+    `alembic upgrade head` from an empty database replays `c9d3e5a71b28 →
+    76f46b510350 → afef1e91e0b5 → 1c5516fa864d`, `alembic heads` shows the single
+    head `1c5516fa864d`, and each of M7/M8/M9 was upgraded, downgraded to its
+    parent and re-upgraded. 10 database checks passed: the lazy conversation row
+    with `last_message_at`, `(website_id, session_id)` uniqueness (with the same
+    session id accepted on another website), an agent message keeping its author
+    and appearing in the transcript, `delete_conversation` removing transcript and
+    row, `erase_session` deleting messages/feedback/handoff/token/conversation in
+    one transaction, one `topic_cluster_runs` claim per `(company, window)` plus
+    the `status` check, `(company, window, cluster_key)` identity with a 1536-d
+    pgvector centroid round-trip, and retention removing a conversation past
+    `last_message_at`.
+- [x] Full smoke (see §9) passes on a throwaway database.
+  - Done: 11 HTTP checks against that database — `/health`, register + admin
+    login, website create, `/api/widget-config` publishing exactly 14 public keys
+    with no internal key, embed token in `compat` (tokenless accepted, invalid
+    token 403 `invalid_embed_token` without claiming or resetting the K4 session)
+    and in a second process with `EMBED_TOKEN_MODE=enforce` (tokenless 403
+    `embed_token_required`, rotated token accepted, the superseded one refused as
+    `invalid_embed_token`), session-token isolation (s1's token cannot read s2),
+    the inbox flow `waiting → claim (assignee recorded) → second agent 409 →
+    agent reply visible in the widget with `state=human` → closed`, privacy export
+    (state, timestamps, agent authors) followed by an atomic erasure that leaves
+    the export empty, and handoff-with-nothing-else (below). Redis was real: two
+    API processes on `:8011`/`:8012` with `RATE_LIMIT_BACKEND=redis` shared one
+    login budget (10 × 401 then 6 × 429 across both processes), and a third
+    process pointed at a closed Redis port reported `status:degraded`, `redis:false`,
+    `rate_limiter.degraded:true` after one attempt, with `/api/inbox/events`
+    answering `503` before streaming.
+  - **Blocked and unexecuted (per §9's blocked-item rule):** the ingest → embed →
+    `chat`/`/api/chat/stream` half of the smoke (no LLM or embedding provider in
+    this environment, and calling one would spend the owner's credits), the
+    handoff/digest email (no SMTP: fastapi_mail logged
+    `SMTPServerDisconnected`, the handoff itself still queued correctly), sitemap
+    crawling of a live site, and every browser-side step (`/inbox` UI, widget
+    stream in a real page) — no browser was driven. Those paths are covered by the
+    unit suites, not by this gate.
+- [x] With every V3 flag off (including `live_inbox_enabled=false` and
   `topic_clustering_enabled=false`), a V2.1 company behaves as at tag `v2.1`;
   record the comparison and any explicitly documented additive diagnostics.
-- [ ] Both suites + widget suite + build + lint + `trail build` pass; docs consistent.
+  - Done: with the flag off, `POST /api/handoff` still answers 200 (the V2.1
+    notify-and-callback path) and creates **no** `conversations` row,
+    `GET /api/inbox/status` reports `{enabled:false}` while the rest of `/api/inbox`
+    is a 404, and `enqueue_due_topics` queues nothing and writes no
+    `topic_cluster_runs` row (so no provider call). `EMBED_TOKEN_MODE=compat` still
+    accepts the old tokenless snippet. Additive diagnostics that stay visible in
+    V2.1 mode: `/health` now carries `rate_limiter {backend, degraded}` (and
+    `status:degraded` when Redis is down) and the admin widget-config set is
+    unchanged at 14 keys; the widget reads `state` in its message responses but
+    only acts on `waiting`/`human`.
+- [x] Both suites + widget suite + build + lint + `trail build` pass; docs consistent.
+  - Done: `uv run python -m unittest discover -s tests` → 714 tests, OK (46 modules);
+    `node --test tests/*.mjs` → 46 pass; `cd frontend && npm run build` and
+    `npm run lint` exit 0; `trail build` rebuilt the graph.
 - [ ] Merge the verified release commit from `feat/v3` to `master`, then create
       and push tag `v3` on the merged release commit.
+  - Not run: the verification above is signed off, but the merge/tag is a release
+    action that has not been authorised yet.
 
 ---
 
@@ -797,8 +849,8 @@ check that was not run.
 | 1 — Redis rate limiting (F1) | 4 | 4 / 4 | ☑ V3-1G |
 | 2 — Embed token / K18 (F4) | 5 | 5 / 5 | ☑ V3-2G |
 | 3 — Topic clustering (F2) | 5 | 4 / 5 | ☑ V3-3G |
-| 4 — Live-agent inbox (F3) | 7 | 7 / 7 | ☐ V3-4G |
-| **Total** | **25 tasks + 5 gates** | **25 / 25** | **4 / 5 gates** |
+| 4 — Live-agent inbox (F3) | 7 | 7 / 7 | ☐ V3-4G (verified; release pending) |
+| **Total** | **25 tasks + 5 gates** | **25 / 25** | **4 / 5 gates (V3-4G verified, release pending)** |
 
 ---
 
