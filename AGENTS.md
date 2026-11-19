@@ -61,6 +61,7 @@ V3 (Wave 0: `plans/PLAN_V3.md` §5) extends these same suites — no new runner:
 - DON'T add dependencies without need — `pyproject.toml` / `frontend/package.json` already cover LLM providers, mail, redis, antd.
 - DON'T tighten CORS or rename env keys without updating `.env.example`, `README.md`, and `frontend/.env*`.
 - DON'T break widget backward compat (`ChatWidgetConfig` keys, `localStorage` session/history keys).
+- DON'T move, delete or force-push a published release tag (`git tag -f`, `git push -f origin <tag>`): it is cut **once**, on the exact commit the gate verified, and stays there — `v3` is `2e5ab73` even though docs kept landing after it. Anything that belongs in a tagged release is committed **before** tagging (the gate commit carries the plan/README/AGENTS updates); docs written afterwards live on `master` and stay untagged. A mistake already inside a tag is fixed with a new tag (`v3.0.1`), never by rewriting the old one. Full policy: `plans/PLAN_V3.md` §8 "Release tags are immutable".
 
 <!-- trail:start -->
 ## Trail — repo context graph
