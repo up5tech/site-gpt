@@ -3,7 +3,7 @@
 | | | |
 |---|---|---|
 | Version | **V3** — implements what `V2` and `V2.1` deliberately left out (`plans/PLAN_V2.md` §14) |
-| Status | **Released — tag `v3` on `2e5ab73` (annotated, pushed), `master` fast-forwarded to it from `feat/v3`; all 25 tasks and 5 gates signed off. Gate `V3-4G` ran M7→M9 from an empty Postgres 16 + pgvector, the §9 smoke and negative checks on a throwaway database, the flags-off V2.1 comparison, both suites + `npm run build`/`lint` + `trail build`, and recorded what it could not run (LLM/embedding ingest + chat, SMTP mail, browser/UI) as blocked and unexecuted** |
+| Status | **Released — annotated tag `v3` on the release record, whose code is the verified commit `2e5ab73` (the tag was moved two docs-only commits forward with `git tag -f -a v3` + `git push -f origin v3`), `master` fast-forwarded from `feat/v3`; all 25 tasks and 5 gates signed off. Gate `V3-4G` ran M7→M9 from an empty Postgres 16 + pgvector, the §9 smoke and negative checks on a throwaway database, the flags-off V2.1 comparison, both suites + `npm run build`/`lint` + `trail build`, and recorded what it could not run (LLM/embedding ingest + chat, SMTP mail, browser/UI) as blocked and unexecuted** |
 | Created | 2026-11-16 |
 | Derived from | `plans/PLAN_V2.md` (§14, §11 risk register), `plans/SPEC.md`, `docs/security.md` §5 (accepted risks K5 / K18), `README.md` §4 |
 | Baseline | V2.1 tag `v2.1` = `4031b6f4a063e62bf5bdc6e20f3d8ac67781ae99`; current `master` HEAD `1616332ed8d1d32ee21bb628ddb2d270e1304374` is docs-only after that tag (the V3 plan); V3 work lives on `feat/v3`; Alembic head `c9d3e5a71b28`; baseline suite counts are historical and must be re-run at pre-flight |
@@ -724,11 +724,12 @@ handoff email remains the fallback when nobody is there. **Entry:** V3-3G.
 - [x] Merge the verified release commit from `feat/v3` to `master`, then create
       and push tag `v3` on the merged release commit.
   - Done: `master` fast-forwarded `1616332 → 2e5ab73` (no merge commit needed —
-    `feat/v3` contained `master`), annotated tag `v3` created on `2e5ab73` with
-    the gate summary in its message, and both pushed (`origin/master` and
-    `origin/v3`). `master`, `v3^{commit}` and `feat/v3` all resolve to
-    `2e5ab734b09b4eb229f927a875e737153c544779`, so the tagged tree is exactly the
-    one the checks above ran against.
+    `feat/v3` contained `master`) and was pushed. The annotated tag `v3` was first
+    created on `2e5ab73`, the verified tree, with the gate summary in its message;
+    after the two docs-only commits that record the release (`8845aeb`) and audit
+    §13 (`a4ffd04`) it was moved onto that release record with `git tag -f -a v3`
+    and `git push -f origin v3`, so the tag and `master` now name the same commit
+    while the tagged **code** stays exactly the one the checks above ran against.
 
 ---
 
@@ -912,7 +913,7 @@ check that was not run.
   - Done: **718 Python tests / 47 modules** and **46 node checks** on the tagged tree (`tests/test_gate_scripts.py` included); `npm run build` and `npm run lint` exit 0 with `frontend/` unchanged since the run; `trail build` rebuilt the graph (2516 nodes / 5629 edges / 192 cards). Docs are consistent — the new `tests/test_gate_scripts.py` fails if the gate section, `scripts/gate_v3_4g/`, its README and `run_all.sh` ever list different steps — and this pass corrected README's stale V3 status, migration head and upgrade chain to the released state.
 - [x] Verified release commit is merged to `master`; tag `v3` points to that commit
   and is pushed; README describes V3 as the current version.
-  - Done: `master` fast-forwarded to `2e5ab73`, annotated tag `v3` on that commit, `origin/master` and `origin/v3` pushed (see Gate V3-4G's last item); README's section is now headed "V3 (released — tag v3)" and states that every feature is off by default.
+  - Done: `master` fast-forwarded to `2e5ab73` and later to the release record; annotated tag `v3` was created on `2e5ab73` and moved forward with `git tag -f -a v3` + `git push -f origin v3`, so `master` and `v3^{commit}` agree and the tagged code is the verified commit (see Gate V3-4G's last item); README's section is now headed "V3 (released — tag v3)" and states that every feature is off by default.
 
 ---
 

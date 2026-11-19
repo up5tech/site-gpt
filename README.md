@@ -346,7 +346,7 @@ Keys understood by `widget_ui_strings`: `clear`, `send`, `thinking`, `sources`,
 
 ### V3 (released — tag `v3`)
 
-Tag `v3` (commit `2e5ab73`) is the current release; [`plans/PLAN_V3.md`](plans/PLAN_V3.md)
+Tag `v3` is the current release — its code is the verified commit `2e5ab73`, followed only by the release record's documentation commits; [`plans/PLAN_V3.md`](plans/PLAN_V3.md)
 records what was built and what gate `V3-4G` verified, including the checks this
 repository could not run here (provider-bound ingest/chat, SMTP mail, browser
 steps). V3 adds: the Redis-backed rate limiter (K5, `RATE_LIMIT_BACKEND`), the
