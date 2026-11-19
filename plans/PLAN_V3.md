@@ -3,7 +3,7 @@
 | | | |
 |---|---|---|
 | Version | **V3** — implements what `V2` and `V2.1` deliberately left out (`plans/PLAN_V2.md` §14) |
-| Status | **In progress — Waves 0–2 signed off; Wave 3 running: M8 schema + retention/invalidation, the clustering service, its worker job and the digest/analytics read side landed (17 / 25 tasks, 3 / 5 gates), F2 docs are next at V3-34** |
+| Status | **In progress — Waves 0–2 signed off; Wave 3 complete in code and docs: M8 schema + retention/invalidation, the clustering service, its worker job, the digest/analytics read side and the F2 docs have landed (18 / 25 tasks, 3 / 5 gates); gate V3-3G is next** |
 | Created | 2026-11-16 |
 | Derived from | `plans/PLAN_V2.md` (§14, §11 risk register), `plans/SPEC.md`, `docs/security.md` §5 (accepted risks K5 / K18), `README.md` §4 |
 | Baseline | V2.1 tag `v2.1` = `4031b6f4a063e62bf5bdc6e20f3d8ac67781ae99`; current `master` HEAD `1616332ed8d1d32ee21bb628ddb2d270e1304374` is docs-only after that tag (the V3 plan); V3 work lives on `feat/v3`; Alembic head `c9d3e5a71b28`; baseline suite counts are historical and must be re-run at pre-flight |
@@ -443,7 +443,8 @@ Re-run on the final tree: 20/20 manual checks, 482 Python tests, 33 node checks,
   - Done when: flag off reproduces the old digest exactly (asserted), flag on shows
     clusters, and the analytics payload keeps its existing fields.
 
-- [ ] **V3-34 · Docs: topics** — `S`, depends: V3-33, migration: —
+- [x] **V3-34 · Docs: topics** — `S`, depends: V3-33, migration: —
+  - Done: docs only, no code change. `README.md` documents the two internal settings (`topic_clustering_enabled` default `false`, `topic_cluster_count` default `5` clamped to `1..8`) in the settings table and adds a `Topic clustering (F2)` section: the window is the company's digest week and only the **last complete** one is built (the same `previous_period` the digest reports); the cadence is `TOPIC_CLUSTER_INTERVAL_SECONDS` (86400) as a check interval, never a window length; the durable unique run row is the lock (one owner per week, `completed` final, a 30-minute-silent claim taken over, `failed` retried, clustering queued before the digest for an unsettled window); and the bounded provider cost is stated as **one embedding call and at most one naming call per run** — ≤ 500 questions of 1000 characters, deterministic leader pass at cosine ≥ 0.82 with ≤ 8 clusters, naming over ≤ 5 quoted questions per cluster with `label` ≤ 120 / `summary` ≤ 280 and a term-based fallback. The section also states the read side (groups only for exactly one completed window, `top_topics` otherwise; `/api/analytics/summary` keeps terms because its interval is rolling — D6) and points at the retention/erasure policy. `AGENTS.md` adds the same caps to the worker-job bullet so the cost of a run is visible where the scheduler is described, and bumps the recorded suite marker to V3-34. `docs/security.md` gains a §2 row (one bounded sample to the configured embedding provider, one bounded naming call to the configured chat LLM, erasure without a provider call) and §4 lists both tables: `topic_clusters` (label, summary, centroid, counts — the text itself is not stored, but a label can quote a customer) and `topic_cluster_runs` (status, timestamps, bounded provider error), with a **Derived cluster data** paragraph covering erasure (`invalidate_topic_windows` drops every week holding an erased message plus its run row, locally and provider-free, so the worker rebuilds a remaining week and an emptied week rebuilds to nothing) and retention (both tables in the `retention_days` purge, scoped by `company_id`, keyed on each row's own `created_at` — when the window was clustered — while the questions expire on their own timestamps). Checks after the edits: `uv run python -m unittest discover -s tests` — 559 tests, OK (41 modules, unchanged; this task touches no Python); `npm run build` ✓ (1.97 s) and `npm run lint` exit 0 (no frontend file touched either, re-run so the gate line is not taken on trust).
   - Files: `README.md`, `AGENTS.md`, `docs/security.md` §4 (data inventory).
   - Do: document settings and the scheduler cadence/input/embedding/LLM caps,
     disclosure that bounded visitor questions go to the configured embedding
@@ -741,9 +742,9 @@ check that was not run.
 | 0 — Foundation | 4 | 4 / 4 | ☑ V3-0G |
 | 1 — Redis rate limiting (F1) | 4 | 4 / 4 | ☑ V3-1G |
 | 2 — Embed token / K18 (F4) | 5 | 5 / 5 | ☑ V3-2G |
-| 3 — Topic clustering (F2) | 5 | 3 / 5 | ☐ V3-3G |
+| 3 — Topic clustering (F2) | 5 | 4 / 5 | ☐ V3-3G |
 | 4 — Live-agent inbox (F3) | 7 | 0 / 7 | ☐ V3-4G |
-| **Total** | **25 tasks + 5 gates** | **17 / 25** | **3 / 5 gates** |
+| **Total** | **25 tasks + 5 gates** | **18 / 25** | **3 / 5 gates** |
 
 ---
 

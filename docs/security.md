@@ -48,7 +48,8 @@ processes.
 | Session reads (K4) | The widget mints a per-session token and sends it as `X-Session-Token` to read its history or contact. Only `sha256(token)` is stored; a token value expires after `SESSION_TOKEN_TTL_SECONDS`, the whole chain dies after `SESSION_TOKEN_MAX_LIFETIME_SECONDS`, and rotation requires holding the current value | `services/session_tokens.py`, `POST /api/session-token` |
 | Embed token (K18) | Optional per-website `X-Embed-Token`. Only `sha256(token)` is stored, the 12-character prefix is the only readable part, one token is active per website (partial unique index) and rotation is a single transaction. `compat` accepts a missing token but refuses an invalid one; `enforce` requires it; a refusal is `403 {detail, reason}` with `invalid_embed_token` / `embed_token_required`. The value is public in the page and replayable, so this is a revocation and compatibility control — not origin authentication | `services/embed_tokens.py`, `services/embed_guard.py`, `api/website.py` |
 | Export / erasure | Admin-only JSON export per website and hard deletes for a conversation or a contact, both company-scoped | `api/privacy.py` |
-| Retention | `retention_days` per company: the worker's daily job hard-deletes `chat_messages`, `chat_feedback`, `handoff_requests`, `contacts` and `digest_log` rows older than the policy, scoped to that company's websites. `POST /api/privacy/retention` previews it (`dry_run`) or runs it on demand | `services/retention.py`, `api/privacy.py`, `worker.py` |
+| Retention | `retention_days` per company: the worker's daily job hard-deletes `chat_messages`, `chat_feedback`, `handoff_requests`, `contacts`, `digest_log`, `topic_clusters` and `topic_cluster_runs` rows older than the policy, scoped to that company. `POST /api/privacy/retention` previews it (`dry_run`) or runs it on demand | `services/retention.py`, `api/privacy.py`, `worker.py` |
+| Topic clustering (V3 F2) | Opt-in per company and off by default. One run sends at most `TOPIC_CLUSTER_MAX_MESSAGES` (500) visitor questions (1000 characters each) to the configured embedding provider in one call, and one naming request covering at most 8 clusters × 5 quoted questions to the configured chat LLM; derived rows store a label, a summary, a centroid and window counts, never question text. Erasing a conversation drops the weeks it appears in locally, without calling a provider | `services/topics.py`, `worker.py`, `api/privacy.py` |
 | Logs | No raw API key, integration token or password is written to a log line; webhook bodies are not logged | `services/*` |
 
 What the code deliberately does **not** do: encrypt values at the application
@@ -183,6 +184,8 @@ an *unclaimed* session is allowed; see §5 for the trade-off.
 | `integrations` | Provider config **including credentials** | Credentials, not personal data |
 | `integration_deliveries` | Event payload (may contain a lead's name/email), status, attempts, scrubbed error | Personal data copied out of `contacts` for retry. A **dead** row's payload is cleared by the worker; settled rows are deleted after `DELIVERY_RETENTION_DAYS` (default 30). Not governed by the per-company `retention_days` |
 | `digest_log` | Which weekly period was sent to whom | Recipient personal data |
+| `topic_clusters` | One row per named cluster of a weekly window: `label`, `summary`, unit-mean `centroid`, long size and `sampled_messages`/`eligible_messages` | Derived from visitor questions; the text itself is not stored, but a label or summary can quote a customer's words |
+| `topic_cluster_runs` | One row per `(company_id, period_start)`: status, claim/completion timestamps, bounded error text | Operational only; the error comes from a provider call over a bounded window sample |
 | `uploads/` | Imported source files, one per `attachments` row | Depends on the file. An expired upload loses its row, its file, its document text and the embeddings built from it under the company's `retention_days` |
 
 **Retention.** A company can set `retention_days` (0 or unset = keep for ever,
@@ -195,6 +198,34 @@ bounded batches (`RETENTION_BATCH_SIZE`, 1000 rows per statement, each committed
 separately) so a large tenant cannot hold one long transaction. Each of those
 tables carries a `(website_id, created_at)` index (`(company_id, created_at)` for
 `digest_log`) so a batch is an index scan rather than a full-table one.
+
+**Derived cluster data (V3 F2).** `topic_clusters` and `topic_cluster_runs` are
+comparably sensitive to the questions they summarise, so they are handled by the
+same two policies:
+
+- **Erasure.** `DELETE /api/privacy/conversations/{session_id}` also drops every
+  cluster window that held one of the erased messages, plus its run row
+  (`services/retention.invalidate_topic_windows`). Windows are matched by
+  containment — any seven-day window holding a message — so it does not depend on
+  the company's `digest_day`, and a conversation spanning several weeks loses only
+  the weeks it has messages in, not the silent weeks between them. The call is
+  local and provider-free: no embedding or naming request is made, the derived
+  rows simply stop existing. With the run row gone the worker may rebuild that
+  week later from the messages that remain; a week whose messages are all gone
+  rebuilds to nothing rather than resurrecting erased text.
+- **Retention.** Both tables are in the `retention_days` purge, scoped by
+  `company_id` and keyed on each row's own `created_at` — when the window was
+  clustered, not when the questions were asked. The questions themselves expire on
+  their own timestamps, so a deployment that wants both gone keeps
+  `retention_days` shorter than the clustering cadence allows rows to pile up
+  (`topic_cluster_runs` is bounded by one row per company per week).
+
+What the derived data is **not**: no question text, no visitor identifier, no
+session id and no per-message rows are stored, which is why the digest can show a
+cluster without republishing the conversation. Labels and summaries are generated
+by the configured chat LLM from a bounded sample, so they can still echo a
+customer's wording — treat them as visitor-adjacent data, not as aggregate
+statistics.
 
 **Delivery rows.** `integration_deliveries` holds a copy of the event payload so a
 failed send can be retried, so it is cleaned on its own schedule

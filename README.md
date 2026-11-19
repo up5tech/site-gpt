@@ -251,6 +251,7 @@ same registry are seeded for every company but never published.
 | `handoff_email` | **no** | Where handoff requests are emailed; empty means every active admin/manager. |
 | `digest_enabled`, `digest_hour`, `digest_day` | **no** | Weekly digest switch, UTC send hour and week start (default `false` / `9` / `monday`). The worker also needs the global `DIGEST_ENABLED`. |
 | `digest_recipients` | **no** | Comma-separated digest recipients; empty means every active admin/manager. |
+| `topic_clustering_enabled`, `topic_cluster_count` | **no** | V3 (F2) topic clustering: opt in to weekly named clusters (`false` by default) and choose how many one week may produce (default `5`, clamped to `1..8`). The worker clusters the **last complete** digest week once per `TOPIC_CLUSTER_INTERVAL_SECONDS`, sending at most `TOPIC_CLUSTER_MAX_MESSAGES` (500) visitor questions of 1000 characters each through **one** embedding call and naming every cluster in **one** LLM call (at most 8 groups × 5 quoted questions — see [Topic clustering](#topic-clustering-f2)). With the flag off, or for any interval that is not exactly whole completed digest weeks, the digest and both analytics routes keep the term-count `top_topics`. Clusters are derived data: erasing a conversation drops the weeks it appears in and `retention_days` expires them too |
 | `retention_days` | **no** | How long visitor data is kept (default `0` = for ever). The worker's daily retention job deletes `chat_messages`, `chat_feedback`, `handoff_requests`, `contacts`, `digest_log`, `attachments` and `extra_documents` rows older than this, per company, in batches of 1000 rows per transaction (a document is kept while anything was attached to it inside the window) — an expired upload takes its file under `uploads/` and its document text plus the embeddings built from it, so an expired source stops answering questions instead of only losing its file. Set it, and press **Preview purge** to see the per-table counts first, in Settings → Privacy; **Apply purge now** does the same call with `dry_run: false` behind a confirmation, for when waiting for the daily worker is not acceptable. The endpoint is `POST /api/privacy/retention` (`dry_run` defaults to `true`). |
 | `llm_provider`, `llm_model` | **no** | Chat model pair, written from **Settings → Model**. Only pairs listed in `services/llm.py::ALLOWED_CHAT_MODELS` are honoured (`fast` = GPT-4.1 mini, `accurate` = GPT-4.1, empty = the `LLM_AI` / `LLM_MODEL` defaults); anything else silently falls back to the environment. Embeddings are not switched here. |
 
@@ -339,10 +340,66 @@ Keys understood by `widget_ui_strings`: `clear`, `send`, `thinking`, `sources`,
 Tag `v2.1` is still the latest release; V3 is being built wave by wave against
 [`plans/PLAN_V3.md`](plans/PLAN_V3.md), whose dashboard records what is actually
 ticked. Landed so far: the Redis-backed rate limiter (K5,
-`RATE_LIMIT_BACKEND`) and the per-website embed token (F4,
+`RATE_LIMIT_BACKEND`), the per-website embed token (F4,
 `EMBED_TOKEN_MODE` + `X-Embed-Token`) — a revocation and compatibility control
-that does **not** close the soft Origin check, so K18 stays accepted. Still
-pending: LLM topic clustering and the live-agent inbox.
+that does **not** close the soft Origin check, so K18 stays accepted — and LLM
+topic clustering (F2), whose gate (`V3-3G`) is still open. Still pending: the
+live-agent inbox.
+
+#### Topic clustering (F2)
+
+A company opts in with `topic_clustering_enabled`; nothing is clustered for a
+company that never turns it on, and with the flag off the digest payload is the
+V2.1 one, key for key.
+
+- **Window.** One cluster window is the company's digest week (`digest_day`
+  aligned), and the worker only builds the **last complete** week — the same
+  window the weekly digest reports (`digest.previous_period`), so the email's
+  counts and its named groups can never describe different weeks. Windows never
+  overlap and never leave a gap, because both sides come from
+  `normalize_period`. The week still running is not clustered: it would be
+  thrown away as it fills.
+- **Cadence.** `topic_loop` wakes every `TOPIC_CLUSTER_INTERVAL_SECONDS`
+  (default 86400) and queues `{"type": "topic_clusters"}` for opted-in companies
+  whose window has no run yet. The interval is only how often the check runs,
+  never the window length. A durable `topic_cluster_runs` row unique on
+  `(company_id, period_start)` is the lock: two workers cannot cluster the same
+  week, `completed` is final, a claim silent for 30 minutes is taken over, and a
+  `failed` window is retried on the next tick. When a digest is due for an
+  opted-in company whose window is not settled, the scheduler queues the
+  clustering job **before** the digest job.
+- **Bounded provider cost.** One run makes exactly one embedding call and at
+  most one naming call:
+  - input: at most `TOPIC_CLUSTER_MAX_MESSAGES` (500) non-blank `role='user'`
+    questions from the window, ordered `created_at`, then `id`, so the sample —
+    and therefore the clusters — is reproducible; each question is truncated to
+    1000 characters, so cost is bounded by questions × characters and not by
+    whatever a visitor pasted;
+  - embedding: those questions go to the configured embedding provider
+    (`EMBEDDING_AI`) in one `embed_texts` call; no per-message vector is stored;
+  - clustering: a deterministic leader pass at cosine ≥ 0.82, at most
+    `MAX_CLUSTERS` (8) clusters, the company's `topic_cluster_count` choosing
+    within that ceiling (default 5);
+  - naming: **one** temperature-0 call to the configured chat LLM (`LLM_AI`
+    and the company's model pair) with at most 5 quoted questions per cluster
+    (40 for a full week), a fixed prompt that treats the questions as untrusted
+    data, and a reply truncated to `label` ≤ 120 / `summary` ≤ 280 characters. A
+    provider or parse failure falls back to a term-based label for that cluster
+    instead of failing the week.
+  - The digest shows `Named from S of E visitor questions` when the input was
+    truncated, so a sampled week never looks like a complete one.
+- **Read side.** `build_digest` (and the digest HTML) show named groups only
+  when the period is exactly one completed window with a `completed` run;
+  otherwise — flag off, a partial or unaligned interval, a missing or failed run
+  — they keep the `top_topics` term list. `/api/analytics/summary` asks for a
+  rolling `days` window, which is not a whole digest week, so it keeps
+  `top_topics` by design rather than presenting partial clusters as complete.
+- **Retention and erasure.** Clusters are derived data, not a second copy of the
+  conversations: rows hold a label, a summary, a centroid and the window's
+  sampled/eligible counts, never the question text. Erasing a conversation drops
+  every week that held one of its messages (and the run row, so the window can be
+  rebuilt from what is left); `retention_days` expires cluster rows on the same
+  policy. Both are covered in [`docs/security.md`](docs/security.md) §4.
 
 ## Dev commands
 
