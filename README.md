@@ -328,9 +328,11 @@ Keys understood by `widget_ui_strings`: `clear`, `send`, `thinking`, `sources`,
   `POST /api/digest/preview` and `POST /api/digest/send-now`, plus the `/analytics`
   page. `build_digest` reports conversation volume, messages, new contacts,
   👍/👎, top topics and the questions whose answer was tagged `answered = False`,
-  each with a deep link. Delivery is at-most-once: the `digest_log` row is claimed
-  before the email is sent, so a retry, a restart or a second worker cannot send
-  the same week twice.
+  each with a deep link. The digest covers the **last complete** digest week
+  (`digest_day` aligned, `previous_period`), which is the same window the topic
+  worker clusters, so the email's counts and its named groups describe one week.
+  Delivery is at-most-once: the `digest_log` row is claimed before the email is
+  sent, so a retry, a restart or a second worker cannot send the same week twice.
 
 ### V3 (in progress on `feat/v3`)
 
