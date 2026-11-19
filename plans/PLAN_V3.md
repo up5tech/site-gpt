@@ -717,7 +717,8 @@ handoff email remains the fallback when nobody is there. **Entry:** V3-3G.
     unchanged at 14 keys; the widget reads `state` in its message responses but
     only acts on `waiting`/`human`.
 - [x] Both suites + widget suite + build + lint + `trail build` pass; docs consistent.
-  - Done: `uv run python -m unittest discover -s tests` → 714 tests, OK (46 modules);
+  - Done: `uv run python -m unittest discover -s tests` → 714 tests, OK (46 modules)
+    at the gate (718 / 47 once `tests/test_gate_scripts.py` joined the suite);
     `node --test tests/*.mjs` → 46 pass; `cd frontend && npm run build` and
     `npm run lint` exit 0; `trail build` rebuilt the graph.
 - [ ] Merge the verified release commit from `feat/v3` to `master`, then create
