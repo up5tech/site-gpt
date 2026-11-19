@@ -633,6 +633,16 @@ handoff email remains the fallback when nobody is there. **Entry:** V3-3G.
 
 #### Gate V3-4G (release gate)
 
+- Scripts: `scripts/gate_v3_4g/run_all.sh` reruns these checks on a throwaway
+  database (`GATE_DB`, default `v3_gate_4g`, dropped and recreated by the first
+  step) against the Postgres + pgvector and Redis in `.env`: `00_migrations.sh`
+  (M7→M9 replay with each downgrade/upgrade), `01_db_checks.py` (10 schema
+  checks), `02_http_smoke.py` (11 HTTP checks, `compat`), `03_enforce.py`
+  (`EMBED_TOKEN_MODE=enforce`), `04_redis.sh` (two API processes on one Redis
+  budget + Redis-down degradation) and `05_clustering_opt_in.py` (flag off queues
+  nothing and writes no run row). The provider-bound and browser steps stay out,
+  as the blocked item below records.
+
 - [x] M7 → M8 → M9 applies from empty DB with `pgvector`, replaying from
       `c9d3e5a71b28`; each downgrade/upgrade is proved, including cluster-run and
       per-window cluster uniqueness plus conversation/message deletion paths.
