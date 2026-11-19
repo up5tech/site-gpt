@@ -19,6 +19,7 @@ from site_gpt.app.db.session import get_db
 from site_gpt.app.schemas.app import PaginatedResponse
 from site_gpt.app.schemas.handoff import HandoffCreate, HandoffItem, HandoffUpdate
 from site_gpt.app.services import company_settings, conversations
+from site_gpt.app.services import inbox as inbox_service
 from site_gpt.app.services.integrations import emit_event_async
 from site_gpt.app.services.mail import send_email_async
 from site_gpt.app.services.rag import get_chat_history
@@ -106,7 +107,27 @@ def _render_email(
     return "".join(lines)
 
 
-async def _notify(db: Session, website: models.Website, request: models.HandoffRequest):
+def _conversation_hint(conversation: models.Conversation | None) -> dict:
+    """Additive event fields: the queue entry this click created or reused.
+
+    Empty when the company runs no console, so a V2.1 receiver sees exactly the
+    payload it always did. The values are ids and a state name — never a URL and
+    never another tenant's data.
+    """
+    if conversation is None:
+        return {}
+    return {
+        "conversation_id": str(conversation.id),
+        "conversation_state": conversation.state,
+    }
+
+
+async def _notify(
+    db: Session,
+    website: models.Website,
+    request: models.HandoffRequest,
+    conversation_hint: dict | None = None,
+):
     """Email the team and emit the event; never raise.
 
     A missing SMTP configuration or a broken integration must not turn a
@@ -130,16 +151,17 @@ async def _notify(db: Session, website: models.Website, request: models.HandoffR
     except Exception:
         logger.exception("handoff %s could not be emailed", request.id)
 
+    payload = {
+        "handoff_id": str(request.id),
+        "website_id": str(website.id),
+        "session_id": request.session_id,
+        "status": request.status,
+    }
+    # Additive (V3-45): present only when the inbox turned this click into a
+    # queue entry, so V2.1 receivers keep the payload they already parse.
+    payload.update(conversation_hint or {})
     await emit_event_async(
-        db,
-        website.company_id,
-        "handoff.requested",
-        {
-            "handoff_id": str(request.id),
-            "website_id": str(website.id),
-            "session_id": request.session_id,
-            "status": request.status,
-        },
+        db, website.company_id, "handoff.requested", payload
     )
 
 
@@ -170,6 +192,11 @@ async def create_handoff(
             detail="Handoff is not available for this website",
         )
 
+    # V3-45: only a company that runs the agent console gets a queue entry. With
+    # the flag off the row, the email and the event stay exactly as V2.1 shipped
+    # them and no `conversations` row is created.
+    inbox_on = inbox_service.enabled(db, website.company_id)
+
     contact = (
         db.query(models.Contact)
         .filter(
@@ -198,11 +225,16 @@ async def create_handoff(
             existing.status = "pending"
         # M9: asking for a human puts the session in the inbox queue. The call is
         # idempotent, so a second click cannot pull a claimed session back.
-        conversations.mark_waiting(db, website.id, body.session_id)
+        conversation = (
+            conversations.mark_waiting(db, website.id, body.session_id)
+            if inbox_on
+            else None
+        )
+        hint = _conversation_hint(conversation)
         db.commit()
         db.refresh(existing)
         if reopened:
-            await _notify(db, website, existing)
+            await _notify(db, website, existing, hint)
         return _to_item(db, existing)
 
     request = models.HandoffRequest(
@@ -214,11 +246,16 @@ async def create_handoff(
         channel="widget",
     )
     db.add(request)
-    conversations.mark_waiting(db, website.id, body.session_id)
+    conversation = (
+        conversations.mark_waiting(db, website.id, body.session_id)
+        if inbox_on
+        else None
+    )
+    hint = _conversation_hint(conversation)
     db.commit()
     db.refresh(request)
 
-    await _notify(db, website, request)
+    await _notify(db, website, request, hint)
     return _to_item(db, request)
 
 

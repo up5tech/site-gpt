@@ -190,8 +190,27 @@ def _take(
     if locked is None:
         raise InboxConflict("Another agent is claiming this conversation")
     conversations.claim(db, locked, user_id, when=when)
+    # The visitor is being served now, so the V2.1 callback row is `accepted`.
+    _sync_handoff(db, locked, "accepted")
     db.commit()
     return locked
+
+
+def _sync_handoff(
+    db: Session, conversation: models.Conversation, status: str
+) -> None:
+    """Mirror a queue move onto the session's handoff request (V3-45).
+
+    The `handoff_requests` row is the same request seen on `/handoffs`: leaving
+    it `pending` after an agent claimed the session, or after it was closed,
+    would tell the team to call back a visitor who is already being served. It
+    touches only values — a company without the inbox never gets a row created —
+    and runs inside the transition's own transaction. Callers commit.
+    """
+    db.query(models.HandoffRequest).filter(
+        models.HandoffRequest.website_id == conversation.website_id,
+        models.HandoffRequest.session_id == conversation.session_id,
+    ).update({"status": status}, synchronize_session=False)
 
 
 def claim(
@@ -276,6 +295,8 @@ def release(
     if locked is None:
         raise InboxConflict("Another request is changing this conversation")
     conversations.release(db, locked, when=when)
+    # Back in the queue: the callback request is pending again.
+    _sync_handoff(db, locked, "pending")
     db.commit()
     return locked
 
@@ -313,6 +334,8 @@ def close(
     if locked is None:
         raise InboxConflict("Another request is changing this conversation")
     conversations.close(db, locked, when=when)
+    # Done with the visitor, and the email queue agrees.
+    _sync_handoff(db, locked, "closed")
     db.commit()
     return locked
 

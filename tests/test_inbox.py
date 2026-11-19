@@ -32,7 +32,8 @@ from sqlalchemy.pool import StaticPool
 from site_gpt.app import models
 from site_gpt.app.api import handoff as handoff_api
 from site_gpt.app.api import inbox as inbox_api
-from site_gpt.app.core.auth import get_manager_user
+from site_gpt.app.api import setting as setting_api
+from site_gpt.app.core.auth import get_admin_user, get_manager_user
 from site_gpt.app.db.base import Base
 from site_gpt.app.db.session import get_db
 from site_gpt.app.services import conversations, inbox
@@ -202,7 +203,8 @@ class DisabledInboxTests(InboxTestCase):
 
     def test_the_public_handoff_still_works(self):
         # The inbox is off, but the visitor's "talk to a human" click must keep
-        # producing its V2.1 handoff row and the waiting state.
+        # producing its V2.1 handoff row — and no queue entry for a queue this
+        # company does not run (`s9` is a fresh session; `s1` is this fixture's).
         app = FastAPI()
         app.include_router(handoff_api.router)
         app.dependency_overrides[get_db] = lambda: self.db
@@ -213,13 +215,15 @@ class DisabledInboxTests(InboxTestCase):
         ):
             response = client.post(
                 "/api/handoff",
-                json={"website_id": str(self.site.id), "session_id": "s1"},
+                json={"website_id": str(self.site.id), "session_id": "s9"},
             )
 
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(self.db.query(models.HandoffRequest).count(), 1)
-        row = conversations.conversation_for(self.db, self.site.id, "s1")
-        self.assertEqual(row.state, "waiting")
+        self.db.expire_all()
+        self.assertIsNone(
+            conversations.conversation_for(self.db, self.site.id, "s9")
+        )
 
 
 class StatusTests(InboxTestCase):
@@ -238,6 +242,64 @@ class StatusTests(InboxTestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         self.assertFalse(response.json()["enabled"])
+
+
+class LiveInboxToggleTests(InboxTestCase):
+    """Settings is where the console is switched on, for an admin only."""
+
+    def setUp(self):
+        super().setUp()
+        row = (
+            self.db.query(models.Setting)
+            .filter(
+                models.Setting.company_id == self.company.id,
+                models.Setting.key == "live_inbox_enabled",
+            )
+            .first()
+        )
+        row.value = "false"
+        self.db.commit()
+
+        app = FastAPI()
+        app.include_router(inbox_api.router, prefix="/api/inbox")
+        app.include_router(setting_api.router, prefix="/api/settings")
+        app.dependency_overrides[get_db] = lambda: self.db
+        app.dependency_overrides[get_manager_user] = lambda: self.agent
+        app.dependency_overrides[get_admin_user] = lambda: self.admin
+        self.client = TestClient(app)
+
+    def put(self, value):
+        return self.client.put(
+            "/api/settings/",
+            json=[{"key": "live_inbox_enabled", "value": value}],
+        )
+
+    def test_an_admin_turns_the_console_on_and_the_status_follows(self):
+        self.assertFalse(self.client.get("/api/inbox/status").json()["enabled"])
+
+        response = self.put("true")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertTrue(self.client.get("/api/inbox/status").json()["enabled"])
+        self.assertTrue(inbox.enabled(self.db, self.company.id))
+        # Upsert, not a second row: the status read must stay unambiguous.
+        self.assertEqual(
+            self.db.query(models.Setting)
+            .filter_by(company_id=self.company.id, key="live_inbox_enabled")
+            .count(),
+            1,
+        )
+
+    def test_turning_it_off_hides_the_surface_again(self):
+        self.assertEqual(self.put("true").status_code, 200)
+
+        response = self.put("false")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertFalse(self.client.get("/api/inbox/status").json()["enabled"])
+        self.assertEqual(
+            self.client.get("/api/inbox/conversations").status_code, 404
+        )
 
 
 class ClaimTests(InboxTestCase):
