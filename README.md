@@ -447,14 +447,17 @@ Run uvicorn behind nginx/Caddy/Traefik terminating **TLS 1.2+**:
   `X-Forwarded-For` and rate limits everyone by the LB's address, so one abusive
   visitor exhausts the bucket for all of them. Loopback and private addresses
   (`127.0.0.1`, `::1`, `10.x`, `172.16-31.x`, `192.168.x`) need no entry
-- **disable response buffering for `/api/chat/stream`** (nginx: `proxy_buffering off;`).
-  The endpoint already sends `X-Accel-Buffering: no`; with buffering on, SSE answers
-  arrive in one block instead of streaming
+- **disable response buffering for the SSE endpoints** — `/api/chat/stream`,
+  `/api/chat/messages/stream` (the visitor's live agent replies) and
+  `/api/inbox/events` (nginx: `proxy_buffering off;`). They already send
+  `X-Accel-Buffering: no`; with buffering on, SSE answers arrive in one block
+  instead of streaming
 - run the worker as a separate process: `uv run python -m site_gpt.app.worker`
 - serve the built admin UI (`cd frontend && npm run build`) from the proxy or any static
   host; it bakes in `VITE_BACKEND_URL` at build time
 - `/widget.js` and `/api/widget-config` must be reachable from the sites that embed the widget
-- the public widget endpoints (`/api/chat`, `/api/chat/stream`, `/api/widget-config`,
+- the public widget endpoints (`/api/chat`, `/api/chat/stream`,
+  `GET /api/chat/messages`, `GET /api/chat/messages/stream`, `/api/widget-config`,
   `POST /api/contacts`, `GET /api/contacts/{session_id}`) only serve requests whose
   `Origin`/`Referer` matches the website's host (or is absent / a localhost demo), so a
   `website_id` copied from another customer's page cannot be embedded elsewhere. If you
