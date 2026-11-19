@@ -3,7 +3,7 @@
 | | | |
 |---|---|---|
 | Version | **V3** — implements what `V2` and `V2.1` deliberately left out (`plans/PLAN_V2.md` §14) |
-| Status | **In progress — Waves 0–3 signed off: Redis rate limiting (F1), the embed token (F4) and topic clustering (F2) are implemented, documented and gated (18 / 25 tasks, 4 / 5 gates); Wave 4 — the live-agent inbox (F3, V3-40…V3-46) — is next** |
+| Status | **In progress — Waves 0–3 signed off; Wave 4 has started: M9 (`conversations` + `chat_messages.author_user_id`), lazy conversation creation, the inbox state machine and the erasure/retention paths have landed (19 / 25 tasks, 4 / 5 gates); the inbox service itself (V3-41) is next** |
 | Created | 2026-11-16 |
 | Derived from | `plans/PLAN_V2.md` (§14, §11 risk register), `plans/SPEC.md`, `docs/security.md` §5 (accepted risks K5 / K18), `README.md` §4 |
 | Baseline | V2.1 tag `v2.1` = `4031b6f4a063e62bf5bdc6e20f3d8ac67781ae99`; current `master` HEAD `1616332ed8d1d32ee21bb628ddb2d270e1304374` is docs-only after that tag (the V3 plan); V3 work lives on `feat/v3`; Alembic head `c9d3e5a71b28`; baseline suite counts are historical and must be re-run at pre-flight |
@@ -514,8 +514,10 @@ Re-run on the final tree: 20/20 manual checks, 482 Python tests, 33 node checks,
 **Goal:** an agent can take a waiting session and answer it inside the widget;
 handoff email remains the fallback when nobody is there. **Entry:** V3-3G.
 
-- [ ] **V3-40 · Migration M9 — conversations + agent authorship** — `M`, depends: V3-3G, migration: **M9**
-  - Files: `models.py`, `alembic/versions/<rev>_v3_m9_inbox.py`, `services/conversations.py`.
+- [x] **V3-40 · Migration M9 — conversations + agent authorship** — `M`, depends: V3-3G, migration: **M9**
+  - Done: revision `1c5516fa864d` (parent `afef1e91e0b5`, single head) adds `conversations` — `website_id` FK CASCADE, `session_id`, `state`, nullable `assigned_user_id` FK `SET NULL`, `claimed_at`, `closed_at`, `last_message_at`, unique `(website_id, session_id)` and the queue index `(website_id, state, last_message_at)` — and `chat_messages.author_user_id` (nullable, FK `users.id` `SET NULL`). The new table is empty, so its indexes build transactionally; the author column is added and then its FK as `ADD CONSTRAINT … NOT VALID` + `VALIDATE CONSTRAINT`, so the busy `chat_messages` table never takes a write-blocking validation lock. Autogenerate's known drift was stripped again (naive `DateTime()` ALTERs + the `chat_feedback` FK churn); `ConversationMigrationTests` pins the absence, the `NOT VALID`/`VALIDATE` pair and the downgrade, and `ConversationSchemaTests` pins the unique pair, the index columns and both `SET NULL`/`CASCADE` FKs. Verified on real Postgres: `downgrade -1` dropped `conversations` and the column, `upgrade head` restored the table, the unique key, the index and a **validated** FK, and `heads`/`current` stayed at a single `1c5516fa864d`.
+  - Done: `services/conversations.py` owns creation — `ensure_conversation` inserts inside a SAVEPOINT and returns the winner's row when it loses the unique race (tested by making the pre-read miss once), `note_message` is called from `rag.save_message` in the *same* transaction as the message so the inbox clock can never disagree with the transcript, and `api/handoff.py` calls `mark_waiting` on create and on reopen. Transitions are explicit in one table: `bot → waiting` (`mark_waiting`, idempotent while queued or claimed), `waiting → human` (`claim`), `human → waiting` (`release`, clears assignee), `human → closed` (`close`), plus a later visitor message reopening `closed → bot`; anything else raises `ConversationStateError`. No backfill (D2): a session with no row still lists (`conversation_id`/`state` come back `None`), reads and deletes through the message helpers, and `delete_conversation` now also removes the inbox row. Erasure is one transaction: `erase_session` deletes messages, inbox row, feedback, handoffs and the session's `session_tokens`, the privacy route calls it and then drops the affected cluster windows (the existing erasure tests still pass); a route-level test asserts the new counts, that the K4 token is gone and that the contact (the owner's lead) is kept. Retention expires inbox metadata on its **own** clock — `conversations.last_message_at < cutoff` — so an old session that just received a message keeps its state while an expired one cannot outlive its transcript, reported in `deleted["conversations"]` and covered by dry-run/apply/other-tenant tests. The export gains a `conversations` section. Postgres smoke: 8/8 checks over the real DB (lazy row on first message, `waiting`/`human`/`waiting`/`closed`, reopen on a later visitor message, erasure removing all five row kinds), fixture deleted afterwards. Suite: **589 Python tests OK in 42 modules** (30 new in `tests/test_conversations.py`, 5 schema/migration tests in `tests/test_models_indexes.py`); frontend untouched.
+  - Files: `models.py`, `alembic/versions/1c5516fa864d_v3_m9_inbox.py`, `services/conversations.py`, `services/rag.py`, `services/retention.py`, `api/privacy.py`, `api/handoff.py`, `schemas/privacy.py`, `schemas/chat.py`, `tests/test_conversations.py`, `tests/test_models_indexes.py`.
   - Do: `conversations` — `website_id` FK CASCADE, `session_id` String(255),
     `state` String(20) (`bot` | `waiting` | `human` | `closed`), `assigned_user_id`
     FK `users.id` `ondelete="SET NULL"` nullable, `claimed_at`, `closed_at`,
@@ -657,7 +659,7 @@ autogenerate chain it, then confirm the parent is the head above.
 |---|---|---|---|---|
 | M7 | `76f46b510350_v3_m7_embed_tokens.py` ✅ | `embed_tokens` (website FK cascade, prefix, unique hash, revoked/last-used) + partial unique active-token index `website_id WHERE revoked_at IS NULL`, which also serves the active lookup — no separate history index | V3-20 | `c9d3e5a71b28` |
 | M8 | `<rev>_v3_m8_topic_clusters.py` | Company/window `topic_clusters` plus unique durable `topic_cluster_runs` claim/status table, both with CASCADE company FKs | V3-30 | M7 |
-| M9 | `<rev>_v3_m9_inbox.py` | `conversations` (unique website+session, state, assignee, timestamps) + `chat_messages.author_user_id` + transactional indexes on the new table; privacy/retention updates and any index on existing busy tables concurrently | V3-40 | M8 |
+| M9 | `1c5516fa864d_v3_m9_inbox.py` ✅ | `conversations` (unique website+session, state, assignee, timestamps) + `chat_messages.author_user_id` + transactional indexes on the new table (the author FK is added `NOT VALID` and then validated, so the busy table is never write-blocked); privacy/retention updated | V3-40 | M8 |
 
 Rules that still apply:
 
@@ -783,8 +785,8 @@ check that was not run.
 | 1 — Redis rate limiting (F1) | 4 | 4 / 4 | ☑ V3-1G |
 | 2 — Embed token / K18 (F4) | 5 | 5 / 5 | ☑ V3-2G |
 | 3 — Topic clustering (F2) | 5 | 4 / 5 | ☑ V3-3G |
-| 4 — Live-agent inbox (F3) | 7 | 0 / 7 | ☐ V3-4G |
-| **Total** | **25 tasks + 5 gates** | **18 / 25** | **4 / 5 gates** |
+| 4 — Live-agent inbox (F3) | 7 | 1 / 7 | ☐ V3-4G |
+| **Total** | **25 tasks + 5 gates** | **19 / 25** | **4 / 5 gates** |
 
 ---
 
