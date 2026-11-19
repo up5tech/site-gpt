@@ -3,7 +3,7 @@
 | | | |
 |---|---|---|
 | Version | **V3** — implements what `V2` and `V2.1` deliberately left out (`plans/PLAN_V2.md` §14) |
-| Status | **Verification complete — Waves 0–4 landed (25 / 25 tasks) and gate `V3-4G`'s verification items are signed off: M7→M9 replayed from an empty Postgres 16 + pgvector, the §9 smoke and negative checks on a throwaway database, the flags-off V2.1 comparison, both suites + `npm run build`/`lint` + `trail build`. Blocked and unexecuted, recorded in the gate: LLM/embedding ingest + chat, SMTP mail, and browser/UI steps. Remaining: the release step — merge `feat/v3` → `master`, tag `v3`** |
+| Status | **Released — tag `v3` on `2e5ab73` (annotated, pushed), `master` fast-forwarded to it from `feat/v3`; all 25 tasks and 5 gates signed off. Gate `V3-4G` ran M7→M9 from an empty Postgres 16 + pgvector, the §9 smoke and negative checks on a throwaway database, the flags-off V2.1 comparison, both suites + `npm run build`/`lint` + `trail build`, and recorded what it could not run (LLM/embedding ingest + chat, SMTP mail, browser/UI) as blocked and unexecuted** |
 | Created | 2026-11-16 |
 | Derived from | `plans/PLAN_V2.md` (§14, §11 risk register), `plans/SPEC.md`, `docs/security.md` §5 (accepted risks K5 / K18), `README.md` §4 |
 | Baseline | V2.1 tag `v2.1` = `4031b6f4a063e62bf5bdc6e20f3d8ac67781ae99`; current `master` HEAD `1616332ed8d1d32ee21bb628ddb2d270e1304374` is docs-only after that tag (the V3 plan); V3 work lives on `feat/v3`; Alembic head `c9d3e5a71b28`; baseline suite counts are historical and must be re-run at pre-flight |
@@ -721,10 +721,14 @@ handoff email remains the fallback when nobody is there. **Entry:** V3-3G.
     at the gate (718 / 47 once `tests/test_gate_scripts.py` joined the suite);
     `node --test tests/*.mjs` → 46 pass; `cd frontend && npm run build` and
     `npm run lint` exit 0; `trail build` rebuilt the graph.
-- [ ] Merge the verified release commit from `feat/v3` to `master`, then create
+- [x] Merge the verified release commit from `feat/v3` to `master`, then create
       and push tag `v3` on the merged release commit.
-  - Not run: the verification above is signed off, but the merge/tag is a release
-    action that has not been authorised yet.
+  - Done: `master` fast-forwarded `1616332 → 2e5ab73` (no merge commit needed —
+    `feat/v3` contained `master`), annotated tag `v3` created on `2e5ab73` with
+    the gate summary in its message, and both pushed (`origin/master` and
+    `origin/v3`). `master`, `v3^{commit}` and `feat/v3` all resolve to
+    `2e5ab734b09b4eb229f927a875e737153c544779`, so the tagged tree is exactly the
+    one the checks above ran against.
 
 ---
 
@@ -879,8 +883,8 @@ check that was not run.
 | 1 — Redis rate limiting (F1) | 4 | 4 / 4 | ☑ V3-1G |
 | 2 — Embed token / K18 (F4) | 5 | 5 / 5 | ☑ V3-2G |
 | 3 — Topic clustering (F2) | 5 | 4 / 5 | ☑ V3-3G |
-| 4 — Live-agent inbox (F3) | 7 | 7 / 7 | ☐ V3-4G (verified; release pending) |
-| **Total** | **25 tasks + 5 gates** | **25 / 25** | **4 / 5 gates (V3-4G verified, release pending)** |
+| 4 — Live-agent inbox (F3) | 7 | 7 / 7 | ☑ V3-4G |
+| **Total** | **25 tasks + 5 gates** | **25 / 25** | **5 / 5 gates — released as tag `v3`** |
 
 ---
 
