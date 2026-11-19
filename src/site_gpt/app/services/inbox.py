@@ -1,0 +1,511 @@
+"""Agent-facing inbox service (V3-41).
+
+The agent console addresses a conversation by its **UUID**, never by
+`session_id`: a session id is unique per website only, so the same string can
+exist on two websites of one company, and on another tenant's website it means
+nothing at all. Every helper here therefore takes `(company_id,
+conversation_id)` and resolves the website through a join, which is also what
+turns a foreign UUID into a plain "not found" instead of a cross-tenant read.
+
+State changes belong to `services/conversations.py`; this module is the only
+place an agent action is translated into one of its transitions. Routes call
+these helpers and never touch a row themselves.
+
+The claim is the concurrency boundary:
+`SELECT … FOR UPDATE SKIP LOCKED` locks one waiting row, so two agents pressing
+Claim at the same moment produce one winner and one `InboxConflict` (the loser
+is answered with a 409). The lock is held until this module commits, which is
+when the state change becomes visible to everyone else — exactly the window in
+which the session must not be handed to a second agent.
+"""
+
+from datetime import datetime
+from uuid import UUID
+
+from sqlalchemy import func, tuple_
+from sqlalchemy.orm import Session
+
+from site_gpt.app import models
+from site_gpt.app.services import company_settings, conversations
+
+# The per-company switch (V3-03 registry key). Off means the whole agent surface
+# answers 404, so an installation that does not run an agent console does not
+# advertise one.
+INBOX_FLAG = "live_inbox_enabled"
+
+# Who may hold a conversation: whatever `get_manager_user` already allows.
+AGENT_ROLES = ("admin", "manager")
+
+
+class InboxNotFound(LookupError):
+    """No conversation with that UUID in the caller's company (route: 404)."""
+
+
+class InboxConflict(ValueError):
+    """The action is refused: held by someone else, or the state forbids it (409)."""
+
+
+def enabled(db: Session, company_id: UUID) -> bool:
+    """Whether this company has the live inbox turned on."""
+    return company_settings.flag(db, company_id, INBOX_FLAG)
+
+
+def assignable_user(
+    db: Session, company_id: UUID, user_id: UUID
+) -> models.User | None:
+    """A teammate who can hold a conversation, or None.
+
+    Active managers/admins of the **caller's** company only: assigning to a
+    foreign id would otherwise be a way to point at another tenant's user.
+    """
+    return (
+        db.query(models.User)
+        .filter(
+            models.User.id == user_id,
+            models.User.company_id == company_id,
+            models.User.status == "active",
+            models.User.role.in_(AGENT_ROLES),
+        )
+        .first()
+    )
+
+
+def _scoped(
+    db: Session, company_id: UUID, conversation_id: UUID
+) -> models.Conversation | None:
+    """The conversation, only if its website belongs to `company_id`."""
+    return (
+        db.query(models.Conversation)
+        .join(models.Website, models.Website.id == models.Conversation.website_id)
+        .filter(
+            models.Conversation.id == conversation_id,
+            models.Website.company_id == company_id,
+        )
+        .first()
+    )
+
+
+def _require(
+    db: Session, company_id: UUID, conversation_id: UUID
+) -> models.Conversation:
+    row = _scoped(db, company_id, conversation_id)
+    if row is None:
+        raise InboxNotFound("Conversation not found")
+    return row
+
+
+def locked_query(
+    db: Session, company_id: UUID, conversation_id: UUID, states: tuple[str, ...]
+):
+    """The claim/lock select: one company-scoped row in an allowed state.
+
+    `FOR UPDATE OF conversations SKIP LOCKED` is the whole point. A plain select
+    leaves the same row visible to both agents; locking the row without
+    `SKIP LOCKED` would make the loser wait and then claim a session that is
+    already taken. Skipping it makes the loser see nothing, and nothing is what
+    the route reports as a 409. The lock is released by the caller's commit.
+
+    SQLite ignores `FOR UPDATE` (and has no `SKIP LOCKED`), which is why the
+    concurrency behaviour is verified against Postgres; the statement shape is
+    pinned against the Postgres dialect instead.
+    """
+    return (
+        db.query(models.Conversation)
+        .join(models.Website, models.Website.id == models.Conversation.website_id)
+        .filter(
+            models.Conversation.id == conversation_id,
+            models.Website.company_id == company_id,
+            models.Conversation.state.in_(states),
+        )
+        .with_for_update(of=models.Conversation, skip_locked=True)
+    )
+
+
+def waiting_claim_query(db: Session, company_id: UUID, conversation_id: UUID):
+    """The waiting-row claim select used by `claim` and `assign`."""
+    return locked_query(
+        db, company_id, conversation_id, (conversations.STATE_WAITING,)
+    )
+
+
+def _lock(
+    db: Session, company_id: UUID, conversation_id: UUID, states: tuple[str, ...]
+) -> models.Conversation | None:
+    """Take the row lock, or None when someone else already holds it."""
+    return locked_query(db, company_id, conversation_id, states).first()
+
+
+def _ensure_holder(conversation: models.Conversation, user: models.User) -> None:
+    """Only the assignee (or an admin overriding) may release or close."""
+    assignee = conversation.assigned_user_id
+    if assignee is not None and assignee != user.id and user.role != "admin":
+        raise InboxConflict("Another agent is handling this conversation")
+
+
+def claim(
+    db: Session,
+    company_id: UUID,
+    conversation_id: UUID,
+    user: models.User,
+    *,
+    when: datetime | None = None,
+) -> models.Conversation:
+    """An agent takes a waiting conversation: waiting → human.
+
+    A retry by the agent who already holds it is answered with the same row
+    (pressing Claim twice is not an error); anyone else gets `InboxConflict`
+    because the row is no longer `waiting`, either because it was claimed or
+    because it was never queued.
+    """
+    row = _require(db, company_id, conversation_id)
+    if row.state == conversations.STATE_HUMAN and row.assigned_user_id == user.id:
+        return row
+    if row.state != conversations.STATE_WAITING:
+        raise InboxConflict(f"Conversation is {row.state}, not waiting to be claimed")
+
+    locked = waiting_claim_query(db, company_id, conversation_id).first()
+    if locked is None:
+        raise InboxConflict("Another agent is claiming this conversation")
+    conversations.claim(db, locked, user.id, when=when)
+    db.commit()
+    return locked
+
+
+def assign(
+    db: Session,
+    company_id: UUID,
+    conversation_id: UUID,
+    target: models.User,
+    *,
+    when: datetime | None = None,
+) -> models.Conversation:
+    """Give a waiting conversation to a specific teammate: waiting → human.
+
+    Used by a manager pushing a queue item to an agent instead of taking it
+    themselves. The target is resolved by `assignable_user` before this call, so
+    a foreign/non-agent id never reaches a state change.
+    """
+    row = _require(db, company_id, conversation_id)
+    if row.state == conversations.STATE_HUMAN and row.assigned_user_id == target.id:
+        return row
+    if row.state != conversations.STATE_WAITING:
+        raise InboxConflict(f"Conversation is {row.state}, not waiting to be assigned")
+
+    locked = waiting_claim_query(db, company_id, conversation_id).first()
+    if locked is None:
+        raise InboxConflict("Another agent is claiming this conversation")
+    conversations.claim(db, locked, target.id, when=when)
+    db.commit()
+    return locked
+
+
+def release(
+    db: Session,
+    company_id: UUID,
+    conversation_id: UUID,
+    user: models.User,
+    *,
+    when: datetime | None = None,
+) -> models.Conversation:
+    """The holder gives the conversation back to the queue: human → waiting."""
+    row = _require(db, company_id, conversation_id)
+    if row.state != conversations.STATE_HUMAN:
+        raise InboxConflict(f"Conversation is {row.state}, not with an agent")
+    _ensure_holder(row, user)
+
+    locked = _lock(db, company_id, conversation_id, (conversations.STATE_HUMAN,))
+    if locked is None:
+        raise InboxConflict("Another request is changing this conversation")
+    conversations.release(db, locked, when=when)
+    db.commit()
+    return locked
+
+
+def close(
+    db: Session,
+    company_id: UUID,
+    conversation_id: UUID,
+    user: models.User,
+    *,
+    when: datetime | None = None,
+) -> models.Conversation:
+    """Finish with the conversation: human (or waiting) → closed.
+
+    `bot` is refused: a session nobody asked to escalate has nothing to close,
+    and silencing it would hide the visitor from the agent who picks it up next.
+    Closing twice is idempotent.
+    """
+    row = _require(db, company_id, conversation_id)
+    if row.state == conversations.STATE_CLOSED:
+        return row
+    if row.state == conversations.STATE_BOT:
+        raise InboxConflict(
+            "The bot is answering this conversation; there is nothing to close"
+        )
+    if row.state == conversations.STATE_HUMAN:
+        _ensure_holder(row, user)
+
+    locked = _lock(
+        db,
+        company_id,
+        conversation_id,
+        (conversations.STATE_WAITING, conversations.STATE_HUMAN),
+    )
+    if locked is None:
+        raise InboxConflict("Another request is changing this conversation")
+    conversations.close(db, locked, when=when)
+    db.commit()
+    return locked
+
+
+def _user_names(db: Session, user_ids: set[UUID]) -> dict[UUID, str | None]:
+    """Display names for assignees/authors, in one query."""
+    if not user_ids:
+        return {}
+    rows = (
+        db.query(models.User.id, models.User.first_name, models.User.last_name)
+        .filter(models.User.id.in_(user_ids))
+        .all()
+    )
+    return {
+        user_id: f"{first or ''} {last or ''}".strip() or None
+        for user_id, first, last in rows
+    }
+
+
+def _message_stats(
+    db: Session, pairs: list[tuple[UUID, str]]
+) -> tuple[dict[tuple[UUID, str], int], dict[tuple[UUID, str], str]]:
+    """Message counts and first-question titles for a page of conversations."""
+    counts: dict[tuple[UUID, str], int] = {}
+    titles: dict[tuple[UUID, str], str] = {}
+    if not pairs:
+        return counts, titles
+
+    scope = tuple_(
+        models.ChatMessage.website_id, models.ChatMessage.session_id
+    ).in_(pairs)
+
+    for website_id, session_id, count in (
+        db.query(
+            models.ChatMessage.website_id,
+            models.ChatMessage.session_id,
+            func.count(models.ChatMessage.id),
+        )
+        .filter(scope)
+        .group_by(models.ChatMessage.website_id, models.ChatMessage.session_id)
+        .all()
+    ):
+        counts[(website_id, session_id)] = count
+
+    # Oldest first, so the first row seen for a session is its first question.
+    for website_id, session_id, message in (
+        db.query(
+            models.ChatMessage.website_id,
+            models.ChatMessage.session_id,
+            models.ChatMessage.message,
+        )
+        .filter(scope, models.ChatMessage.role == "user")
+        .order_by(models.ChatMessage.created_at.asc())
+        .all()
+    ):
+        key = (website_id, session_id)
+        if key not in titles and message:
+            titles[key] = message
+    return counts, titles
+
+
+def _contacts(
+    db: Session, pairs: list[tuple[UUID, str]]
+) -> dict[tuple[UUID, str], models.Contact]:
+    """The lead rows of a page of conversations, when the visitor left one."""
+    if not pairs:
+        return {}
+    rows = (
+        db.query(models.Contact)
+        .filter(
+            tuple_(
+                models.Contact.website_id, models.Contact.session_id
+            ).in_(pairs)
+        )
+        .all()
+    )
+    return {(row.website_id, row.session_id): row for row in rows}
+
+
+def _person_name(contact: models.Contact) -> str | None:
+    return f"{contact.first_name} {contact.last_name}".strip() or None
+
+
+def _truncate(title: str | None) -> str | None:
+    if title and len(title) > conversations.TITLE_MAX_LEN:
+        return title[: conversations.TITLE_MAX_LEN] + "…"
+    return title
+
+
+def _describe(
+    db: Session, rows: list[tuple[models.Conversation, str]]
+) -> list[dict]:
+    """Turn page rows into list items, in two extra queries."""
+    pairs = [(row.website_id, row.session_id) for row, _ in rows]
+    counts, titles = _message_stats(db, pairs)
+    contacts = _contacts(db, pairs)
+    names = _user_names(
+        db, {row.assigned_user_id for row, _ in rows if row.assigned_user_id}
+    )
+
+    items: list[dict] = []
+    for row, website_name in rows:
+        key = (row.website_id, row.session_id)
+        contact = contacts.get(key)
+        items.append(
+            {
+                "id": row.id,
+                "website_id": row.website_id,
+                "website_name": website_name,
+                "session_id": row.session_id,
+                "state": row.state,
+                "assigned_user_id": row.assigned_user_id,
+                "assigned_user_name": names.get(row.assigned_user_id),
+                "claimed_at": row.claimed_at,
+                "closed_at": row.closed_at,
+                "last_message_at": row.last_message_at,
+                "created_at": row.created_at,
+                "message_count": counts.get(key, 0),
+                "title": _truncate(titles.get(key)),
+                "contact_name": (
+                    _person_name(contact) if contact is not None else None
+                ),
+                "contact_email": contact.email if contact is not None else None,
+            }
+        )
+    return items
+
+
+def list_conversations(
+    db: Session,
+    company_id: UUID,
+    *,
+    state: str | None = None,
+    website_id: UUID | None = None,
+    assigned_user_id: UUID | None = None,
+    page: int = 1,
+    limit: int = 20,
+) -> tuple[list[dict], int]:
+    """One page of the company's inbox queue plus the matching total.
+
+    `website_id` is checked against the caller's company first, so filtering by
+    another tenant's website is a 404 rather than an empty page that confirms
+    the id exists.
+    """
+    limit = max(1, min(limit, 100))
+    page = max(1, page)
+
+    query = (
+        db.query(models.Conversation, models.Website.name)
+        .join(models.Website, models.Website.id == models.Conversation.website_id)
+        .filter(models.Website.company_id == company_id)
+    )
+    if state is not None:
+        query = query.filter(models.Conversation.state == state)
+    if website_id is not None:
+        website = (
+            db.query(models.Website)
+            .filter(
+                models.Website.id == website_id,
+                models.Website.company_id == company_id,
+            )
+            .first()
+        )
+        if website is None:
+            raise InboxNotFound("Website not found")
+        query = query.filter(models.Conversation.website_id == website_id)
+    if assigned_user_id is not None:
+        query = query.filter(models.Conversation.assigned_user_id == assigned_user_id)
+
+    total = query.count()
+    rows = (
+        query.order_by(
+            models.Conversation.last_message_at.desc(),
+            models.Conversation.id,
+        )
+        .limit(limit)
+        .offset((page - 1) * limit)
+        .all()
+    )
+    return _describe(db, rows), total
+
+
+def transcript(db: Session, conversation: models.Conversation) -> list[dict]:
+    """Every message of the conversation, oldest first, with author names."""
+    rows = conversations.get_conversation_messages(
+        db, conversation.website_id, conversation.session_id
+    )
+    names = _user_names(
+        db, {row.author_user_id for row in rows if row.author_user_id}
+    )
+    return [
+        {
+            "id": row.id,
+            "role": row.role,
+            "message": row.message,
+            "author_user_id": row.author_user_id,
+            "author_name": names.get(row.author_user_id),
+            "created_at": row.created_at,
+        }
+        for row in rows
+    ]
+
+
+def contact_for(
+    db: Session, conversation: models.Conversation
+) -> models.Contact | None:
+    """The lead the visitor left in this session, if any."""
+    return (
+        db.query(models.Contact)
+        .filter(
+            models.Contact.website_id == conversation.website_id,
+            models.Contact.session_id == conversation.session_id,
+        )
+        .first()
+    )
+
+
+def detail(db: Session, company_id: UUID, conversation_id: UUID) -> dict:
+    """One conversation: the list item plus its transcript and contact."""
+    row = _require(db, company_id, conversation_id)
+    website = (
+        db.query(models.Website)
+        .filter(models.Website.id == row.website_id)
+        .first()
+    )
+    item = _describe(db, [(row, website.name if website is not None else None)])[0]
+    contact = contact_for(db, row)
+    item["messages"] = transcript(db, row)
+    item["contact"] = (
+        {
+            "id": contact.id,
+            "first_name": contact.first_name,
+            "last_name": contact.last_name,
+            "email": contact.email,
+            "consent_at": contact.consent_at,
+            "created_at": contact.created_at,
+        }
+        if contact is not None
+        else None
+    )
+    return item
+
+
+def item_for(
+    db: Session, company_id: UUID, conversation: models.Conversation
+) -> dict:
+    """The list item of one conversation (used as the action response)."""
+    website = (
+        db.query(models.Website)
+        .filter(models.Website.id == conversation.website_id)
+        .first()
+    )
+    if website is None or website.company_id != company_id:
+        raise InboxNotFound("Conversation not found")
+    return _describe(db, [(conversation, website.name)])[0]
