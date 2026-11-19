@@ -3,7 +3,7 @@
 | | | |
 |---|---|---|
 | Version | **V3** — implements what `V2` and `V2.1` deliberately left out (`plans/PLAN_V2.md` §14) |
-| Status | **In progress — Waves 0–3 signed off; Wave 4 has started: M9 (`conversations` + `chat_messages.author_user_id`), lazy conversation creation, the inbox state machine and the erasure/retention paths have landed (19 / 25 tasks, 4 / 5 gates); the inbox service itself (V3-41) is next** |
+| Status | **In progress — Waves 0–3 signed off; Wave 4 has started: M9 (`conversations` + `chat_messages.author_user_id`), the lazy conversation creation / state machine / erasure / retention paths and the agent inbox service with its routes have landed (20 / 25 tasks, 4 / 5 gates); the agent SSE stream and presence (V3-42) are next** |
 | Created | 2026-11-16 |
 | Derived from | `plans/PLAN_V2.md` (§14, §11 risk register), `plans/SPEC.md`, `docs/security.md` §5 (accepted risks K5 / K18), `README.md` §4 |
 | Baseline | V2.1 tag `v2.1` = `4031b6f4a063e62bf5bdc6e20f3d8ac67781ae99`; current `master` HEAD `1616332ed8d1d32ee21bb628ddb2d270e1304374` is docs-only after that tag (the V3 plan); V3 work lives on `feat/v3`; Alembic head `c9d3e5a71b28`; baseline suite counts are historical and must be re-run at pre-flight |
@@ -539,8 +539,11 @@ handoff email remains the fallback when nobody is there. **Entry:** V3-3G.
     feedback or handoff rows for that session and invalidates affected cluster data;
     retention removes expired metadata consistently.
 
-- [ ] **V3-41 · Inbox service: claim, assign, close** — `L`, depends: V3-40, migration: —
-  - Files: `services/inbox.py` (new), `schemas/inbox.py` (new), `api/inbox.py` (new), `main.py`, `api/setting.py`, `tests/test_settings.py`.
+- [x] **V3-41 · Inbox service: claim, assign, close** — `L`, depends: V3-40, migration: —
+  - Done: `services/inbox.py` is the agent surface and the only new writer. It addresses a conversation by **UUID** and resolves the website through a join on `websites` (`_scoped`), so a foreign id is `InboxNotFound` (404) and the same `session_id` on two websites stays two entries. `locked_query` is the only claim path: `SELECT … FOR UPDATE OF conversations SKIP LOCKED` over a company-scoped `waiting` row, held until `claim`/`assign` commits, so two agents racing produce one winner and one `InboxConflict` (409) — a repeat claim by the same agent is idempotent, and a state that is not `waiting` is refused before any write. `assign` hands a waiting row to an active manager/admin of the caller's company (`assignable_user`, a foreign or non-agent id never reaches a transition), `release` returns it to the queue and `close` finishes it from `waiting`/`human` (never `bot`); `_ensure_holder` lets only the assignee or an admin move someone else's claim, and every transition goes through `services/conversations.py` (`ConversationStateError` surfaces as 409). `list_conversations` pages the company queue with `state`/`website_id`/`assigned_user_id` filters and fills title, message count, assignee name and contact in two extra queries; `detail` adds the oldest-first transcript with author names and the contact row. No route edits a row: `api/inbox.py` validates, calls the service and maps `InboxNotFound`→404 / `InboxConflict`→409.
+  - Done: `api/inbox.py` mounts at `/api/inbox` (`main.py`) with six routes — paginated queue list, detail, claim, assign, release, close. Every one requires manager+ **and** the company's `live_inbox_enabled` flag through the `live_inbox_user` dependency, so with the flag off the whole surface is a 404 while the public `POST /api/handoff` keeps producing its V2.1 row and waiting state (tested with the flag off). The key already existed from V3-03 (`INTERNAL_SETTINGS`, default `false`) and `tests/test_settings.py::test_v3_internal_defaults_are_off` still pins it, so `api/setting.py` and the settings test needed no change.
+  - Done: `tests/test_inbox.py` adds 36 tests over disabled-flag 404s (plus the intact handoff), the claim race (sequential loser and a simulated `SKIP LOCKED` miss), idempotent re-claim, foreign UUID 404 on every route, the same session id on two websites, list scoping/state filter/pagination/title truncation/contact+assignee names, detail transcript with an agent author, release/close holder rules and idempotency, the pinned `FOR UPDATE … SKIP LOCKED` statement (Postgres dialect) and a source check that the routes only call the service. Suite: **625 Python tests OK in 43 modules** (3.2 s), 33/33 node checks. Real Postgres smoke, 12/12 checks: two concurrent claims with a barrier → exactly one `human` winner with `claimed_at` and the loser refused, plus a second scenario where one transaction holds the row and the contender gets “Another agent is claiming this conversation” from the lock (not the state check) and the row is claimable once released; fixture deleted afterwards (`leftover smoke conversations: 0`).
+  - Files: `services/inbox.py` (new), `schemas/inbox.py` (new), `api/inbox.py` (new), `main.py`, `tests/test_inbox.py` (new).
   - Do: address agent routes by conversation UUID, scoped to the caller's company.
     Add `live_inbox_enabled=false`; disabled inbox routes return 404 while existing
     public handoff stays intact. When enabled, claim uses
@@ -785,8 +788,8 @@ check that was not run.
 | 1 — Redis rate limiting (F1) | 4 | 4 / 4 | ☑ V3-1G |
 | 2 — Embed token / K18 (F4) | 5 | 5 / 5 | ☑ V3-2G |
 | 3 — Topic clustering (F2) | 5 | 4 / 5 | ☑ V3-3G |
-| 4 — Live-agent inbox (F3) | 7 | 1 / 7 | ☐ V3-4G |
-| **Total** | **25 tasks + 5 gates** | **19 / 25** | **4 / 5 gates** |
+| 4 — Live-agent inbox (F3) | 7 | 2 / 7 | ☐ V3-4G |
+| **Total** | **25 tasks + 5 gates** | **20 / 25** | **4 / 5 gates** |
 
 ---
 
