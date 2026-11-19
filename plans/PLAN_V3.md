@@ -3,7 +3,7 @@
 | | | |
 |---|---|---|
 | Version | **V3** — implements what `V2` and `V2.1` deliberately left out (`plans/PLAN_V2.md` §14) |
-| Status | **In progress — Waves 0–2 signed off; Wave 3 running: M8 schema + retention/invalidation, the clustering service and its worker job landed (16 / 25 tasks, 3 / 5 gates), digest/analytics reads are next at V3-33** |
+| Status | **In progress — Waves 0–2 signed off; Wave 3 running: M8 schema + retention/invalidation, the clustering service, its worker job and the digest/analytics read side landed (17 / 25 tasks, 3 / 5 gates), F2 docs are next at V3-34** |
 | Created | 2026-11-16 |
 | Derived from | `plans/PLAN_V2.md` (§14, §11 risk register), `plans/SPEC.md`, `docs/security.md` §5 (accepted risks K5 / K18), `README.md` §4 |
 | Baseline | V2.1 tag `v2.1` = `4031b6f4a063e62bf5bdc6e20f3d8ac67781ae99`; current `master` HEAD `1616332ed8d1d32ee21bb628ddb2d270e1304374` is docs-only after that tag (the V3 plan); V3 work lives on `feat/v3`; Alembic head `c9d3e5a71b28`; baseline suite counts are historical and must be re-run at pre-flight |
@@ -429,7 +429,8 @@ Re-run on the final tree: 20/20 manual checks, 482 Python tests, 33 node checks,
     and analytics only aggregate complete, non-overlapping windows, falling back
     to `top_topics` when the requested interval cannot be represented exactly.
 
-- [ ] **V3-33 · Digest + analytics read clusters** — `M`, depends: V3-32, migration: —
+- [x] **V3-33 · Digest + analytics read clusters** — `M`, depends: V3-32, migration: —
+  - Done: `services/digest.py` gained `_topic_groups`, a read-only bridge to `topics.completed_windows` behind `company_settings.flag("topic_clustering_enabled")` — the import is inside the function because `topics` already imports `digest` for stopwords and `normalize_period`. `build_digest` attaches `topic_groups` **only** when `completed_windows` returns windows (whole digest-aligned weeks, every run `completed`) and leaves the key out otherwise, so the flag-off payload is the V2.1 dict key for key (asserted, and `completed_windows` is stubbed to fail if it is called with the flag off) while `top_topics` stays populated either way for `/api/v1` clients. Each group is `{label, summary (nullable), period_start, sampled_messages, eligible_messages}` in window order then `cluster_key` (the writer's size order): per-cluster sizes are deliberately not stored, so no count is invented; the window-level sampled/eligible pair is the truncation disclosure. `render_digest_html` renders a `Topic groups` list **in place of** the term list when groups exist, escaping label and summary and printing `Named from S of E visitor questions`; with no groups the string is byte-for-byte the old one (a test pins the `Top topics` block adjacency). Schemas/types: `DigestGroup` + `DigestData.topic_groups: list[DigestGroup] = []` — additive only, `DigestTopic`/`DigestSummary` and every existing `/api`, `/api/v1/analytics/summary` field are untouched; the frontend `DigestSummary` gains the field and Analytics shows a `Topic groups` card with the sample indicator, falling back to the term table. Compatibility review: both analytics routes ask for a **rolling** `days` window (`end = now`), which is never a whole digest week, so they keep `top_topics` by design (D6) — the `Topic groups` read is reachable from the digest's aligned week, and a test pins the analytics fallback. Checks: 553 Python tests OK (23 in `test_digest`, including key-for-key flag-off, flag-on mapping with the exact interval asserted, and a real-SQLite completed vs `running` window), `npm run build` ✓ (2.11 s) and `npm run lint` exit 0.
   - Files: `services/digest.py`, `api/analytics.py`, `api/v1.py` (compatibility review), digest/analytics schemas and frontend types/page, `tests/test_digest.py`.
   - Do: `build_digest` adds `topic_groups` only when complete weekly partitions
     cover the requested interval without gaps or double-counting; otherwise preserve
@@ -736,7 +737,7 @@ check that was not run.
 | 2 — Embed token / K18 (F4) | 5 | 5 / 5 | ☑ V3-2G |
 | 3 — Topic clustering (F2) | 5 | 3 / 5 | ☐ V3-3G |
 | 4 — Live-agent inbox (F3) | 7 | 0 / 7 | ☐ V3-4G |
-| **Total** | **25 tasks + 5 gates** | **16 / 25** | **3 / 5 gates** |
+| **Total** | **25 tasks + 5 gates** | **17 / 25** | **3 / 5 gates** |
 
 ---
 
