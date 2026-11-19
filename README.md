@@ -131,8 +131,8 @@ npm install && npm run dev   # :5173
 | `EMBED_TOKEN_MODE` | `compat` | V3 (F4): `compat` accepts a missing `X-Embed-Token` — even for a website that has a token — but refuses a supplied token that is wrong, revoked or another website's; `enforce` requires a valid token. Refusals are `403` with `reason: invalid_embed_token` or `embed_token_required`, never a session reason. Default keeps V2.1 behaviour; see [Embed token](#embed-token-v3-f4) |
 | `TOPIC_CLUSTER_MAX_MESSAGES` | `500` | V3 (F2): max visitor questions embedded per clustering run; the company setting `topic_clustering_enabled` (default `false`) opts in |
 | `TOPIC_CLUSTER_INTERVAL_SECONDS` | `86400` | V3 (F2): worker scheduler check cadence for clustering; window boundaries come from `digest_day`/`normalize_period` |
-| `INBOX_PRESENCE_TTL_SECONDS` | `60` | V3 (F3): TTL of an agent presence lease in the live inbox (wired in V3-42) |
-| `INBOX_STREAM_HEARTBEAT_SECONDS` | `15` | V3 (F3): SSE heartbeat interval for the inbox stream (wired in V3-42) |
+| `INBOX_PRESENCE_TTL_SECONDS` | `60` | V3 (F3): TTL of one agent presence lease in the live inbox. Each `/api/inbox/events` connection owns its own lease, renewed on every heartbeat tick; a crashed tab ages out instead of showing as online forever, and the TTL never drops below two heartbeats |
+| `INBOX_STREAM_HEARTBEAT_SECONDS` | `15` | V3 (F3): how often a quiet inbox stream sends a `: heartbeat` comment and renews its presence lease. Keep the proxy's idle timeout above this value (see [`docs/security.md`](docs/security.md) §3) |
 | `CORS_ORIGINS` | `*` | comma-separated allowed origins; `allow_credentials` is disabled while it is `*` |
 | `TRUSTED_PROXY_IPS` | *(empty)* | comma-separated IPs/CIDRs of reverse proxies / load balancers whose `X-Forwarded-For` is trusted; loopback and private peers are trusted automatically |
 | `FRONTEND_URL` | `http://localhost:5173` | public admin URL, used in password-reset links |

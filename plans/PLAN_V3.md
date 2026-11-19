@@ -3,7 +3,7 @@
 | | | |
 |---|---|---|
 | Version | **V3** — implements what `V2` and `V2.1` deliberately left out (`plans/PLAN_V2.md` §14) |
-| Status | **In progress — Waves 0–3 signed off; Wave 4 has started: M9 (`conversations` + `chat_messages.author_user_id`), the lazy conversation creation / state machine / erasure / retention paths and the agent inbox service with its routes have landed (20 / 25 tasks, 4 / 5 gates); the agent SSE stream and presence (V3-42) are next** |
+| Status | **In progress — Waves 0–3 signed off; Wave 4 is in progress: M9 (`conversations` + `chat_messages.author_user_id`), the lazy conversation creation / state machine / erasure / retention paths, the agent inbox service with its routes and the agent SSE stream with presence have landed (21 / 25 tasks, 4 / 5 gates); agent replies reaching the widget (V3-43) are next** |
 | Created | 2026-11-16 |
 | Derived from | `plans/PLAN_V2.md` (§14, §11 risk register), `plans/SPEC.md`, `docs/security.md` §5 (accepted risks K5 / K18), `README.md` §4 |
 | Baseline | V2.1 tag `v2.1` = `4031b6f4a063e62bf5bdc6e20f3d8ac67781ae99`; current `master` HEAD `1616332ed8d1d32ee21bb628ddb2d270e1304374` is docs-only after that tag (the V3 plan); V3 work lives on `feat/v3`; Alembic head `c9d3e5a71b28`; baseline suite counts are historical and must be re-run at pre-flight |
@@ -556,7 +556,7 @@ handoff email remains the fallback when nobody is there. **Entry:** V3-3G.
     unambiguously; closing applies the defined state transition; no route edits
     rows by hand outside the service.
 
-- [ ] **V3-42 · Agent SSE stream + presence** — `L`, depends: V3-41, migration: —
+- [x] **V3-42 · Agent SSE stream + presence** — `L`, depends: V3-41, migration: —
   - Files: `api/inbox.py`, `services/inbox.py`, `services/redis.py`, `tests/test_inbox_stream.py`.
   - Do: `GET /api/inbox/events` (JWT, `fetch()`-based SSE so Authorization headers
     are available) authenticates/authorizes and checks `live_inbox_enabled` before
@@ -572,6 +572,7 @@ handoff email remains the fallback when nobody is there. **Entry:** V3-3G.
   - Done when: multiple dashboards receive notifications and converge on the same
     DB state; reconnect does not lose messages; one tab closing does not clear a
     second tab's presence; Redis outage degrades to polling.
+  - Done: `GET /api/inbox/events` checks the JWT + `live_inbox_user` (manager+, `live_inbox_enabled`) and `await redis.ping()` **before** the `StreamingResponse` returns, so the flag off is a 404 and Redis down is a 503 (`STREAM_UNAVAILABLE`) with no stream opened; the body comes from `services/inbox.py::event_stream` — `retry: 3000`, a `ready` event carrying `resync: true`, `id:`/`event:`/`data:` per notification, and a `: heartbeat` comment every `INBOX_STREAM_HEARTBEAT_SECONDS`. It subscribes to `inbox:<company_id>` **before** the first frame, so `ready` means the browser is attached and nothing published afterwards is lost; the socket read is one pending `get_message` task raced against `asyncio.wait(timeout=heartbeat)` rather than a read timeout, because a timeout can leave the pub/sub parser mid-frame. A dying Redis ends the stream with an `error` frame (`redis_unavailable` when the lease cannot be written, `stream_interrupted` when the reader raises), which is what the console turns into polling. `conversation_event` derives the id from the committed row (`<uuid>:<updated_at>`), so an idempotent retry republishes the same id and a reconnect can dedupe; only the four routes publish, and only after `claim`/`assign`/`release`/`close` committed (they are `async` for that single await; the service itself never publishes). Presence is a lease per connection, `inbox:presence:<company>:<user>:<uuid4>` in Redis with a TTL of `max(2 × heartbeat, INBOX_PRESENCE_TTL_SECONDS)`, renewed on every tick and deleted by its own connection — plus `presence`/`GET /api/inbox/presence`, which aggregates the caller's company leases per user, so two tabs count as two connections and one closing cannot clear the other. `services/redis.py` gains `set_lease`/`renew_lease`/`delete_lease`/`lease_keys`, all best-effort like the rest of that module. `tests/test_inbox_stream.py` (26 tests): the flag/401-403/503 gates before any stream, framing and heartbeat, forwarded ids, error frames, lease uniqueness/renewal/release, presence aggregation with foreign and malformed keys and an outage reading as nobody online, the no-transform/no-buffering headers, publish-after-commit (the row is already `human` when the notification is sent), a refused action publishing nothing and the service never publishing. Suite: **651 Python tests in 44 modules** (6.6 s), 33/33 node checks. Real-Redis smoke, 12/12: three streams (two tabs of one agent, one of another) each got the lease, a publish reached all three with the same id, closing one tab removed only its lease (2 left) and the others still received the next event, closing all left 0 leases, TTL inside `0 < ttl ≤ 60`; leftover keys swept. **Not exercised:** a browser `fetch()` reader behind a real proxy — the route was driven through `TestClient`, the body itself on the generator against real Redis.
 
 - [ ] **V3-43 · Agent replies reach the widget** — `L`, depends: V3-42, migration: —
   - Files: `api/inbox.py`, `services/rag.py` (`save_message` reuse), `api/routes.py`, `scripts/widget.js`, `tests/widget_inbox.test.mjs`.
@@ -788,8 +789,8 @@ check that was not run.
 | 1 — Redis rate limiting (F1) | 4 | 4 / 4 | ☑ V3-1G |
 | 2 — Embed token / K18 (F4) | 5 | 5 / 5 | ☑ V3-2G |
 | 3 — Topic clustering (F2) | 5 | 4 / 5 | ☑ V3-3G |
-| 4 — Live-agent inbox (F3) | 7 | 2 / 7 | ☐ V3-4G |
-| **Total** | **25 tasks + 5 gates** | **20 / 25** | **4 / 5 gates** |
+| 4 — Live-agent inbox (F3) | 7 | 3 / 7 | ☐ V3-4G |
+| **Total** | **25 tasks + 5 gates** | **21 / 25** | **4 / 5 gates** |
 
 ---
 

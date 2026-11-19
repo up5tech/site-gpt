@@ -38,6 +38,7 @@ processes.
 | Tenant isolation | Every admin query filters on the caller's `company_id`; a foreign id answers 404, not 403, so ids cannot be probed | `api/*`, `api/privacy.py` |
 | API keys | Only `sha256(pepper + raw)` is stored; comparison uses `hmac.compare_digest`; keys carry scopes, a prefix for identification and a `revoked_at`; the raw value is returned once | `services/api_keys.py`, `api/api_key.py` |
 | Public config | `GET /api/widget-config` returns an explicit allowlist of 14 widget keys, never a table dump | `api/setting.py` (`WIDGET_PUBLIC_KEYS`), `api/routes.py` |
+| Inbox stream | `GET /api/inbox/events` checks the JWT, manager+ and `live_inbox_enabled` **before** the response starts (a 404 or 503, never an open stream), subscribes to one pub/sub channel per company (`inbox:<company_id>`) and derives nothing from the request, so a foreign conversation id cannot be read or announced | `api/inbox.py`, `services/inbox.py`, `services/redis.py` |
 | Integration secrets | Masked as `***` on every read; a PATCH echoing the mask keeps the stored value; provider errors are scrubbed of every stored secret before they reach a client **and** before they are stored on a delivery row | `api/integration.py`, `services/integrations.py` |
 | Delivery retention | Delivery rows keep the event payload (visitor contact details) for retries, but no API returns it: `/integrations/deliveries` exposes type, status, attempts and the scrubbed error only | `api/integration.py` |
 | Webhooks | HMAC-SHA256 over `<timestamp>.<body>`, header `X-SiteGPT-Signature`; receivers can reject replays by checking the timestamp | `services/integrations.py` |
@@ -76,6 +77,14 @@ These are listed because the code cannot enforce them and because the defaults i
 - Behind a load balancer, set `TRUSTED_PROXY_IPS` to the public addresses of the
   proxies. Otherwise every visitor shares one rate-limit bucket (the proxy's IP).
   Loopback and private peers are trusted automatically.
+- **Server-sent events** need buffering off and a timeout above the heartbeat.
+  `GET /api/inbox/events` is one long-lived `text/event-stream` response that
+  carries `Cache-Control: no-cache, no-transform` and `X-Accel-Buffering: no`
+  (honoured by nginx); still disable response buffering for that path and keep
+  the proxy's idle timeout above `INBOX_STREAM_HEARTBEAT_SECONDS`, which is the
+  interval of the `: heartbeat` comment that keeps the connection alive. If Redis
+  is down the route answers `503` before streaming and the console polls the
+  queue instead, so stopping Redis degrades the inbox rather than breaking it.
 
 ### Secrets
 
