@@ -1,8 +1,9 @@
 """Weekly digest endpoints (F6): preview renders, send-now delivers once.
 
-Both normalise the period through `services.digest.normalize_period`, and both
-go through the same claim, so two clicks on "Send now" in one week cannot email
-twice and a scheduled send already owns the period.
+Both report the last complete digest week (`services.digest.previous_period`) —
+the window the topic worker clusters — and both go through the same claim, so two
+clicks on "Send now" in one week cannot email twice and a scheduled send already
+owns the period.
 """
 
 from datetime import UTC, datetime, timedelta
@@ -19,7 +20,7 @@ from site_gpt.app.services import company_settings
 from site_gpt.app.services.digest import (
     build_digest,
     company_name,
-    normalize_period,
+    previous_period,
     render_digest_html,
     send_period,
 )
@@ -31,7 +32,7 @@ def _period(db: Session, company_id) -> tuple[datetime, datetime]:
     digest_day = company_settings.value(
         db, company_id, "digest_day", "monday"
     )
-    return normalize_period(datetime.now(UTC), digest_day)
+    return previous_period(datetime.now(UTC), digest_day)
 
 
 @router.post("/api/digest/preview", response_model=DigestPreview)

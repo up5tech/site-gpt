@@ -1,4 +1,5 @@
 import asyncio
+import json
 import unittest
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -224,6 +225,190 @@ class EnqueueDueTopicsTests(unittest.TestCase):
         run = self._stored_run()
         self.assertEqual(run.status, "failed")
         self.assertIn("stale", run.error)
+
+
+DIGEST_TABLES = [
+    models.Company.__table__,
+    models.Website.__table__,
+    models.ChatMessage.__table__,
+    models.Contact.__table__,
+    models.ChatFeedback.__table__,
+    models.Setting.__table__,
+    models.DigestLog.__table__,
+    models.TopicCluster.__table__,
+    models.TopicClusterRun.__table__,
+]
+
+# Saturday 12:00, so `digest_hour = 12` is due and the last complete digest week
+# is the 2nd → the 9th (the week containing NOW started on the 9th).
+DIGEST_NOW = datetime(2026, 11, 14, 12, 0, tzinfo=UTC)
+DIGEST_WINDOW = (
+    datetime(2026, 11, 2, tzinfo=UTC),
+    datetime(2026, 11, 9, tzinfo=UTC),
+)
+
+
+def _digest_session(engine):
+    return sessionmaker(bind=engine)()
+
+
+class DigestScheduleTests(unittest.TestCase):
+    """The digest reports the week the topic worker clusters, not the live one."""
+
+    def setUp(self):
+        self.engine = create_engine("sqlite+pysqlite:///:memory:")
+        Base.metadata.create_all(self.engine, tables=DIGEST_TABLES)
+        self.sessions = []
+        db = self._session()
+        self.company = models.Company(name="Acme")
+        db.add(self.company)
+        db.commit()
+        for key, value in (
+            ("digest_enabled", "true"),
+            ("digest_hour", "12"),
+            ("digest_recipients", "owner@example.com"),
+        ):
+            self._setting(key, value)
+
+    def _session(self):
+        session = _digest_session(self.engine)
+        self.sessions.append(session)
+        return session
+
+    def _setting(self, key, value):
+        session = self._session()
+        session.add(
+            models.Setting(company_id=self.company.id, key=key, value=value)
+        )
+        session.commit()
+
+    def tearDown(self):
+        for session in self.sessions:
+            session.close()
+        self.engine.dispose()
+
+    def _enqueue(self):
+        enqueue = AsyncMock()
+        with patch.object(worker, "SessionLocal", self._session), patch.object(
+            worker, "enqueue_job", enqueue
+        ):
+            queued = asyncio.run(worker.enqueue_due_digests(now=DIGEST_NOW))
+        return queued, [call.args[0] for call in enqueue.await_args_list]
+
+    def test_the_period_is_the_last_complete_digest_week(self):
+        queued, payloads = self._enqueue()
+
+        self.assertEqual(queued, [str(self.company.id)])
+        self.assertEqual([payload["type"] for payload in payloads], ["digest"])
+        self.assertEqual(payloads[0]["period_start"], DIGEST_WINDOW[0].isoformat())
+        self.assertEqual(payloads[0]["period_end"], DIGEST_WINDOW[1].isoformat())
+
+    def test_the_week_is_queued_before_the_digest_that_reports_it(self):
+        self._setting("topic_clustering_enabled", "true")
+
+        _, payloads = self._enqueue()
+
+        # FIFO queue: the clusters are built before the digest reads them.
+        self.assertEqual(
+            [payload["type"] for payload in payloads], ["topic_clusters", "digest"]
+        )
+        self.assertEqual(payloads[0]["period_start"], payloads[1]["period_start"])
+        self.assertEqual(payloads[0]["period_end"], payloads[1]["period_end"])
+
+
+class WorkerToDigestTests(unittest.TestCase):
+    """End to end: the week the topic job builds is the week the digest emails."""
+
+    def setUp(self):
+        self.engine = create_engine("sqlite+pysqlite:///:memory:")
+        Base.metadata.create_all(self.engine, tables=DIGEST_TABLES)
+        self.sessions = []
+        db = self._session()
+        company = models.Company(name="Acme")
+        db.add(company)
+        db.commit()
+        website = models.Website(
+            company_id=company.id,
+            name="site",
+            url="https://site.test",
+            site_map_url="",
+        )
+        db.add(website)
+        db.commit()
+        asked_at = DIGEST_WINDOW[0] + timedelta(days=1)
+        for text in ("What is the price?", "Is the pricing monthly?"):
+            db.add(
+                models.ChatMessage(
+                    website_id=website.id,
+                    session_id="s1",
+                    role="user",
+                    message=text,
+                    created_at=asked_at,
+                    updated_at=asked_at,
+                )
+            )
+        for key, value in (
+            ("digest_enabled", "true"),
+            ("digest_hour", "12"),
+            ("digest_recipients", "owner@example.com"),
+            ("topic_clustering_enabled", "true"),
+        ):
+            db.add(models.Setting(company_id=company.id, key=key, value=value))
+        db.commit()
+
+    def _session(self):
+        session = _digest_session(self.engine)
+        self.sessions.append(session)
+        return session
+
+    def tearDown(self):
+        for session in self.sessions:
+            session.close()
+        self.engine.dispose()
+
+    def test_the_digest_email_carries_the_clustered_week(self):
+        email = AsyncMock()
+        enqueue = AsyncMock()
+        naming = SimpleNamespace(
+            content=json.dumps(
+                [{"label": "Pricing", "summary": "Visitors ask what it costs."}]
+            )
+        )
+
+        with patch.object(worker, "SessionLocal", self._session), patch.object(
+            worker, "enqueue_job", enqueue
+        ), patch.object(
+            worker.topics,
+            "embed_texts",
+            lambda texts: [[1.0] + [0.0] * 1535 for _ in texts],
+        ), patch.object(
+            worker.topics,
+            "get_llm",
+            lambda **_: SimpleNamespace(invoke=lambda messages: naming),
+        ), patch.object(
+            worker.digest, "send_email_async", email
+        ), patch.object(
+            worker.digest, "emit_event_async", AsyncMock()
+        ):
+            asyncio.run(worker.enqueue_due_topics(now=DIGEST_NOW))
+            asyncio.run(worker.handle_topic_clusters(enqueue.await_args.args[0]))
+            asyncio.run(worker.enqueue_due_digests(now=DIGEST_NOW))
+            digest_payload = enqueue.await_args.args[0]
+            asyncio.run(worker.handle_digest(digest_payload))
+
+        # The completed run needs no second topic job, and both jobs name one week.
+        self.assertEqual(
+            [call.args[0]["type"] for call in enqueue.await_args_list],
+            ["topic_clusters", "digest"],
+        )
+        self.assertEqual(digest_payload["period_start"], DIGEST_WINDOW[0].isoformat())
+        self.assertEqual(digest_payload["period_end"], DIGEST_WINDOW[1].isoformat())
+
+        recipient, _, body = email.await_args.args
+        self.assertEqual(recipient, "owner@example.com")
+        self.assertIn("Topic groups", body)
+        self.assertIn("Pricing", body)
+        self.assertIn("Named from 2 of 2 visitor questions", body)
 
 
 class HandleTopicClustersTests(unittest.TestCase):

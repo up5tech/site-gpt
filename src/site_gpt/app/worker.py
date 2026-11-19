@@ -427,13 +427,37 @@ async def enqueue_due_digests(now: datetime | None = None) -> list[str]:
             if now.hour != hour:
                 continue
 
-            period_start, period_end = digest.normalize_period(
+            # The last complete week, not the one in progress: it is the window
+            # the topic worker clusters, and a digest of a half-finished week
+            # would mark that period sent and never cover the rest of it.
+            period_start, period_end = digest.previous_period(
                 now, settings.get("digest_day") or "monday"
             )
             if digest.period_settled(
                 db, company.id, period_start, stale_before
             ):
                 continue
+
+            # Queue the week's clusters *before* the digest that reports them. The
+            # queue is FIFO (`lpush` + `brpop`), so one worker finishes the run and
+            # then sends a digest that carries the groups instead of falling back
+            # to term counts. An already settled window queues nothing.
+            if company_settings.flag(
+                db, company.id, "topic_clustering_enabled"
+            ) and not topics.window_settled(
+                db,
+                company.id,
+                period_start,
+                stale_before=now - topics.STALE_RUN_AFTER,
+            ):
+                await enqueue_job(
+                    {
+                        "type": "topic_clusters",
+                        "company_id": str(company.id),
+                        "period_start": period_start.isoformat(),
+                        "period_end": period_end.isoformat(),
+                    }
+                )
 
             await enqueue_job(
                 {

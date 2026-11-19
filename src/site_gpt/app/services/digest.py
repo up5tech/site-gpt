@@ -87,6 +87,22 @@ def normalize_period(
     return start, start + timedelta(days=7)
 
 
+def previous_period(
+    now: datetime, digest_day: str = "monday"
+) -> tuple[datetime, datetime]:
+    """The last complete digest week before the one containing `now`.
+
+    A digest describes a week that is over. The topic worker clusters exactly this
+    window (`topics.previous_window` delegates here), so the report and the named
+    groups it shows never describe different weeks. The week still in progress is
+    not a digest period: `digest_log` marks a period sent once, so mailing a
+    half-finished week would leave the rest of it permanently unreported — and the
+    window could not have a completed clustering run either.
+    """
+    current_start, _ = normalize_period(now, digest_day)
+    return current_start - timedelta(days=7), current_start
+
+
 def company_name(db: Session, company_id: UUID) -> str:
     """The company's display name, used in the subject and heading."""
     company = (

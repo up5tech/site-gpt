@@ -493,12 +493,12 @@ def previous_window(
     """The last complete digest week before the one containing `now`.
 
     The week still in progress is not a complete window: clustering it would be
-    thrown away as the week fills. The scheduler targets the week that just ended,
-    and both sides come from `normalize_period`, so windows never overlap and never
-    leave a gap.
+    thrown away as the week fills. The digest reports this same window
+    (`digest.previous_period` is the one definition), so the report and its named
+    groups can never be about different weeks; both sides come from
+    `normalize_period`, so windows never overlap and never leave a gap.
     """
-    current_start, _ = digest.normalize_period(now, digest_day)
-    return current_start - WEEK, current_start
+    return digest.previous_period(now, digest_day)
 
 
 def _heartbeat(run: models.TopicClusterRun) -> datetime | None:

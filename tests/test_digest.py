@@ -16,6 +16,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from site_gpt.app import models
+from site_gpt.app.api import digest as digest_api
 from site_gpt.app.db.base import Base
 from site_gpt.app.services import digest, topics
 
@@ -64,6 +65,54 @@ class NormalizePeriodTests(unittest.TestCase):
             datetime(2026, 11, 18, 12, 0, tzinfo=UTC), "notaday"
         )
         self.assertEqual(start, datetime(2026, 11, 16, tzinfo=UTC))
+
+
+class PreviousPeriodTests(unittest.TestCase):
+    """The digest reports a finished week — the one the topic worker builds."""
+
+    def test_it_is_the_week_before_the_one_containing_now(self):
+        start, end = digest.previous_period(
+            datetime(2026, 11, 18, 15, 30, tzinfo=UTC)
+        )
+        self.assertEqual(start, datetime(2026, 11, 9, tzinfo=UTC))
+        self.assertEqual(end, datetime(2026, 11, 16, tzinfo=UTC))
+        self.assertEqual(end - start, timedelta(days=7))
+
+    def test_every_moment_of_a_week_reports_the_same_window(self):
+        monday = digest.previous_period(datetime(2026, 11, 16, 0, 0, tzinfo=UTC))
+        sunday = digest.previous_period(datetime(2026, 11, 22, 23, 59, tzinfo=UTC))
+        self.assertEqual(monday, sunday)
+
+    def test_a_custom_digest_day_shifts_both_edges(self):
+        start, end = digest.previous_period(
+            datetime(2026, 11, 18, 12, 0, tzinfo=UTC), "friday"
+        )
+        self.assertEqual(start, datetime(2026, 11, 6, tzinfo=UTC))
+        self.assertEqual(end, datetime(2026, 11, 13, tzinfo=UTC))
+
+    def test_the_topic_window_uses_the_same_definition(self):
+        now = datetime(2026, 11, 18, 15, 30, tzinfo=UTC)
+        for day in ("monday", "friday", "sunday", "notaday"):
+            with self.subTest(day=day):
+                self.assertEqual(
+                    topics.previous_window(now, day), digest.previous_period(now, day)
+                )
+
+
+class DigestEndpointPeriodTests(unittest.TestCase):
+    def test_preview_and_send_now_use_the_last_complete_week(self):
+        db = MagicMock()
+        moment = datetime(2026, 11, 18, 15, 30, tzinfo=UTC)
+
+        with patch.object(
+            digest_api.company_settings, "value", return_value="monday"
+        ), patch.object(
+            digest_api, "datetime", SimpleNamespace(now=lambda tz=None: moment)
+        ):
+            period = digest_api._period(db, uuid4())
+
+        self.assertEqual(period, digest.previous_period(moment, "monday"))
+        self.assertEqual(period[0], datetime(2026, 11, 9, tzinfo=UTC))
 
 
 class RenderDigestHtmlTests(unittest.TestCase):
