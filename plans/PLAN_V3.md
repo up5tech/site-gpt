@@ -3,7 +3,7 @@
 | | | |
 |---|---|---|
 | Version | **V3** — implements what `V2` and `V2.1` deliberately left out (`plans/PLAN_V2.md` §14) |
-| Status | **In progress — Waves 0–3 signed off; Wave 4 is in progress: M9 (`conversations` + `chat_messages.author_user_id`), the lazy conversation creation / state machine / erasure / retention paths, the agent inbox service with its routes, the agent SSE stream with presence, agent replies reaching the widget and the `/inbox` console page (V3-44) and the handoff-to-queue entry (V3-45) have landed (24 / 25 tasks, 4 / 5 gates); the inbox documentation pass (V3-46) is next** |
+| Status | **In progress — Waves 0–3 signed off; Wave 4 is in progress: M9 (`conversations` + `chat_messages.author_user_id`), the lazy conversation creation / state machine / erasure / retention paths, the agent inbox service with its routes, the agent SSE stream with presence, agent replies reaching the widget and the `/inbox` console page (V3-44) and the handoff-to-queue entry (V3-45) and the inbox documentation pass (V3-46) have landed (25 / 25 tasks, 4 / 5 gates); release gate `V3-4G` is next** |
 | Created | 2026-11-16 |
 | Derived from | `plans/PLAN_V2.md` (§14, §11 risk register), `plans/SPEC.md`, `docs/security.md` §5 (accepted risks K5 / K18), `README.md` §4 |
 | Baseline | V2.1 tag `v2.1` = `4031b6f4a063e62bf5bdc6e20f3d8ac67781ae99`; current `master` HEAD `1616332ed8d1d32ee21bb628ddb2d270e1304374` is docs-only after that tag (the V3 plan); V3 work lives on `feat/v3`; Alembic head `c9d3e5a71b28`; baseline suite counts are historical and must be re-run at pre-flight |
@@ -620,7 +620,7 @@ handoff email remains the fallback when nobody is there. **Entry:** V3-3G.
   - Done: `POST /api/handoff` asks `inbox_service.enabled` once per click. With the flag on it marks the session `waiting` in the **same** transaction as the handoff row — `conversations.mark_waiting` creates or reuses the one row per `(website_id, session_id)` and is idempotent, so a second click cannot pull a claimed session back — so one click is one row, one email, one event and one waiting conversation. With the flag off the call is skipped entirely: the row, the email and the event are the V2.1 ones and no `conversations` row is created. The `handoff.requested` payload gains `conversation_id`/`conversation_state` **only** when the inbox queued the session (`_conversation_hint`), so a V2.1 receiver parses exactly the keys it always did and nothing carries a URL or another tenant's id.
   - Done: `services/inbox.py::_sync_handoff` mirrors each queue move onto the session's handoff row inside that transition's own transaction — claim/assign → `accepted`, release → `pending`, close → `closed` — so `/handoffs` and the inbox cannot disagree about whether someone still needs a callback. It only updates values and never creates a row for a company without the inbox. `tests/test_handoff_inbox.py` (11 tests): one click → one row/one email/one event/one waiting session, the additive event fields, repeated clicks, reuse of an existing bot session, claim/close/release syncing the row, and the flag-off path (row and email still happen, no conversation, event keys unchanged) plus `handoff_enabled=false` still a 404 with nothing written; `tests/test_inbox.py`'s handoff case and `tests/test_inbox_stream.py`'s fixture were updated for the new contract. Suite: **711 Python tests in 46 modules** (8.9 s), **46 node checks**.
 
-- [ ] **V3-46 · Docs: inbox** — `S`, depends: V3-45, migration: —
+- [x] **V3-46 · Docs: inbox** — `S`, depends: V3-45, migration: —
   - Files: `README.md`, `AGENTS.md`, `docs/security.md`, `plans/SPEC.md` (ADR-4 note).
   - Do: update ADR-4 as superseded by the implemented queue + fallback email;
     document env vars, fetch-based SSE auth/reconnect semantics, CORS preflight,
@@ -629,6 +629,7 @@ handoff email remains the fallback when nobody is there. **Entry:** V3-3G.
     company RBAC.
   - Done when: README's admin-page list includes `/inbox`, ADR-4 is marked
     superseded with a pointer to D1, and no doc still claims "no live chat".
+  - Done: ADR-4 (`plans/SPEC.md`) is headed **superseded in V3 (F3)**, keeps the original decision as the flag-off behaviour and points at `PLAN_V3.md` §3 D1 and §5 V3-40…V3-46; F5's scope line says the console part is superseded behind `live_inbox_enabled`, and the reviewer question about handoff depth is marked resolved. `README.md` gains a **Live inbox (F3)** section — access model (manager+ and the flag, 404 when off, `/api/inbox/status` as the only manager-readable flag read, transcript scope under company RBAC), fetch-based SSE auth and reconnect-with-refetch, `OPTIONS` preflight, proxy buffering and the heartbeat timeout, presence TTL, the widget's `waiting`/`human` gating and the K18 residual — plus an internal `live_inbox_enabled` row in the settings table; its admin-page list already carried `/inbox` from V3-44. `docs/security.md` adds two control rows (inbox access, inbox transcripts), the preflight bullet and presence-TTL paragraph under CORS/proxies, a `conversations` row in the data inventory and §5.2 (who may read a transcript, stream authentication for both SSE endpoints, reconnect semantics, presence, embed-token residual). `AGENTS.md` records V3-40…V3-46 as ticked and points at those sections. `docs/security.md` also gains K19 (company-wide inbox reads, accepted) and two deployment-checklist lines for the toggle and the SSE proxy settings. A grep for "no live chat" finds only this task's own wording; no current document claims the product has no live chat.
 
 #### Gate V3-4G (release gate)
 
@@ -796,8 +797,8 @@ check that was not run.
 | 1 — Redis rate limiting (F1) | 4 | 4 / 4 | ☑ V3-1G |
 | 2 — Embed token / K18 (F4) | 5 | 5 / 5 | ☑ V3-2G |
 | 3 — Topic clustering (F2) | 5 | 4 / 5 | ☑ V3-3G |
-| 4 — Live-agent inbox (F3) | 7 | 6 / 7 | ☐ V3-4G |
-| **Total** | **25 tasks + 5 gates** | **24 / 25** | **4 / 5 gates** |
+| 4 — Live-agent inbox (F3) | 7 | 7 / 7 | ☐ V3-4G |
+| **Total** | **25 tasks + 5 gates** | **25 / 25** | **4 / 5 gates** |
 
 ---
 

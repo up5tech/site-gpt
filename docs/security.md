@@ -39,6 +39,8 @@ processes.
 | API keys | Only `sha256(pepper + raw)` is stored; comparison uses `hmac.compare_digest`; keys carry scopes, a prefix for identification and a `revoked_at`; the raw value is returned once | `services/api_keys.py`, `api/api_key.py` |
 | Public config | `GET /api/widget-config` returns an explicit allowlist of 14 widget keys, never a table dump | `api/setting.py` (`WIDGET_PUBLIC_KEYS`), `api/routes.py` |
 | Inbox stream | `GET /api/inbox/events` checks the JWT, manager+ and `live_inbox_enabled` **before** the response starts (a 404 or 503, never an open stream), subscribes to one pub/sub channel per company (`inbox:<company_id>`) and derives nothing from the request, so a foreign conversation id cannot be read or announced | `api/inbox.py`, `services/inbox.py`, `services/redis.py` |
+| Inbox access | Every `/api/inbox` route except `GET /status` requires manager+ **and** the company's `live_inbox_enabled`; with the flag off the surface is a 404, so an installation without a console does not advertise one. A conversation is resolved by UUID through a join on that company's websites, so a foreign id is a 404, never a cross-tenant read | `api/inbox.py`, `services/inbox.py` |
+| Inbox transcripts | A manager/admin of the company can read the transcript of any of its conversations — the same messages `GET /api/privacy/export` returns, including teammates' agent replies. There is no per-conversation grant and no per-read audit log: the company is the boundary, and `live_inbox_enabled` only decides whether the console exists | `api/inbox.py`, `services/inbox.py` |
 | Widget live messages | `GET /api/chat/messages` and `/api/chat/messages/stream` require the **K4 session token** (a valid `X-Session-Token` for *that* website and session), an active website and the embed guard; the public embed token alone reads nothing, and the live channel is per session (`chat:<website_id>:<session_id>`) | `api/routes.py`, `services/rag.py` |
 | Integration secrets | Masked as `***` on every read; a PATCH echoing the mask keeps the stored value; provider errors are scrubbed of every stored secret before they reach a client **and** before they are stored on a delivery row | `api/integration.py`, `services/integrations.py` |
 | Delivery retention | Delivery rows keep the event payload (visitor contact details) for retries, but no API returns it: `/integrations/deliveries` exposes type, status, attempts and the scrubbed error only | `api/integration.py` |
@@ -78,14 +80,25 @@ These are listed because the code cannot enforce them and because the defaults i
 - Behind a load balancer, set `TRUSTED_PROXY_IPS` to the public addresses of the
   proxies. Otherwise every visitor shares one rate-limit bucket (the proxy's IP).
   Loopback and private peers are trusted automatically.
+- The console's event stream carries `Authorization`, which makes it a non-simple
+  request: the browser preflights it with `OPTIONS` before `GET`. `api/main.py`
+  answers with `allow_headers=["*"]` / `allow_methods=["*"]` and enables
+  credentials only for an explicit origin list, so keep `CORS_ORIGINS` to the real
+  console origins — a wildcard origin would disable the credentialed request.
 - **Server-sent events** need buffering off and a timeout above the heartbeat.
   `GET /api/inbox/events` is one long-lived `text/event-stream` response that
   carries `Cache-Control: no-cache, no-transform` and `X-Accel-Buffering: no`
   (honoured by nginx); still disable response buffering for that path and keep
   the proxy's idle timeout above `INBOX_STREAM_HEARTBEAT_SECONDS`, which is the
-  interval of the `: heartbeat` comment that keeps the connection alive. If Redis
-  is down the route answers `503` before streaming and the console polls the
-  queue instead, so stopping Redis degrades the inbox rather than breaking it.
+  interval of the `: heartbeat` comment that keeps the connection alive. Each
+  tick also renews that connection's presence lease; `INBOX_PRESENCE_TTL_SECONDS`
+  (60) is the fallback for a connection that dies without closing, and is never
+  allowed below two heartbeats. If Redis is down the route answers `503` before
+  streaming and the console polls the queue instead, so stopping Redis degrades the
+  inbox rather than breaking it. `GET /api/chat/messages/stream` is the same shape
+  for a visitor's live agent replies (it additionally needs the K4 session token
+  and refuses with `409` while no agent handles the session), and
+  `GET /api/inbox/events` still needs `proxy_read_timeout` above the heartbeat.
 
 ### Secrets
 
@@ -179,6 +192,36 @@ and clients should branch on `reason`, not on the prose.
 `SESSION_TOKEN_MODE` (`compat` | `enforce`) controls whether a tokenless read of
 an *unclaimed* session is allowed; see §5 for the trade-off.
 
+### 5.2 Live inbox (F3)
+
+- **Who can read a transcript.** Every `/api/inbox` route except `GET /status`
+  requires manager+ **and** the company's `live_inbox_enabled` (404 when off). A
+  conversation is resolved by UUID through a join on that company's websites, so a
+  foreign id is a 404. Within the company there is no per-conversation grant: any
+  manager/admin can open any conversation and read the same messages the privacy
+  export returns, including teammates' replies. Treat an agent account as a read
+  grant over the company's visitor conversations and manage access with the
+  existing user roles, not a per-agent scope.
+- **Stream authentication.** `GET /api/inbox/events` and
+  `GET /api/chat/messages/stream` are read with `fetch()` because both need a
+  header (`Authorization`, and the widget's `X-Session-Token`). The inbox stream
+  checks the JWT, manager+, the flag and Redis **before** the response starts, so
+  it never opens a stream it cannot feed; the widget stream additionally requires
+  the K4 session token and answers `409` while no agent handles the session.
+- **Reconnect.** Notifications are hints with a stable `id`; the console re-reads
+  the database after `ready`, after every event and after a reconnect, so a lost
+  pub/sub message costs a refetch and a duplicate `id` is droppable. Pub/sub is not
+  a durable log and no payload is trusted as state.
+- **Presence.** One Redis lease per connection
+  (`inbox:presence:<company>:<user>:<connection>`) with
+  `INBOX_PRESENCE_TTL_SECONDS` (60, never below two heartbeats), renewed each tick
+  and deleted by the connection that owns it. Presence is decoration: a Redis
+  outage reads as nobody online, never as an error.
+- **Residual.** The embed token is public in the page and replayable (K18 stays
+  accepted); it is not part of the console's authorization. Agent reads are not
+  individually audited beyond the normal request logs, which do not contain
+  message bodies.
+
 ## 4. Data inventory
 
 | Table | Contents | Personal data |
@@ -187,6 +230,7 @@ an *unclaimed* session is allowed; see §5 for the trade-off.
 | `contacts` | Name, email, `session_id`, `consent_at` | Yes |
 | `chat_feedback` | 👍/👎, optional comment, reviewed answer | Yes — the comment is free text |
 | `handoff_requests` | Request message, status, channel | Yes — free text |
+| `conversations` | One inbox row per `(website_id, session_id)`: state (`bot`/`waiting`/`human`/`closed`), assigned agent, claim/close and last-message timestamps, first-question title from `chat_messages` | Yes — links a session to the teammate who handled it. Expires on `last_message_at` under `retention_days`, and the privacy erasure of a conversation deletes it |
 | `documents`, `extra_documents`, `embeddings` | Owner's knowledge base | Usually no; may quote the owner's pages |
 | `users` | Name, email, argon2 password hash, reset tokens | Yes |
 | `api_keys` | Prefix, peppered hash, scopes, timestamps | No raw secret |
@@ -378,6 +422,14 @@ These are known, documented and deliberately deferred. They are not oversights.
   Treat `enforce` as a breaking rollout: a snippet that predates the token stops
   working the moment it is switched on, and the rollback is `compat`, not a code
   change.
+- **K19 — inbox reads are company-wide (accepted, V3 F3).** Any manager/admin of
+  a company with `live_inbox_enabled` on can read every conversation of that
+  company, including the replies a teammate wrote. There is no per-conversation
+  permission, no "only while assigned" restriction on reads and no audit trail of
+  who opened what (§5.2). The boundary is the company — the same one the privacy
+  export and the retention purge already use — so revoking the role is how access
+  is removed, and an agent account should be treated as a read grant over the
+  company's visitor transcripts.
 - **K8 — feedback is stored, not learned from automatically.** Ratings and
   reviewed answers feed the Q&A training document only after an admin approves
   them; nothing changes silently.
@@ -417,4 +469,8 @@ Copy this into the runbook for each environment:
       after a token was issued; wrong/revoked token is `403 invalid_embed_token`;
       tokenless request in `enforce` is `403 embed_token_required`; an embed
       refusal does not reset the visitor's session.
+- [ ] `live_inbox_enabled` decided per company; if it is on, the proxy keeps
+      buffering off for `/api/inbox/events` and `/api/chat/messages/stream` and its
+      idle timeout above `INBOX_STREAM_HEARTBEAT_SECONDS`, and the console origins
+      are in `CORS_ORIGINS` (the stream's `Authorization` header is preflighted).
 - [ ] Erasure rehearsed on a test session (export → delete → export is empty).

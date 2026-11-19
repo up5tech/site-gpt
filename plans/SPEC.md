@@ -141,14 +141,25 @@ schema change is needed**. A `qa_pairs` table is not needed either: `chat_feedba
 (with new review columns) is the source of truth and the document is regenerated
 from its approved rows.
 
-### ADR-4 — "Escalate to a human" = notify-and-callback, not a live agent inbox
+### ADR-4 — "Escalate to a human" = notify-and-callback, not a live agent inbox — **superseded in V3 (F3)**
 
-**Decision:** F5 records a handoff request, emails the configured team address and
-emits a `handoff.requested` integration event (F7 pushes it to Slack / Crisp /
-Zendesk). The widget shows a confirmation state. There is **no real-time agent
-console** in this spec — building one is a separate product. This matches
-SiteGPT's button semantics when combined with its integrations, and is stated
-honestly in the UI copy ("We'll get back to you by email").
+**Original decision (V2):** F5 records a handoff request, emails the configured
+team address and emits a `handoff.requested` integration event (F7 pushes it to
+Slack / Crisp / Zendesk). The widget shows a confirmation state. There is **no
+real-time agent console** in this spec — building one is a separate product. This
+matches SiteGPT's button semantics when combined with its integrations, and is
+stated honestly in the UI copy ("We'll get back to you by email").
+
+**Superseded:** V3 built that separate product behind a per-company switch
+(`live_inbox_enabled`, off by default). See `plans/PLAN_V3.md` §3 **D1** (SSE over
+`fetch()` streaming, not WebSocket; presence as TTL leases) and §5 V3-40…V3-46 for
+the queue, routes, stream, widget delivery and docs. What ADR-4 still describes:
+with the flag off nothing changed — one `handoff_requests` row, one email, one
+`handoff.requested` event and no inbox state. With the flag on the same click also
+creates or reuses the session's queue entry, and a manager/admin can answer the
+visitor in the widget (a stored `role='agent'` message). The callback email and
+the `/handoffs` row stay in both modes, so a team that never opens the console
+keeps the V2.1 path.
 
 ### ADR-5 — Digest scheduling rides the existing worker + Redis queue
 
@@ -388,7 +399,9 @@ dimension change; existing 👍/👎 calls without `message_id` still return 200
 ### F5 — Escalate to a human (❌ → ✅)
 
 **Target:** "transition the conversation to a live agent at the push of a button".
-Scope per ADR-4: notify-and-callback, with integration delivery from F7.
+Scope: V2 shipped notify-and-callback with integration delivery from F7; **V3 F3
+supersedes the console part** behind `live_inbox_enabled` (see the ADR-4 note and
+`plans/PLAN_V3.md` §3 D1). The V2.1 path stays the flag-off behaviour.
 
 **Gap:** no handoff code anywhere.
 
@@ -832,7 +845,9 @@ ADR-1 → F8 secrets. F8 API keys → F9 export auth review.
 **Open questions for the reviewer**
 
 1. **Handoff depth:** is notify-and-callback (ADR-4) enough, or is a real-time
-   agent inbox required? The latter is a separate product-sized spec.
+   agent inbox required? The latter is a separate product-sized spec. **Resolved
+   in V3:** F3 implements it as its own opt-in feature (`live_inbox_enabled`),
+   with ADR-4 kept as the flag-off behaviour and marked superseded above.
 2. **Language claim:** do we market "95+ languages" or the honest "replies in
    the visitor's language"? This spec assumes the latter.
 3. **Digest schedule:** UTC hour + weekly `digest_day` as specified, or per-user

@@ -253,6 +253,7 @@ same registry are seeded for every company but never published.
 | `handoff_label` | yes | Button label, an English fallback the language catalogue and `widget_ui_strings` can override. |
 | `require_consent`, `privacy_policy_url` | yes | When consent is on, the contact form shows a required checkbox linked to the policy URL and `POST /api/contacts` answers 400 without `consent: true`, stamping `contacts.consent_at`. Only absolute `http(s)` URLs are used; off/empty by default, so an untouched widget keeps the V1 form. |
 | `handoff_email` | **no** | Where handoff requests are emailed; empty means every active admin/manager. |
+| `live_inbox_enabled` | **no** | V3 (F3) the live-agent inbox: turns on the `/inbox` console, its routes and the widget's live reply path for this company (`false` by default). Admin only — Settings → Appearance → Live-agent inbox writes it through `PUT /api/settings`, and the console's navigation reads `GET /api/inbox/status`. With it off, a handoff click stays the V2.1 row + email + event and no queue entry is created. |
 | `digest_enabled`, `digest_hour`, `digest_day` | **no** | Weekly digest switch, UTC send hour and week start (default `false` / `9` / `monday`). The worker also needs the global `DIGEST_ENABLED`. |
 | `digest_recipients` | **no** | Comma-separated digest recipients; empty means every active admin/manager. |
 | `topic_clustering_enabled`, `topic_cluster_count` | **no** | V3 (F2) topic clustering: opt in to weekly named clusters (`false` by default) and choose how many one week may produce (default `5`, clamped to `1..8`). The worker clusters the **last complete** digest week once per `TOPIC_CLUSTER_INTERVAL_SECONDS`, sending at most `TOPIC_CLUSTER_MAX_MESSAGES` (500) visitor questions of 1000 characters each through **one** embedding call and naming every cluster in **one** LLM call (at most 8 groups × 5 quoted questions — see [Topic clustering](#topic-clustering-f2)). With the flag off, or for any interval that is not exactly whole completed digest weeks, the digest and both analytics routes keep the term-count `top_topics`. Clusters are derived data: erasing a conversation drops the weeks it appears in and `retention_days` expires them too |
@@ -360,6 +361,53 @@ Settings → Appearance → Live-agent inbox), the bot stays silent while a sess
 is with an agent, and the widget opens its live stream/poll only for a
 `waiting`/`human` session — an ordinary bot chat carries no background connection
 and stops as soon as the console closes the conversation.
+
+#### Live inbox (F3)
+
+A company opts in with `live_inbox_enabled`; nothing about the console exists for
+a company that never turns it on.
+
+- **Access model.** Every console route needs manager+ **and** the flag: with it
+  off the whole `/api/inbox` surface is a 404, indistinguishable from a missing
+  route, while the public `POST /api/handoff` keeps working. `GET /api/inbox/status`
+  is the one exception — it answers `{enabled}` to a manager so the navigation can
+  decide whether to show `/inbox`. A conversation is addressed by its UUID and
+  resolved through the company's websites, so a foreign id is a 404. The
+  transcript an agent reads is the stored conversation under the company's
+  existing manager/admin RBAC: there is no per-conversation grant and no separate
+  audit log, the same access the privacy export gives.
+- **Transport and reconnect.** `GET /api/inbox/events` is server-sent events read
+  with `fetch()`, not `EventSource`, because the console sends its JWT in
+  `Authorization` and `EventSource` cannot attach a header. JWT, flag and a Redis
+  `PING` are checked **before** the response starts (401/403, 404, 503), so a
+  stream that cannot deliver is never opened. The body carries `retry:`, a `ready`
+  event with `resync: true`, and `id:` / `event:` / `data:` per notification; the
+  console re-reads the queue, the open transcript and presence after `ready`, after
+  every event and after a reconnect, and retries with exponential backoff. Pub/sub
+  is a hint, never storage: a lost notification costs a refetch, not a wrong
+  screen.
+- **CORS preflight.** `Authorization` makes the stream a non-simple request, so the
+  browser sends `OPTIONS` first. `api/main.py` allows every header and method and
+  enables credentials only for an explicit origin list; keep `CORS_ORIGINS` to the
+  real console origins so the preflight and the credentialed request agree.
+- **Proxy.** The stream sends `Cache-Control: no-cache, no-transform` and
+  `X-Accel-Buffering: no`; disable response buffering for the path and keep the
+  proxy's idle timeout above `INBOX_STREAM_HEARTBEAT_SECONDS` (15 s, the `:`
+  heartbeat interval). Redis down answers `503` before streaming and the console
+  falls back to re-reading the queue.
+- **Presence.** Each open stream owns one lease,
+  `inbox:presence:<company>:<user>:<connection>`, with
+  `INBOX_PRESENCE_TTL_SECONDS` (60, never below two heartbeats), renewed on every
+  tick and deleted by its own connection. Two tabs count as two connections of one
+  agent, and a crashed tab ages out instead of staying online.
+- **Widget side.** An agent's reply is published on
+  `chat:<website_id>:<session_id>` and read by the widget with `fetch()` plus the
+  **K4 session token** — the embed token alone reads nothing. The widget opens that
+  path only for a `waiting`/`human` session (a queued reply or a handoff starts it)
+  and stops on the console's `state` frame or a `409`, so an ordinary bot chat
+  carries no background stream. The embed token is public in the page and
+  replayable (K18 stays accepted): a revocation and compatibility control, not
+  origin authentication.
 
 #### Topic clustering (F2)
 
