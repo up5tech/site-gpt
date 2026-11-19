@@ -14,19 +14,34 @@ these helpers and never touch a row themselves.
 The claim is the concurrency boundary:
 `SELECT … FOR UPDATE SKIP LOCKED` locks one waiting row, so two agents pressing
 Claim at the same moment produce one winner and one `InboxConflict` (the loser
-is answered with a 409). The lock is held until this module commits, which is
-when the state change becomes visible to everyone else — exactly the window in
+is answered with a 409). The lock is held until this module commits, which is when the state change becomes visible to everyone else — exactly the window in
 which the session must not be handed to a second agent.
+
+The console learns about a change through a pub/sub notification (V3-42), never
+instead of the database: `conversation_event` is published by the route **after**
+the service committed, it carries a stable id so a reconnect can drop duplicates,
+and the console still re-reads the row. Pub/sub is not durable and not exactly
+once, so a missed notification costs a poll, not a wrong screen. Presence is a
+lease per connection with a TTL, so a crashed tab ages out and a second tab's
+presence cannot be cleared by the first one leaving.
 """
 
-from datetime import datetime
-from uuid import UUID
+import asyncio
+import json
+from collections.abc import AsyncIterator, Awaitable, Callable
+from datetime import UTC, datetime
+from uuid import UUID, uuid4
 
 from sqlalchemy import func, tuple_
 from sqlalchemy.orm import Session
 
 from site_gpt.app import models
+from site_gpt.app.core.config import (
+    INBOX_PRESENCE_TTL_SECONDS,
+    INBOX_STREAM_HEARTBEAT_SECONDS,
+)
 from site_gpt.app.services import company_settings, conversations
+from site_gpt.app.services import redis as redis_service
 
 # The per-company switch (V3-03 registry key). Off means the whole agent surface
 # answers 404, so an installation that does not run an agent console does not
@@ -522,3 +537,249 @@ def item_for(
     if website is None or website.company_id != company_id:
         raise InboxNotFound("Conversation not found")
     return _describe(db, [(conversation, website.name)])[0]
+
+
+# -- notifications, the event stream and presence (V3-42) -------------------
+#
+# One channel per company: an agent console only ever subscribes to its own
+# company's notifications, so a conversation id from another tenant cannot leak
+# through a broadcast. The SSE body is generated here rather than in the route
+# so the framing, the heartbeat and the lease can be tested without HTTP.
+
+
+def channel(company_id: UUID) -> str:
+    """The pub/sub channel carrying one company's inbox notifications."""
+    return f"inbox:{company_id}"
+
+
+def _stamp(moment: datetime | None) -> str:
+    """An ISO timestamp with a timezone, even for a naive SQLite value."""
+    moment = moment or datetime.now(UTC)
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=UTC)
+    return moment.isoformat()
+
+
+def conversation_event(
+    conversation: models.Conversation, event: str
+) -> dict:
+    """One notification for a state change that is already committed.
+
+    The id comes from the row (`<uuid>:<updated_at>`), not from a fresh random
+    value: publishing the same transition twice — a retry, or a client that
+    reconnects — produces the same id, so the console can drop the duplicate.
+    The rest of the payload is only a hint; the console re-reads the
+    authoritative row, because a published notification can be lost or delayed.
+    """
+    stamp = _stamp(conversation.updated_at)
+    return {
+        "id": f"{conversation.id}:{stamp}",
+        "type": "conversation",
+        "event": event,
+        "conversation_id": str(conversation.id),
+        "website_id": str(conversation.website_id),
+        "session_id": conversation.session_id,
+        "state": conversation.state,
+        "assigned_user_id": (
+            str(conversation.assigned_user_id)
+            if conversation.assigned_user_id is not None
+            else None
+        ),
+        "at": stamp,
+    }
+
+
+def presence_event(user_id: UUID, event: str) -> dict:
+    """An agent came online or went away (one of their tabs, anyway)."""
+    stamp = _stamp(None)
+    return {
+        "id": f"presence:{user_id}:{stamp}",
+        "type": "presence",
+        "event": event,
+        "user_id": str(user_id),
+        "at": stamp,
+    }
+
+
+def sse(event: str, payload: dict) -> str:
+    """One SSE frame. The `id:` line is what makes dedupe after reconnect work."""
+    return (
+        f"id: {payload.get('id', '')}\n"
+        f"event: {event}\n"
+        f"data: {json.dumps(payload)}\n\n"
+    )
+
+
+def forwarded(message: dict) -> str:
+    """A published message as an SSE frame, falling back to raw data."""
+    data = message.get("data")
+    try:
+        payload = json.loads(data)
+    except (TypeError, ValueError):
+        payload = None
+    if not isinstance(payload, dict):
+        return f"event: conversation\ndata: {data}\n\n"
+    return sse(payload.get("type") or "conversation", payload)
+
+
+async def publish(company_id: UUID, payload: dict) -> bool:
+    """Send one notification. Callers do this **after** their commit.
+
+    `redis.publish_event` reports failure instead of raising, so a Redis outage
+    never turns a committed claim into a 500: the console's next poll shows the
+    new state instead.
+    """
+    return await redis_service.publish_event(channel(company_id), payload)
+
+
+def presence_key(company_id: UUID, user_id: UUID, lease_id: str) -> str:
+    """One lease per connection — the lease id is what keeps two tabs apart."""
+    return f"inbox:presence:{company_id}:{user_id}:{lease_id}"
+
+
+def presence_pattern(company_id: UUID) -> str:
+    """Every live lease of one company."""
+    return f"inbox:presence:{company_id}:*"
+
+
+def _presence_user(key: str) -> UUID | None:
+    """The user id out of `inbox:presence:<company>:<user>:<lease>`."""
+    parts = key.split(":")
+    if len(parts) != 5 or parts[0] != "inbox" or parts[1] != "presence":
+        return None
+    try:
+        return UUID(parts[3])
+    except ValueError:
+        return None
+
+
+async def presence(db: Session, company_id: UUID) -> list[dict]:
+    """Who is watching this inbox right now, one entry per agent.
+
+    Leases are counted, not de-duplicated: two tabs are two connections, which
+    is what the console shows beside the name. Because each connection owns its
+    own key, one tab leaving only removes its own lease — the agent stays online
+    while any other tab's lease survives. A Redis outage reads as "nobody
+    online" rather than failing the console: presence is decoration, the queue
+    is not.
+    """
+    keys = await redis_service.lease_keys(presence_pattern(company_id))
+    counts: dict[UUID, int] = {}
+    for key in keys:
+        user_id = _presence_user(key)
+        if user_id is not None:
+            counts[user_id] = counts.get(user_id, 0) + 1
+    names = _user_names(db, set(counts))
+    return [
+        {"user_id": user_id, "name": names.get(user_id), "connections": count}
+        for user_id, count in sorted(counts.items(), key=lambda item: str(item[0]))
+    ]
+
+
+async def event_stream(
+    company_id: UUID,
+    user_id: UUID,
+    *,
+    disconnect: Callable[[], Awaitable[bool]] | None = None,
+    heartbeat_seconds: int | None = None,
+    lease_ttl_seconds: int | None = None,
+    lease_id: str | None = None,
+) -> AsyncIterator[str]:
+    """The SSE body of `GET /api/inbox/events`.
+
+    A `fetch()` stream, not `EventSource`: the console authenticates with the
+    same `Authorization` header as every other admin call, and `EventSource`
+    cannot send one. The route has already checked the flag and that Redis
+    answers; this generator starts with a `retry:` hint and a `ready` event that
+    tells the client to reconcile from the database, then forwards notifications
+    as they are published.
+
+    The socket read is one long-lived task raced against a sleep, instead of a
+    read timeout: a timeout can leave the pub/sub parser mid-frame, while a
+    pending read keeps the connection intact and a heartbeat comment goes out on
+    every quiet tick. A dying Redis ends the stream with an `error` frame so the
+    browser falls back to polling instead of waiting forever, and the lease is
+    renewed on each tick and deleted when the connection ends (the TTL covers a
+    connection that ends without running its cleanup).
+    """
+    heartbeat = max(1, heartbeat_seconds or INBOX_STREAM_HEARTBEAT_SECONDS)
+    ttl = max(heartbeat * 2, lease_ttl_seconds or INBOX_PRESENCE_TTL_SECONDS)
+    lease = lease_id or uuid4().hex
+    key = presence_key(company_id, user_id, lease)
+
+    if not await redis_service.set_lease(
+        key, {"user_id": str(user_id), "connected_at": _stamp(None)}, ttl
+    ):
+        # Redis went away between the route's ping and this lease. Do not hang
+        # the browser on a stream that cannot receive anything.
+        yield sse(
+            "error",
+            {
+                "id": f"error:{uuid4().hex}",
+                "type": "error",
+                "event": "redis_unavailable",
+                "at": _stamp(None),
+            },
+        )
+        return
+
+    # Everything after the lease lives inside the `try`: a client that
+    # disconnects right after connecting must still have its own lease removed.
+    # The TTL covers the process dying mid-stream, not the ordinary close.
+    try:
+        # Subscribe **before** the first frame: `ready` tells the client it is
+        # attached, so anything published after it is delivered here instead of
+        # falling into the gap between the handshake and the subscription (the
+        # client still reconciles from the database, but a closed gap is fewer
+        # refreshes).
+        async with redis_service.subscribe(channel(company_id)) as pubsub:
+            await publish(company_id, presence_event(user_id, "online"))
+            yield "retry: 3000\n\n"
+            yield sse(
+                "ready",
+                {
+                    "id": f"ready:{lease}",
+                    "type": "ready",
+                    "event": "ready",
+                    "resync": True,
+                    "heartbeat_seconds": heartbeat,
+                    "at": _stamp(None),
+                },
+            )
+
+            reader = asyncio.ensure_future(
+                pubsub.get_message(ignore_subscribe_messages=True)
+            )
+            try:
+                while True:
+                    done, _ = await asyncio.wait({reader}, timeout=heartbeat)
+                    if disconnect is not None and await disconnect():
+                        break
+                    await redis_service.renew_lease(key, ttl)
+                    if not done:
+                        yield f": heartbeat {_stamp(None)}\n\n"
+                        continue
+                    try:
+                        message = reader.result()
+                    except Exception as e:  # noqa: BLE001 - end, client reconnects
+                        yield sse(
+                            "error",
+                            {
+                                "id": f"error:{uuid4().hex}",
+                                "type": "error",
+                                "event": "stream_interrupted",
+                                "detail": str(e),
+                                "at": _stamp(None),
+                            },
+                        )
+                        break
+                    reader = asyncio.ensure_future(
+                        pubsub.get_message(ignore_subscribe_messages=True)
+                    )
+                    if message:
+                        yield forwarded(message)
+            finally:
+                reader.cancel()
+    finally:
+        await redis_service.delete_lease(key)
+        await publish(company_id, presence_event(user_id, "offline"))

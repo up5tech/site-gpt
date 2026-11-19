@@ -90,6 +90,51 @@ async def subscribe(channel: str) -> AsyncIterator[object]:
             await pubsub.aclose()
 
 
+async def set_lease(key: str, value: dict, ttl_seconds: int) -> bool:
+    """Write a self-expiring presence lease; False when Redis is unreachable.
+
+    The TTL is the whole safety net: a tab that crashes (or a worker that dies)
+    never runs its cleanup, so the key has to disappear on its own. Renewal is
+    `renew_lease`, and each connection owns its own key, which is why one tab
+    closing cannot clear another tab's presence.
+    """
+    try:
+        await get_client().set(key, json.dumps(value), ex=ttl_seconds)  # type: ignore[attr-defined]
+    except Exception as e:  # noqa: BLE001 - presence is best-effort
+        print(f"[redis] lease {key} failed: {e}")
+        return False
+    return True
+
+
+async def renew_lease(key: str, ttl_seconds: int) -> bool:
+    """Push a lease's expiry out while its connection is still alive."""
+    try:
+        renewed = await get_client().expire(key, ttl_seconds)  # type: ignore[attr-defined]
+    except Exception as e:  # noqa: BLE001 - the next tick can retry
+        print(f"[redis] renew {key} failed: {e}")
+        return False
+    return bool(renewed)
+
+
+async def delete_lease(key: str) -> bool:
+    """Drop one lease on a clean disconnect; False when Redis is unreachable."""
+    try:
+        await get_client().delete(key)  # type: ignore[attr-defined]
+    except Exception as e:  # noqa: BLE001 - the TTL removes it instead
+        print(f"[redis] delete {key} failed: {e}")
+        return False
+    return True
+
+
+async def lease_keys(pattern: str) -> list[str]:
+    """Every key matching `pattern`, or [] when Redis is unreachable."""
+    try:
+        return list(await get_client().keys(pattern))  # type: ignore[attr-defined]
+    except Exception as e:  # noqa: BLE001 - callers treat [] as "nobody online"
+        print(f"[redis] keys {pattern} failed: {e}")
+        return []
+
+
 async def increment(key: str, ttl_seconds: int | None = None) -> int | None:
     """Atomically increment `key`, setting its TTL on first use.
 

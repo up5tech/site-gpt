@@ -14,7 +14,8 @@ an empty one. The public handoff endpoint is untouched and keeps working.
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from site_gpt.app import models
@@ -25,12 +26,17 @@ from site_gpt.app.schemas.inbox import (
     InboxAssign,
     InboxConversation,
     InboxConversationDetail,
+    InboxPresence,
 )
 from site_gpt.app.services import conversations, inbox
+from site_gpt.app.services import redis as redis_service
 
 router = APIRouter()
 
 NOT_ENABLED = "Live inbox is not enabled for this company"
+STREAM_UNAVAILABLE = (
+    "The live inbox stream needs Redis; poll the queue until it is back"
+)
 
 
 def live_inbox_user(
@@ -116,27 +122,35 @@ def get_inbox_conversation(
 @router.post(
     "/conversations/{conversation_id}/claim", response_model=InboxConversation
 )
-def claim_conversation(
+async def claim_conversation(
     conversation_id: UUID,
     db: Session = Depends(get_db),
     user: models.User = Depends(live_inbox_user),
 ):
-    """Take a waiting conversation. The loser of a race gets 409."""
+    """Take a waiting conversation. The loser of a race gets 409.
+
+    The route is `async` for one reason: `inbox.claim` commits before returning,
+    so the notification published right after it can only be sent once the new
+    state is durable. Publishing anything earlier would tell the other consoles
+    about a claim the database might still roll back.
+    """
     try:
         row = inbox.claim(db, user.company_id, conversation_id, user)
-        return inbox.item_for(db, user.company_id, row)
+        item = inbox.item_for(db, user.company_id, row)
     except inbox.InboxNotFound as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
         ) from exc
     except (inbox.InboxConflict, conversations.ConversationStateError) as exc:
         raise _conflict(exc) from exc
+    await inbox.publish(user.company_id, inbox.conversation_event(row, "claimed"))
+    return item
 
 
 @router.post(
     "/conversations/{conversation_id}/assign", response_model=InboxConversation
 )
-def assign_conversation(
+async def assign_conversation(
     conversation_id: UUID,
     body: InboxAssign,
     db: Session = Depends(get_db),
@@ -151,19 +165,21 @@ def assign_conversation(
         )
     try:
         row = inbox.assign(db, user.company_id, conversation_id, target)
-        return inbox.item_for(db, user.company_id, row)
+        item = inbox.item_for(db, user.company_id, row)
     except inbox.InboxNotFound as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
         ) from exc
     except (inbox.InboxConflict, conversations.ConversationStateError) as exc:
         raise _conflict(exc) from exc
+    await inbox.publish(user.company_id, inbox.conversation_event(row, "assigned"))
+    return item
 
 
 @router.post(
     "/conversations/{conversation_id}/release", response_model=InboxConversation
 )
-def release_conversation(
+async def release_conversation(
     conversation_id: UUID,
     db: Session = Depends(get_db),
     user: models.User = Depends(live_inbox_user),
@@ -171,17 +187,21 @@ def release_conversation(
     """Put the conversation back in the queue without closing it."""
     try:
         row = inbox.release(db, user.company_id, conversation_id, user)
-        return inbox.item_for(db, user.company_id, row)
+        item = inbox.item_for(db, user.company_id, row)
     except inbox.InboxNotFound as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
         ) from exc
     except (inbox.InboxConflict, conversations.ConversationStateError) as exc:
         raise _conflict(exc) from exc
+    await inbox.publish(user.company_id, inbox.conversation_event(row, "released"))
+    return item
 
 
-@router.post("/conversations/{conversation_id}/close", response_model=InboxConversation)
-def close_conversation(
+@router.post(
+    "/conversations/{conversation_id}/close", response_model=InboxConversation
+)
+async def close_conversation(
     conversation_id: UUID,
     db: Session = Depends(get_db),
     user: models.User = Depends(live_inbox_user),
@@ -189,10 +209,67 @@ def close_conversation(
     """Close a queued or claimed conversation; no further agent work is expected."""
     try:
         row = inbox.close(db, user.company_id, conversation_id, user)
-        return inbox.item_for(db, user.company_id, row)
+        item = inbox.item_for(db, user.company_id, row)
     except inbox.InboxNotFound as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
         ) from exc
     except (inbox.InboxConflict, conversations.ConversationStateError) as exc:
         raise _conflict(exc) from exc
+    await inbox.publish(user.company_id, inbox.conversation_event(row, "closed"))
+    return item
+
+
+@router.get("/events")
+async def inbox_events(
+    request: Request,
+    user: models.User = Depends(live_inbox_user),
+):
+    """Live inbox notifications as server-sent events.
+
+    Read with `fetch()` and a streaming body reader, not `EventSource`: the
+    console already sends `Authorization: Bearer …` on every call, and
+    `EventSource` cannot attach a header. Both gates run **before** the response
+    starts — the flag (the whole surface is a 404 when off) and Redis (503, and
+    the console keeps polling the queue), because a stream that can never
+    deliver anything is worse than a clear failure.
+
+    Notifications are hints: after `ready` and after every event the console
+    re-reads the row/list it cares about, so a lost message costs a refresh
+    rather than a stale screen. Proxies must not buffer the body
+    (`X-Accel-Buffering: no`, `Cache-Control: no-transform`).
+    """
+    if not await redis_service.ping():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=STREAM_UNAVAILABLE,
+        )
+
+    return StreamingResponse(
+        inbox.event_stream(
+            user.company_id, user.id, disconnect=request.is_disconnected
+        ),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.get("/presence", response_model=list[InboxPresence])
+async def inbox_presence(
+    db: Session = Depends(get_db),
+    user: models.User = Depends(live_inbox_user),
+):
+    """Which agents currently have the inbox open, counted by connection.
+
+    Read from Redis leases rather than the database: presence is ephemeral and
+    must disappear on its own when a tab crashes, which a TTL gives for free.
+    A Redis outage answers an empty list — the queue is still usable without
+    avatars.
+    """
+    return [
+        InboxPresence(**row) for row in await inbox.presence(db, user.company_id)
+    ]

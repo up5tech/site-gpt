@@ -66,3 +66,15 @@ class InboxAssign(BaseModel):
     """Hand a waiting conversation to a teammate."""
 
     user_id: UUID
+
+
+class InboxPresence(BaseModel):
+    """An agent watching the inbox right now (V3-42).
+
+    One entry per user, `connections` counting their open event streams: two
+    tabs are one agent, and closing one tab leaves the other's lease alive.
+    """
+
+    user_id: UUID
+    name: str | None = None
+    connections: int = 1
