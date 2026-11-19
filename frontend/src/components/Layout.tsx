@@ -4,8 +4,10 @@ import {
   UserOutlined,
 } from '@ant-design/icons';
 import { Dropdown, Layout, MenuProps, Space, Typography } from 'antd';
+import { useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { getInboxStatus } from '../utils/api';
 
 const { Header, Content } = Layout;
 const { Text } = Typography;
@@ -19,6 +21,29 @@ export function LayoutComponent({ children }: Props) {
   const location = useLocation();
   const navigate = useNavigate();
 
+  // The live-agent console is a per-company rollout: with the flag off its
+  // whole surface answers 404, so the navigation must not offer it. One tiny
+  // read per session answers `{enabled}` without touching the queue.
+  const [inboxEnabled, setInboxEnabled] = useState(false);
+
+  useEffect(() => {
+    if (!isAuthenticated) {
+      setInboxEnabled(false);
+      return;
+    }
+    let cancelled = false;
+    getInboxStatus()
+      .then((response) => {
+        if (!cancelled) setInboxEnabled(response.data.enabled);
+      })
+      .catch(() => {
+        if (!cancelled) setInboxEnabled(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isAuthenticated]);
+
   const menuItems = [
     { key: '/', label: 'Dashboard' },
     { key: '/websites', label: 'Websites' },
@@ -28,6 +53,7 @@ export function LayoutComponent({ children }: Props) {
     { key: '/documents', label: 'Documents' },
     { key: '/training', label: 'Training' },
     { key: '/handoffs', label: 'Handoffs' },
+    ...(inboxEnabled ? [{ key: '/inbox', label: 'Inbox' }] : []),
     { key: '/analytics', label: 'Analytics' },
     { key: '/integrations', label: 'Integrations' },
   ];

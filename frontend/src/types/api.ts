@@ -388,6 +388,69 @@ export interface FeedbackReview {
   reviewed_answer?: string;
 }
 
+// Live-agent inbox (V3-41…V3-44). A conversation is addressed by its UUID; the
+// session id alone is only unique inside one website.
+export type InboxState = 'bot' | 'waiting' | 'human' | 'closed';
+
+export interface InboxStatus {
+  /** The company's `live_inbox_enabled` switch. */
+  enabled: boolean;
+}
+
+export interface InboxConversation {
+  id: string;
+  website_id: string;
+  website_name?: string | null;
+  session_id: string;
+  state: InboxState;
+  assigned_user_id?: string | null;
+  assigned_user_name?: string | null;
+  claimed_at?: string | null;
+  closed_at?: string | null;
+  last_message_at: string;
+  created_at: string;
+  message_count: number;
+  title?: string | null;
+  contact_name?: string | null;
+  contact_email?: string | null;
+}
+
+export interface InboxMessage {
+  id: string;
+  role: 'user' | 'assistant' | 'agent';
+  message: string;
+  author_user_id?: string | null;
+  author_name?: string | null;
+  created_at: string;
+}
+
+export interface InboxContact {
+  id: string;
+  first_name: string;
+  last_name: string;
+  email: string;
+  consent_at?: string | null;
+  created_at: string;
+}
+
+export interface InboxConversationDetail extends InboxConversation {
+  messages: InboxMessage[];
+  contact?: InboxContact | null;
+}
+
+export interface InboxList {
+  total: number;
+  page: number;
+  limit: number;
+  items: InboxConversation[];
+}
+
+export interface InboxPresence {
+  user_id: string;
+  name?: string | null;
+  connections: number;
+}
+
 /** Public widget config fetched by the embeddable widget (key/value map). */
 export type WidgetConfig = Record<string, string>;
 

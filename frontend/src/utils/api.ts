@@ -1,5 +1,5 @@
 import axios, { AxiosInstance } from 'axios';
-import type { AnalyticsSummary, ApiKeyCreated, ApiKeyItem, ApiKeyPayload, ChatResponse, ContactList, ConversationList, ConversationMessages, DashboardStats, DeliveryAttempt, DeliveryList, DeliveryStatus, DigestPreview, DigestSendResult, FeedbackItem, FeedbackList, FeedbackRequest, FeedbackReview, HandoffList, HandoffUpdate, IntegrationItem, IntegrationPayload, IntegrationTestResult, LoginResponse, RecentConversations, RegisterRequest, RetentionPurgeResult, Setting, Website, WebsiteQuota, WidgetConfig } from '../types/api';
+import type { AnalyticsSummary, ApiKeyCreated, ApiKeyItem, ApiKeyPayload, ChatResponse, ContactList, ConversationList, ConversationMessages, DashboardStats, DeliveryAttempt, DeliveryList, DeliveryStatus, DigestPreview, DigestSendResult, FeedbackItem, FeedbackList, FeedbackRequest, FeedbackReview, HandoffList, HandoffUpdate, InboxConversation, InboxConversationDetail, InboxList, InboxMessage, InboxPresence, InboxState, InboxStatus, IntegrationItem, IntegrationPayload, IntegrationTestResult, LoginResponse, RecentConversations, RegisterRequest, RetentionPurgeResult, Setting, Website, WebsiteQuota, WidgetConfig } from '../types/api';
 
 // Base API instance with proxy /api -> backend
 const api: AxiosInstance = axios.create({
@@ -196,6 +196,50 @@ export const getConversationMessages = (websiteId: string, sessionId: string) =>
 export const deleteConversation = (websiteId: string, sessionId: string) =>
   api.delete('/conversations/' + encodeURIComponent(sessionId), {
     params: { website_id: websiteId },
+  });
+
+// Live-agent inbox (V3-44). `getInboxStatus` is the navigation gate: it answers
+// `{enabled}` for a manager instead of the 404 the rest of the surface gives
+// when the company has not turned the inbox on.
+export const getInboxStatus = () => api.get<InboxStatus>('/inbox/status');
+
+export const getInboxConversations = (
+  params: {
+    state?: InboxState;
+    website_id?: string;
+    assigned_user_id?: string;
+    page?: number;
+    limit?: number;
+  } = {},
+) => api.get<InboxList>('/inbox/conversations', { params });
+
+export const getInboxConversation = (id: string) =>
+  api.get<InboxConversationDetail>(`/inbox/conversations/${id}`);
+
+export const claimInboxConversation = (id: string) =>
+  api.post<InboxConversation>(`/inbox/conversations/${id}/claim`);
+
+export const releaseInboxConversation = (id: string) =>
+  api.post<InboxConversation>(`/inbox/conversations/${id}/release`);
+
+export const closeInboxConversation = (id: string) =>
+  api.post<InboxConversation>(`/inbox/conversations/${id}/close`);
+
+export const sendInboxReply = (id: string, message: string) =>
+  api.post<InboxMessage>(`/inbox/conversations/${id}/messages`, { message });
+
+export const getInboxPresence = () =>
+  api.get<InboxPresence[]>('/inbox/presence');
+
+/**
+ * The console's event stream, opened with `fetch()`: `EventSource` cannot send
+ * the JWT `Authorization` header. The caller owns the abort signal and reads
+ * the body itself.
+ */
+export const openInboxEvents = (signal: AbortSignal) =>
+  fetch(`${import.meta.env.VITE_BACKEND_URL}/api/inbox/events`, {
+    headers: { Authorization: `Bearer ${getAuthToken() || ''}` },
+    signal,
   });
 
 // Contacts (visitors who filled the widget pre-chat form)

@@ -12,6 +12,7 @@ import { Login } from './pages/Login';
 import { Register } from './pages/Register';
 import { Analytics } from './pages/Analytics';
 import { Handoffs } from './pages/Handoffs';
+import { Inbox } from './pages/Inbox';
 import { Integrations } from './pages/Integrations';
 import { Settings } from './pages/Settings';
 import { Training } from './pages/Training';
@@ -104,6 +105,14 @@ function App() {
                 element={
                   <ProtectedRoute>
                     <Handoffs />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path='/inbox'
+                element={
+                  <ProtectedRoute>
+                    <Inbox />
                   </ProtectedRoute>
                 }
               />

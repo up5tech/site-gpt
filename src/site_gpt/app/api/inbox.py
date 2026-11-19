@@ -29,6 +29,7 @@ from site_gpt.app.schemas.inbox import (
     InboxMessage,
     InboxPresence,
     InboxReply,
+    InboxStatus,
 )
 from site_gpt.app.services import conversations, inbox, rag
 from site_gpt.app.services import redis as redis_service
@@ -61,6 +62,21 @@ def live_inbox_user(
 def _conflict(exc: Exception) -> HTTPException:
     """Map a service refusal onto 409 (someone else holds it / bad transition)."""
     return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+
+
+@router.get("/status", response_model=InboxStatus)
+def inbox_status(
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_manager_user),
+):
+    """Whether this company's agent console is switched on.
+
+    Deliberately not behind `live_inbox_user`: that dependency answers 404 when
+    the flag is off, which is right for the surface itself but leaves the
+    console's navigation unable to tell "off" from "missing". Nothing here is
+    company data, only the per-company switch a manager may already use.
+    """
+    return InboxStatus(enabled=inbox.enabled(db, user.company_id))
 
 
 @router.get("/conversations", response_model=PaginatedResponse)

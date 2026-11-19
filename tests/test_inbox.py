@@ -222,6 +222,24 @@ class DisabledInboxTests(InboxTestCase):
         self.assertEqual(row.state, "waiting")
 
 
+class StatusTests(InboxTestCase):
+    """The console's navigation reads the flag without hitting a 404 surface."""
+
+    def test_a_manager_reads_the_flag(self):
+        response = self._client().get("/api/inbox/status")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json(), {"enabled": True})
+
+    def test_off_answers_false_instead_of_404(self):
+        self._setting("live_inbox_enabled", "false")
+
+        response = self._client().get("/api/inbox/status")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertFalse(response.json()["enabled"])
+
+
 class ClaimTests(InboxTestCase):
     def test_an_agent_claims_a_waiting_conversation(self):
         row = self._conversation()

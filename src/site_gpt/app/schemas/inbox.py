@@ -11,6 +11,16 @@ from uuid import UUID
 from pydantic import BaseModel
 
 
+class InboxStatus(BaseModel):
+    """Whether the company runs the agent console (V3-44 navigation gate).
+
+    Manager-readable on purpose: the console's navigation needs to know whether
+    the page exists without probing a route that answers 404 when it is off.
+    """
+
+    enabled: bool
+
+
 class InboxConversation(BaseModel):
     """One queue entry: who owns it, how far along it is, who the visitor is."""
 
