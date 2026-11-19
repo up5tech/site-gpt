@@ -48,9 +48,11 @@ incremental grant.
 `widget_ui_strings`, `widget_logo_url`, `handoff_enabled`, `handoff_label`,
 `require_consent`, `privacy_policy_url`) plus `llm_provider` / `llm_model`.
 
-Internal settings — `handoff_email`, `digest_*`, `daily_message_limit` — are
-rejected with **400**. A leaked API key must not be able to redirect handoff
-mail, subscribe an attacker to the digest or raise a quota.
+Internal settings — `handoff_email`, `digest_*`, `daily_message_limit`,
+`retention_days`, and the V3 flags `topic_clustering_enabled`,
+`topic_cluster_count` and `live_inbox_enabled` — are rejected with **400**. A
+leaked API key must not be able to redirect handoff mail, subscribe an attacker
+to the digest, raise a quota or switch on the live-agent inbox.
 
 ## Endpoints
 
@@ -110,6 +112,12 @@ Query param `days` (1–90, default 7). Returns `conversation_volume`,
 `message_count`, `new_contacts`, `feedback_up`, `feedback_down`, `top_topics`
 and `unanswered_questions` (each with a deep link into the admin transcript) —
 the same aggregation the weekly digest emails.
+
+`top_topics` is the term-frequency list by default. For a company that opted into
+V3 topic clustering (`topic_clustering_enabled=true`) and asks for a range that is
+exactly whole completed digest weeks, it carries the named clusters of those
+windows instead — the same substitution the digest makes — so a caller should not
+assume the entries are single terms.
 
 ## Rate limits
 

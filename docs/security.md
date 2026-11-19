@@ -235,6 +235,7 @@ an *unclaimed* session is allowed; see §5 for the trade-off.
 | `users` | Name, email, argon2 password hash, reset tokens | Yes |
 | `api_keys` | Prefix, peppered hash, scopes, timestamps | No raw secret |
 | `session_tokens` | Per-session token **hash**, expiry, last use | A credential once removed; not personal data |
+| `embed_tokens` | Per website: `sha256(token)`, 12-character prefix, issue/rotate/revoke timestamps, last use | A bearer value that ships in the customer's page by design (K18): revocable, hash-only at rest, never personal data |
 | `integrations` | Provider config **including credentials** | Credentials, not personal data |
 | `integration_deliveries` | Event payload (may contain a lead's name/email), status, attempts, scrubbed error | Personal data copied out of `contacts` for retry. A **dead** row's payload is cleared by the worker; settled rows are deleted after `DELIVERY_RETENTION_DAYS` (default 30). Not governed by the per-company `retention_days` |
 | `digest_log` | Which weekly period was sent to whom | Recipient personal data |
