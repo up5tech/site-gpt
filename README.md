@@ -249,7 +249,7 @@ same registry are seeded for every company but never published.
 | `widget_language` | yes | `auto` follows the visitor's browser language; a code such as `vi` forces a locale. Built-in labels ship for English and Vietnamese — any other language keeps the English labels until overridden. |
 | `widget_ui_strings` | yes | JSON object overriding individual widget labels, e.g. `{"startChat": "Bắt đầu", "sources": "Nguồn:"}`. Malformed JSON is ignored and the falls back to the shipped labels. |
 | `widget_logo_url` | yes | Chat header badge and bot avatar. Only `https://` URLs and raster `data:image/...;base64` URIs are used; anything else falls back to 🤖. |
-| `handoff_enabled` | yes | Shows a "talk to a human" button in the chat header. A click records one request (upserted per session), emails the team and emits `handoff.requested`; the visitor stays in the chat. Off by default. |
+| `handoff_enabled` | yes | Shows a "talk to a human" button in the chat header. A click records one request (upserted per session), emails the team and emits `handoff.requested`; the visitor stays in the chat. With the company's `live_inbox_enabled` on it also creates or reuses the session's queue entry (`waiting`), and an agent claim/close moves that request to `accepted`/`closed`. Off by default. |
 | `handoff_label` | yes | Button label, an English fallback the language catalogue and `widget_ui_strings` can override. |
 | `require_consent`, `privacy_policy_url` | yes | When consent is on, the contact form shows a required checkbox linked to the policy URL and `POST /api/contacts` answers 400 without `consent: true`, stamping `contacts.consent_at`. Only absolute `http(s)` URLs are used; off/empty by default, so an untouched widget keeps the V1 form. |
 | `handoff_email` | **no** | Where handoff requests are emailed; empty means every active admin/manager. |
@@ -285,7 +285,9 @@ Keys understood by `widget_ui_strings`: `clear`, `send`, `thinking`, `sources`,
   and emits an integration event. `/handoffs` is the team's queue.
 - **Integrations (webhook, Slack, Zendesk, Crisp)** — `/integrations` configures
   one per provider, each subscribed to `lead.captured`, `feedback.received`,
-  `handoff.requested` and `digest.generated`. Webhooks are signed
+  `handoff.requested` and `digest.generated`. A `handoff.requested` payload carries
+  `conversation_id`/`conversation_state` only when the inbox queued the session, so
+  receivers written for V2.1 keep the same keys. Webhooks are signed
   (`X-SiteGPT-Signature: sha256=…` over `<timestamp>.<body>`, keyed with
   `INTEGRATION_WEBHOOK_SECRET`). Every event is written to
   `integration_deliveries` **before** it is sent, so a lead or rating is never
@@ -353,8 +355,9 @@ topic clustering (F2), signed off at gate `V3-3G`. Wave 4 lands the live-agent
 inbox (F3): the `/inbox` console, its queue/detail/reply routes, the fetch-based
 SSE stream with presence, and agent replies rendered in the widget. The console
 and its routes exist only for a company with `live_inbox_enabled=true` (the page
-and its navigation link read `GET /api/inbox/status`), the bot stays silent while
-a session is with an agent, and the widget opens its live stream/poll only for a
+and its navigation link read `GET /api/inbox/status`; an admin turns it on in
+Settings → Appearance → Live-agent inbox), the bot stays silent while a session
+is with an agent, and the widget opens its live stream/poll only for a
 `waiting`/`human` session — an ordinary bot chat carries no background connection
 and stops as soon as the console closes the conversation.
 
