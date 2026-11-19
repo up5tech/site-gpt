@@ -164,35 +164,35 @@ def _topics(messages: list[models.ChatMessage]) -> list[dict]:
 
 def _topic_groups(
     db: Session, company_id: UUID, start: datetime, end: datetime
-) -> list[dict] | None:
-    """Named clusters for `[start, end)`, or None when it is not exactly covered.
+) -> list[dict]:
+    """Named clusters for `[start, end)`, or `[]` when it is not one complete week.
 
-    `topics.completed_windows` is the whole gate: it returns None unless the
-    interval is a whole number of digest-aligned weeks and every window has a
-    `completed` run, which is also what keeps a rolling `/analytics` window on the
-    term-count fallback instead of presenting a partly-built period as whole. The
+    `topics.completed_windows` is the whole gate: it answers None unless the
+    interval is digest-aligned weeks with a `completed` run each, which is also
+    what keeps a rolling `/analytics` window on the term-count fallback instead of
+    presenting a partly-built period as whole. A digest period is one week
+    (`previous_period`), so several weeks, an unaligned interval or a window with
+    no finished run all return no groups and the payload keeps `top_topics`. The
     feature is opt-in per company, so the flag is checked before any cluster read.
     """
     if not company_settings.flag(db, company_id, "topic_clustering_enabled"):
-        return None
+        return []
     # Imported here because `topics` reads this module (stopwords, normalize_period).
     from site_gpt.app.services import topics
 
-    windows = topics.completed_windows(db, company_id, start, end)
-    if windows is None:
-        return None
+    windows = topics.completed_windows(db, company_id, start, end) or []
+    if len(windows) != 1:
+        return []
     return [
         {
             "label": cluster.label,
             "summary": cluster.summary,
-            "period_start": window_start.isoformat(),
-            # Window-level counts, repeated on every row by the writer: they say
-            # how much of the week's questions the groups were built from.
+            # Window-level counts the writer repeats on every row: how much of the
+            # week's questions these groups were built from.
             "sampled_messages": cluster.sampled_messages,
             "eligible_messages": cluster.eligible_messages,
         }
-        for window_start, clusters in windows
-        for cluster in clusters
+        for cluster in windows[0][1]
     ]
 
 
@@ -270,7 +270,7 @@ def build_digest(
     # default) the payload is the V2.1 one key for key. `top_topics` stays either
     # way: `/api/v1` clients keep reading the fields they already know.
     groups = _topic_groups(db, company_id, start, end)
-    if groups is not None:
+    if groups:
         payload["topic_groups"] = groups
     return payload
 
@@ -288,20 +288,16 @@ def render_digest_html(data: dict, company_name: str = "") -> str:
 
     groups = data.get("topic_groups") or []
     if groups:
-        # Window-level counts, so a truncated sample is disclosed rather than
-        # presented as the week's total.
-        sampled = max(int(group["sampled_messages"]) for group in groups)
-        eligible = max(int(group["eligible_messages"]) for group in groups)
+        # Every group carries the same window-level pair (the digest is one week),
+        # so the first one discloses a truncated sample for the whole report.
+        sampled = groups[0]["sampled_messages"]
+        eligible = groups[0]["eligible_messages"]
         topics_block = (
             "<h3>Topic groups</h3><ul>"
             + "".join(
                 f"<li><strong>{html.escape(str(group['label']))}</strong>"
-                + (
-                    f" — {html.escape(str(group['summary']))}"
-                    if group.get("summary")
-                    else ""
-                )
-                + "</li>"
+                f"{' — ' + html.escape(str(group['summary'])) if group.get('summary') else ''}"
+                "</li>"
                 for group in groups
             )
             + "</ul>"

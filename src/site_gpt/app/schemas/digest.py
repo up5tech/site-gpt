@@ -9,13 +9,13 @@ class DigestTopic(BaseModel):
 class DigestGroup(BaseModel):
     """A named topic group, read back from the stored clusters (V3 F2).
 
-    Present only when the period was exactly a whole number of completed digest
-    weeks; `sampled_messages`/`eligible_messages` disclose a truncated sample.
+    Present only when the period was exactly one completed digest week;
+    `sampled_messages`/`eligible_messages` (the week's counts, the same on every
+    group) disclose a truncated sample.
     """
 
     label: str
     summary: str | None = None
-    period_start: str
     sampled_messages: int
     eligible_messages: int
 

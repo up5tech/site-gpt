@@ -289,7 +289,7 @@ export interface DigestTopic {
 export interface DigestGroup {
   label: string;
   summary?: string | null;
-  period_start: string;
+  /** The week's counts: the same on every group of one report. */
   sampled_messages: number;
   eligible_messages: number;
 }
@@ -313,7 +313,7 @@ export interface DigestSummary {
   feedback_up: number;
   feedback_down: number;
   top_topics: DigestTopic[];
-  /** Empty unless the period was exactly whole completed digest weeks. */
+  /** Empty unless the period was exactly one completed digest week. */
   topic_groups: DigestGroup[];
   unanswered_questions: UnansweredQuestion[];
 }

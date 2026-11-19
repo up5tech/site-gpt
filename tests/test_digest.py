@@ -12,12 +12,8 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-
 from site_gpt.app import models
 from site_gpt.app.api import digest as digest_api
-from site_gpt.app.db.base import Base
 from site_gpt.app.services import digest, topics
 
 
@@ -189,7 +185,6 @@ class RenderDigestHtmlTests(unittest.TestCase):
                     {
                         "label": "Pricing and plans",
                         "summary": "Visitors ask what it costs.",
-                        "period_start": "2026-11-09T00:00:00+00:00",
                         "sampled_messages": 40,
                         "eligible_messages": 50,
                     }
@@ -209,7 +204,6 @@ class RenderDigestHtmlTests(unittest.TestCase):
                     {
                         "label": "<b>Prices</b>",
                         "summary": "<script>x</script>",
-                        "period_start": "2026-11-09T00:00:00+00:00",
                         "sampled_messages": 1,
                         "eligible_messages": 1,
                     }
@@ -348,7 +342,6 @@ class TopicGroupTests(unittest.TestCase):
                 {
                     "label": "Pricing",
                     "summary": "Visitors ask what it costs.",
-                    "period_start": self.START.isoformat(),
                     "sampled_messages": 40,
                     "eligible_messages": 50,
                 }
@@ -357,90 +350,22 @@ class TopicGroupTests(unittest.TestCase):
         # The old field survives, so existing clients keep reading it.
         self.assertEqual(data["top_topics"], [])
 
-    def test_flag_on_keeps_terms_when_coverage_is_not_exact(self):
-        db = self._db("true")
-        with patch.object(digest, "_period_messages", return_value=[]), patch.object(
-            topics, "completed_windows", return_value=None
-        ):
-            data = digest.build_digest(db, uuid4(), self.START, self.END)
-
-        self.assertNotIn("topic_groups", data)
-
-
-class TopicGroupDatabaseTests(unittest.TestCase):
-    """The read path over real rows: the flag row, the join and the run status."""
-
-    START = datetime(2026, 11, 9, tzinfo=UTC)
-    END = START + timedelta(days=7)
-    TABLES = [
-        models.Company.__table__,
-        models.Website.__table__,
-        models.ChatMessage.__table__,
-        models.Contact.__table__,
-        models.ChatFeedback.__table__,
-        models.Setting.__table__,
-        models.TopicCluster.__table__,
-        models.TopicClusterRun.__table__,
-    ]
-
-    def setUp(self):
-        engine = create_engine("sqlite+pysqlite:///:memory:")
-        Base.metadata.create_all(engine, tables=self.TABLES)
-        self.db = sessionmaker(bind=engine)()
-        self.company = models.Company(name="Acme")
-        self.db.add(self.company)
-        self.db.commit()
-
-    def tearDown(self):
-        self.db.close()
-
-    def _window(self, status="completed"):
-        self.db.add(
-            models.Setting(
-                company_id=self.company.id,
-                key="topic_clustering_enabled",
-                value="true",
-            )
+    def test_flag_on_keeps_terms_unless_one_week_is_complete(self):
+        cluster = SimpleNamespace(
+            label="Pricing", summary=None, sampled_messages=1, eligible_messages=1
         )
-        self.db.add(
-            models.TopicClusterRun(
-                company_id=self.company.id,
-                period_start=self.START,
-                status=status,
-            )
-        )
-        self.db.add(
-            models.TopicCluster(
-                company_id=self.company.id,
-                period_start=self.START,
-                cluster_key="c1",
-                label="Pricing and plans",
-                summary="Visitors ask what it costs.",
-                sampled_messages=40,
-                eligible_messages=50,
-            )
-        )
-        self.db.commit()
+        # A digest period is one week: an unaligned/missing interval and a set of
+        # completed weeks both keep the term list rather than invent an aggregate.
+        for windows in (None, [], [(self.START, [cluster]), (self.END, [cluster])]):
+            with self.subTest(windows=windows):
+                with patch.object(
+                    digest, "_period_messages", return_value=[]
+                ), patch.object(topics, "completed_windows", return_value=windows):
+                    data = digest.build_digest(
+                        self._db("true"), uuid4(), self.START, self.END
+                    )
 
-    def test_a_completed_week_reaches_the_payload_and_the_email(self):
-        self._window()
-
-        data = digest.build_digest(self.db, self.company.id, self.START, self.END)
-
-        self.assertEqual(
-            [(group["label"], group["sampled_messages"]) for group in data["topic_groups"]],
-            [("Pricing and plans", 40)],
-        )
-        self.assertIn(
-            "Named from 40 of 50 visitor questions", digest.render_digest_html(data)
-        )
-
-    def test_an_unfinished_week_falls_back_to_terms(self):
-        self._window(status="running")
-
-        data = digest.build_digest(self.db, self.company.id, self.START, self.END)
-
-        self.assertNotIn("topic_groups", data)
+                self.assertNotIn("topic_groups", data)
 
 
 class ClaimPeriodTests(unittest.TestCase):

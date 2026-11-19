@@ -98,14 +98,8 @@ export function Analytics() {
 
   const ratings = data ? data.feedback_up + data.feedback_down : 0;
   const positiveShare = ratings > 0 ? Math.round(((data?.feedback_up ?? 0) / ratings) * 100) : 0;
-  // Only populated when the window is exactly whole, completed digest weeks.
+  // Only populated when the window is exactly one completed digest week.
   const groups = data?.topic_groups ?? [];
-  const groupSampled = groups.length
-    ? Math.max(...groups.map((group) => group.sampled_messages))
-    : 0;
-  const groupEligible = groups.length
-    ? Math.max(...groups.map((group) => group.eligible_messages))
-    : 0;
 
   const topicColumns: ColumnsType<DigestTopic> = [
     { title: 'Topic', dataIndex: 'term', key: 'term' },
@@ -245,7 +239,8 @@ export function Analytics() {
           style={{ marginBottom: 16 }}
           extra={
             <Text type='secondary' style={{ fontSize: 12 }}>
-              Named from {groupSampled} of {groupEligible} visitor questions
+              Named from {groups[0].sampled_messages} of{' '}
+              {groups[0].eligible_messages} visitor questions
             </Text>
           }
         >
@@ -253,7 +248,7 @@ export function Analytics() {
             columns={groupColumns}
             dataSource={groups}
             loading={loading}
-            rowKey={(item) => `${item.period_start}-${item.label}`}
+            rowKey={(_, index) => String(index)}
             pagination={false}
             size='small'
           />
