@@ -127,8 +127,8 @@ npm install && npm run dev   # :5173
 | `SESSION_TOKEN_MODE` | `compat` | K4: whether reading a session needs its token. `compat` keeps a tokenless read of an *unclaimed* session working for older embeds; `enforce` requires the token everywhere. See [`docs/security.md`](docs/security.md) §5 |
 | `SESSION_TOKEN_TTL_SECONDS` | `2592000` | lifetime of one widget session token value (30 days); an expired token can still be rotated by its holder |
 | `SESSION_TOKEN_MAX_LIFETIME_SECONDS` | `15552000` | absolute lifetime of a session's token chain, counted from its creation (180 days). Rotation cannot extend it, so this — not the TTL — is what bounds a stolen token. Past it `POST /api/session-token` answers 403 and the widget starts a new session and mints once more, so it keeps working (without the old history) |
-| `RATE_LIMIT_BACKEND` | `memory` | V3 (F1): `memory` = per-process in-memory limiter (V2.1); `redis` = shared sliding-window budget across API processes (wired in V3-10). Default keeps V2.1 behaviour |
-| `EMBED_TOKEN_MODE` | `compat` | V3 (F4): `compat` accepts a missing `X-Embed-Token` — even for a website that has a token — but refuses a supplied token that is wrong, revoked or another website's; `enforce` requires a valid token. Refusals are `403` with `reason: invalid_embed_token` or `embed_token_required`, never a session reason. Default keeps V2.1 behaviour; see [Embed token](#embed-token-v3-f4) |
+| `RATE_LIMIT_BACKEND` | `memory` | V3 (F1): `memory` = per-process in-memory limiter (V2.1); `redis` = shared sliding-window budget across API processes (wired in V3). Default keeps the pre-V3 behaviour |
+| `EMBED_TOKEN_MODE` | `compat` | V3 (F4): `compat` accepts a missing `X-Embed-Token` — even for a website that has a token — but refuses a supplied token that is wrong, revoked or another website's; `enforce` requires a valid token. Refusals are `403` with `reason: invalid_embed_token` or `embed_token_required`, never a session reason. Default keeps the pre-V3 behaviour; see [Embed token](#embed-token-v3-f4) |
 | `TOPIC_CLUSTER_MAX_MESSAGES` | `500` | V3 (F2): max visitor questions embedded per clustering run; the company setting `topic_clustering_enabled` (default `false`) opts in |
 | `TOPIC_CLUSTER_INTERVAL_SECONDS` | `86400` | V3 (F2): worker scheduler check cadence for clustering; window boundaries come from `digest_day`/`normalize_period` |
 | `INBOX_PRESENCE_TTL_SECONDS` | `60` | V3 (F3): TTL of one agent presence lease in the live inbox. Each `/api/inbox/events` connection owns its own lease, renewed on every heartbeat tick; a crashed tab ages out instead of showing as online forever, and the TTL never drops below two heartbeats |
@@ -415,8 +415,9 @@ a company that never turns it on.
 #### Topic clustering (F2)
 
 A company opts in with `topic_clustering_enabled`; nothing is clustered for a
-company that never turns it on, and with the flag off the digest payload is the
-V2.1 one, key for key.
+company that never turns it on, and with the flag off the digest payload is
+byte-for-byte the V2.1 one — checked against the `digest.py` module loaded from
+tag `v2.1`, JSON and HTML, with cluster rows present or not.
 
 - **Window.** One cluster window is the company's digest week (`digest_day`
   aligned), and the worker only builds the **last complete** week — the same
@@ -476,9 +477,9 @@ node --test tests/*.mjs                          # widget.js suite (no npm scrip
 cd frontend && npm run build && npm run lint
 ```
 
-## Deploying V1
+## Deploying
 
-V1 is self-hosted. None of the dev defaults below should survive into production.
+SiteGPT is self-hosted; the release is V3 (tag `v3`). None of the dev defaults below should survive into production.
 
 > **Full checklist:** [`docs/security.md`](docs/security.md) lists every control
 the code enforces, every control it cannot (TLS, encryption at rest, backups,
@@ -555,25 +556,38 @@ list with the residual risk spelled out:
 Also note `/docs` and `/openapi.json` are enabled and unauthenticated (FastAPI default) —
 restrict them at the proxy if that matters to you.
 
-## Upgrading from V1 (V2 and V2.1)
+## Upgrading from V1 (V2, V2.1 and V3)
 
-1. `uv run alembic upgrade head` — 15 new revisions on top of the V1 head for
-   V2/V2.1, ending at `c9d3e5a71b28` (V3 adds M7 `76f46b510350`, M8
-   `afef1e91e0b5` and M9 `1c5516fa864d` on top; see `plans/PLAN_V3.md` §7):
-   `07f83918a289 → c41d7e8a9f20 (api_keys) → 2f95a35b9d5d → 5fe07e597f12 → bebd929605ed → 94ca756068a7 (V2) → 5fbe6ce28d9b (session tokens) → b7d41c9e2f10 (deliveries) → d2f5a81c9b74 → e7b3c94a1d52 → a4c1e9d7f320 → c3f8a2b91d47 → d5b9c4e2a87f → e2a7c5d913f6 → f7c1d84b2e39 → c9d3e5a71b28`.
-   They only add tables, columns and indexes; no data migration and **no re-ingest**
-   (the embedded `EMBEDDING_DIMENSIONS` is unchanged). The index revisions build
-   `CONCURRENTLY`, so they are not atomic — an interrupted build leaves an invalid
-   index: drop it with `DROP INDEX CONCURRENTLY` and re-run (`AGENTS.md`).
+1. `uv run alembic upgrade head` — the V2/V2.1 chain adds 15 revisions on top of
+   the V1 head, ending at `c9d3e5a71b28`, and V3 adds three more, so a V1
+   database ends at the single head `1c5516fa864d` (`plans/PLAN_V3.md` §7):
+   `07f83918a289 → c41d7e8a9f20 (api_keys) → 2f95a35b9d5d → 5fe07e597f12 → bebd929605ed → 94ca756068a7 (V2) → 5fbe6ce28d9b (session tokens) → b7d41c9e2f10 (deliveries) → d2f5a81c9b74 → e7b3c94a1d52 → a4c1e9d7f320 → c3f8a2b91d47 → d5b9c4e2a87f → e2a7c5d913f6 → f7c1d84b2e39 → c9d3e5a71b28 → 76f46b510350 (M7 embed tokens) → afef1e91e0b5 (M8 topic clusters) → 1c5516fa864d (M9 conversations + agent author)`.
+   V3 only adds tables, a nullable column, an index and a foreign key; no data
+   migration and **no re-ingest** (the embedded `EMBEDDING_DIMENSIONS` is
+   unchanged). The index revisions build `CONCURRENTLY`, so they are not
+   atomic — an interrupted build leaves an invalid index: drop it with
+   `DROP INDEX CONCURRENTLY` and re-run (`AGENTS.md`). M9 adds its foreign key
+   `NOT VALID` and then validates it, so the upgrade does not block writes to
+   `chat_messages`.
 2. Set `API_KEY_PEPPER` before minting any key, `INTEGRATION_WEBHOOK_SECRET`
    before enabling a webhook, and `JWT_SECRET_KEY` + `CORS_ORIGINS` as before —
    see [`docs/security.md`](docs/security.md). Leave `SESSION_TOKEN_MODE` at
    `compat` until your embed snippets carry the token; `DELIVERY_RETENTION_DAYS`
    and `RETENTION_CHECK_SECONDS` only matter once retries or a `retention_days`
    policy are in use.
-3. Every V2 feature is off by default (a `settings` row or an env flag), so an
-   untouched deployment behaves like V1. The one deliberate exception is the
-   prompt's reply-in-the-question's-language rule.
+   V3 adds no required variable: leave `RATE_LIMIT_BACKEND=memory` and
+   `EMBED_TOKEN_MODE=compat` unless you want the shared limiter or mandatory
+   embed tokens, and keep Redis reachable before switching either of those or
+   the live inbox on — the job queue, the shared rate-limit windows, the inbox
+   stream and presence all need it (`/health` reports `redis` and
+   `rate_limiter.degraded`).
+3. Every V2 **and V3** feature is off by default (a `settings` row or an env
+   flag), so an untouched deployment behaves as it did on `v2.1` — and like V1
+   where the V2 features were never enabled. V3's per-company flags are
+   `topic_clustering_enabled` and `live_inbox_enabled` (both `false`), and its
+   env defaults (`memory`, `compat`) keep the pre-V3 code path. The one
+   deliberate exception remains the V2 prompt's reply-in-the-question's-language
+   rule.
 4. Existing companies get the new settings rows when an admin saves the widget
    tab once; until then the server-side defaults apply (consent off, no logo).
 
