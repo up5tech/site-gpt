@@ -344,17 +344,20 @@ Keys understood by `widget_ui_strings`: `clear`, `send`, `thinking`, `sources`,
   Delivery is at-most-once: the `digest_log` row is claimed before the email is
   sent, so a retry, a restart or a second worker cannot send the same week twice.
 
-### V3 (in progress on `feat/v3`)
+### V3 (released — tag `v3`)
 
-Tag `v2.1` is still the latest release; V3 is being built wave by wave against
-[`plans/PLAN_V3.md`](plans/PLAN_V3.md), whose dashboard records what is actually
-ticked. Landed so far: the Redis-backed rate limiter (K5,
-`RATE_LIMIT_BACKEND`), the per-website embed token (F4,
-`EMBED_TOKEN_MODE` + `X-Embed-Token`) — a revocation and compatibility control
-that does **not** close the soft Origin check, so K18 stays accepted — and LLM
-topic clustering (F2), signed off at gate `V3-3G`. Wave 4 lands the live-agent
-inbox (F3): the `/inbox` console, its queue/detail/reply routes, the fetch-based
-SSE stream with presence, and agent replies rendered in the widget. The console
+Tag `v3` (commit `2e5ab73`) is the current release; [`plans/PLAN_V3.md`](plans/PLAN_V3.md)
+records what was built and what gate `V3-4G` verified, including the checks this
+repository could not run here (provider-bound ingest/chat, SMTP mail, browser
+steps). V3 adds: the Redis-backed rate limiter (K5, `RATE_LIMIT_BACKEND`), the
+per-website embed token (F4, `EMBED_TOKEN_MODE` + `X-Embed-Token`) — a revocation
+and compatibility control that does **not** close the soft Origin check, so K18
+stays accepted — LLM topic clustering (F2) and the live-agent inbox (F3): the
+`/inbox` console, its queue/detail/reply routes, the fetch-based SSE stream with
+presence, and agent replies rendered in the widget. Every feature is off by
+default (`topic_clustering_enabled=false`, `live_inbox_enabled=false`,
+`EMBED_TOKEN_MODE=compat`, `RATE_LIMIT_BACKEND=memory`), so an upgraded install
+behaves as it did on `v2.1` until an admin opts in. The console
 and its routes exist only for a company with `live_inbox_enabled=true` (the page
 and its navigation link read `GET /api/inbox/status`; an admin turns it on in
 Settings → Appearance → Live-agent inbox), the bot stays silent while a session
@@ -531,7 +534,7 @@ Run uvicorn behind nginx/Caddy/Traefik terminating **TLS 1.2+**:
 ```bash
 # fresh database: create it and install the extension first
 # CREATE EXTENSION IF NOT EXISTS vector;
-uv run alembic upgrade head      # head is 76f46b510350 (V3 M7 embed_tokens)
+uv run alembic upgrade head      # head is 1c5516fa864d (V3 M9 conversations + agent author)
 ```
 
 The migration chain is linear from that head; never edit an already-applied revision.
@@ -555,8 +558,8 @@ restrict them at the proxy if that matters to you.
 ## Upgrading from V1 (V2 and V2.1)
 
 1. `uv run alembic upgrade head` — 15 new revisions on top of the V1 head for
-   V2/V2.1, ending at `c9d3e5a71b28` (V3 adds M7 `76f46b510350` on top; see
-   `plans/PLAN_V3.md` §7):
+   V2/V2.1, ending at `c9d3e5a71b28` (V3 adds M7 `76f46b510350`, M8
+   `afef1e91e0b5` and M9 `1c5516fa864d` on top; see `plans/PLAN_V3.md` §7):
    `07f83918a289 → c41d7e8a9f20 (api_keys) → 2f95a35b9d5d → 5fe07e597f12 → bebd929605ed → 94ca756068a7 (V2) → 5fbe6ce28d9b (session tokens) → b7d41c9e2f10 (deliveries) → d2f5a81c9b74 → e7b3c94a1d52 → a4c1e9d7f320 → c3f8a2b91d47 → d5b9c4e2a87f → e2a7c5d913f6 → f7c1d84b2e39 → c9d3e5a71b28`.
    They only add tables, columns and indexes; no data migration and **no re-ingest**
    (the embedded `EMBEDDING_DIMENSIONS` is unchanged). The index revisions build

@@ -890,21 +890,29 @@ check that was not run.
 
 ## 13. Definition of done — V3
 
-- [ ] All 25 tasks ticked and all 5 gates signed off (blocked items recorded, not hidden); all D1–D7 assumptions and the added privacy, token and cluster-window invariants are resolved before their waves.
-- [ ] F1–F4 implemented; M7–M9 applied; single head chained from `c9d3e5a71b28`; cluster runs and inbox conversations are idempotent and tenant-scoped.
-- [ ] K5 is described as mitigated only when Redis is available, with the
+- [x] All 25 tasks ticked and all 5 gates signed off (blocked items recorded, not hidden); all D1–D7 assumptions and the added privacy, token and cluster-window invariants are resolved before their waves.
+  - Done: the dashboard reads 25 / 25 tasks and 5 / 5 gates, with `grep -c "^- \[ \] \*\*V3-"` = 0; §3 carries the line "D1–D7 verified against code (V3-01, 2026-11-17) — all confirmed" and each task's `Done:` records what it proved. The blocked items are not hidden: Gate V3-4G lists the LLM/embedding ingest + chat, the SMTP email, the live-sitemap crawl and the browser steps as **blocked and unexecuted**.
+- [x] F1–F4 implemented; M7–M9 applied; single head chained from `c9d3e5a71b28`; cluster runs and inbox conversations are idempotent and tenant-scoped.
+  - Done: `alembic history` is linear and the gate replayed `c9d3e5a71b28 → 76f46b510350 (M7) → afef1e91e0b5 (M8) → 1c5516fa864d (M9)` from an empty database into that single head. Idempotency and scoping were exercised there too: unique `(website_id, session_id)` for conversations and unique `(company_id, period_start)` / `(company_id, period_start, cluster_key)` for cluster runs, with a duplicate insert rejected at the database; tenant scoping is a query-level join (`_scoped`, `_owned_website`) answered as 404, and `tests/test_inbox.py`, `tests/test_conversations.py`, `tests/test_topics.py` cover the claim/run races.
+- [x] K5 is described as mitigated only when Redis is available, with the
   per-process fallback limitation explicit. K18 remains an accepted residual; a
   public embed token is not described as closing it. ADR-4 is marked superseded
   for the inbox.
-- [ ] Zero widget backward-compatibility breaks: a V2.1 snippet with no
+  - Done: `docs/security.md` §5 K5 says "mitigated in V3, F1" with Redis, keeps the `memory` per-process residual and the redis-outage fallback explicit, and README's K5 row repeats both; K18 is still "accepted; V3 F4 does not close it" (§2 row, §5, README), with the token called a revocation/compatibility control and never origin authentication; `plans/SPEC.md` ADR-4 is headed **superseded in V3 (F3)**.
+- [x] Zero widget backward-compatibility breaks: a V2.1 snippet with no
   `embedToken` still chats in `compat` both before and after token issuance; a
   V2.1 digest is reproduced byte-for-byte with clustering off.
-- [ ] Zero `EMBEDDING_DIMENSIONS` change, zero re-ingest.
-- [ ] Every feature off by default; with all flags off, behaviour equals tag
+  - Done: the gate's compat checks issued an embed token and then accepted a **tokenless** `POST /api/session-token` (and a tokenless message read) both before and after that issuance, refused a wrong token as `invalid_embed_token` without claiming the session, and left the existing K4 session usable — the guard the bullet asserts (the model turn itself was not run: no provider here, the chat route's guard is covered by the unit suite). For the digest, the V2.1 implementation loaded straight from tag `v2.1` and the current one with `topic_clustering_enabled=false` produced **byte-identical** JSON and HTML for the same fixture against the same database (5 messages, 2 sessions, 1 vote, 1 contact), and the output stayed identical after a `topic_clusters` row was inserted for that window — so opt-in rows cannot leak into the V2.1 path.
+- [x] Zero `EMBEDDING_DIMENSIONS` change, zero re-ingest.
+  - Done: `git diff v2.1 HEAD -- src/site_gpt/app/core/config.py` has no `EMBEDDING*` line; M7/M8/M9 only add tables, columns and indexes (no `embeddings` change), so no re-ingest; the gate's cluster check stored and read back a 1536-d centroid on the same column.
+- [x] Every feature off by default; with all flags off, behaviour equals tag
   `v2.1` except explicitly opted-in `EMBED_TOKEN_MODE=enforce`.
-- [ ] Both suites green (counts recorded at the tag), frontend build + lint green, `trail build` run, docs consistent.
-- [ ] Verified release commit is merged to `master`; tag `v3` points to that commit
+  - Done: the seeded defaults are `live_inbox_enabled=false`, `topic_clustering_enabled=false`, `handoff_enabled=false`, `EMBED_TOKEN_MODE=compat`, `RATE_LIMIT_BACKEND=memory` (`api/setting.py`, `core/config.py`). The gate then ran the V2.1 comparison with them off: `POST /api/handoff` still answered 200 and wrote no `conversations` row, `/api/inbox/status` reported `{enabled:false}` with the rest of `/api/inbox` a 404, `enqueue_due_topics` queued nothing and wrote no run row, and a tokenless snippet still worked. `enforce` is the only opt-in that changes behaviour, and turning it on is the operator's decision.
+- [x] Both suites green (counts recorded at the tag), frontend build + lint green, `trail build` run, docs consistent.
+  - Done: **718 Python tests / 47 modules** and **46 node checks** on the tagged tree (`tests/test_gate_scripts.py` included); `npm run build` and `npm run lint` exit 0 with `frontend/` unchanged since the run; `trail build` rebuilt the graph (2516 nodes / 5629 edges / 192 cards). Docs are consistent — the new `tests/test_gate_scripts.py` fails if the gate section, `scripts/gate_v3_4g/`, its README and `run_all.sh` ever list different steps — and this pass corrected README's stale V3 status, migration head and upgrade chain to the released state.
+- [x] Verified release commit is merged to `master`; tag `v3` points to that commit
   and is pushed; README describes V3 as the current version.
+  - Done: `master` fast-forwarded to `2e5ab73`, annotated tag `v3` on that commit, `origin/master` and `origin/v3` pushed (see Gate V3-4G's last item); README's section is now headed "V3 (released — tag v3)" and states that every feature is off by default.
 
 ---
 
