@@ -142,6 +142,43 @@ def _ensure_holder(conversation: models.Conversation, user: models.User) -> None
         raise InboxConflict("Another agent is handling this conversation")
 
 
+def _take(
+    db: Session,
+    company_id: UUID,
+    conversation_id: UUID,
+    user_id: UUID,
+    *,
+    action: str,
+    when: datetime | None = None,
+) -> models.Conversation:
+    """Give a waiting conversation to `user_id`: waiting → human, exactly once.
+
+    Claim and assign differ only in whose id ends up as the assignee — the row
+    lock, the idempotent retry and the conflict are the same, so they live here
+    rather than in two copies that could drift apart.
+
+    A retry by the agent who already holds it returns the same row (acting twice
+    is not an error); anyone else gets `InboxConflict` because the row is no
+    longer `waiting`, either because it was taken or because it never queued.
+    If the locked select returns nothing, another transaction holds the row:
+    `SKIP LOCKED` skipped it, and the caller must not claim it anyway.
+    """
+    row = _require(db, company_id, conversation_id)
+    if row.state == conversations.STATE_HUMAN and row.assigned_user_id == user_id:
+        return row
+    if row.state != conversations.STATE_WAITING:
+        raise InboxConflict(
+            f"Conversation is {row.state}, not waiting to be {action}"
+        )
+
+    locked = waiting_claim_query(db, company_id, conversation_id).first()
+    if locked is None:
+        raise InboxConflict("Another agent is claiming this conversation")
+    conversations.claim(db, locked, user_id, when=when)
+    db.commit()
+    return locked
+
+
 def claim(
     db: Session,
     company_id: UUID,
@@ -150,25 +187,10 @@ def claim(
     *,
     when: datetime | None = None,
 ) -> models.Conversation:
-    """An agent takes a waiting conversation: waiting → human.
-
-    A retry by the agent who already holds it is answered with the same row
-    (pressing Claim twice is not an error); anyone else gets `InboxConflict`
-    because the row is no longer `waiting`, either because it was claimed or
-    because it was never queued.
-    """
-    row = _require(db, company_id, conversation_id)
-    if row.state == conversations.STATE_HUMAN and row.assigned_user_id == user.id:
-        return row
-    if row.state != conversations.STATE_WAITING:
-        raise InboxConflict(f"Conversation is {row.state}, not waiting to be claimed")
-
-    locked = waiting_claim_query(db, company_id, conversation_id).first()
-    if locked is None:
-        raise InboxConflict("Another agent is claiming this conversation")
-    conversations.claim(db, locked, user.id, when=when)
-    db.commit()
-    return locked
+    """An agent takes a waiting conversation for themselves."""
+    return _take(
+        db, company_id, conversation_id, user.id, action="claimed", when=when
+    )
 
 
 def assign(
@@ -179,24 +201,15 @@ def assign(
     *,
     when: datetime | None = None,
 ) -> models.Conversation:
-    """Give a waiting conversation to a specific teammate: waiting → human.
+    """Give a waiting conversation to a specific teammate.
 
     Used by a manager pushing a queue item to an agent instead of taking it
     themselves. The target is resolved by `assignable_user` before this call, so
     a foreign/non-agent id never reaches a state change.
     """
-    row = _require(db, company_id, conversation_id)
-    if row.state == conversations.STATE_HUMAN and row.assigned_user_id == target.id:
-        return row
-    if row.state != conversations.STATE_WAITING:
-        raise InboxConflict(f"Conversation is {row.state}, not waiting to be assigned")
-
-    locked = waiting_claim_query(db, company_id, conversation_id).first()
-    if locked is None:
-        raise InboxConflict("Another agent is claiming this conversation")
-    conversations.claim(db, locked, target.id, when=when)
-    db.commit()
-    return locked
+    return _take(
+        db, company_id, conversation_id, target.id, action="assigned", when=when
+    )
 
 
 def release(
