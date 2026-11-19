@@ -17,10 +17,12 @@ so the framing is inspected without an HTTP response that never ends.
 """
 
 import asyncio
+import inspect
 import json
+import time
 import unittest
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 from fastapi import FastAPI
@@ -111,6 +113,15 @@ class StreamTestCase(unittest.TestCase):
 
         self._setting("live_inbox_enabled", "true")
         self.actor = self.agent
+
+        # Routes hand notifications to a daemon publisher thread; unit tests must
+        # never open a Redis connection, so the queue put is stubbed by default
+        # and the tests that care about it patch it again themselves. The real
+        # helper is kept for the one test that drives its publisher thread.
+        self._notify = inbox.publish_after_commit
+        publisher = patch.object(inbox, "publish_after_commit")
+        publisher.start()
+        self.addCleanup(publisher.stop)
 
     def tearDown(self):
         self.db.close()
@@ -525,14 +536,12 @@ class PublishingTests(StreamTestCase):
         captured = []
         states = []
 
-        async def capture(company_id, payload):
+        def capture(company_id, payload):
             captured.append((company_id, payload))
             self.db.expire_all()
-            stored = self.db.get(models.Conversation, row.id)
-            states.append(stored.state)
-            return True
+            states.append(self.db.get(models.Conversation, row.id).state)
 
-        with patch.object(inbox, "publish", side_effect=capture):
+        with patch.object(inbox, "publish_after_commit", side_effect=capture):
             response = client.post(f"/api/inbox/conversations/{row.id}/claim")
 
         self.assertEqual(response.status_code, 200, response.text)
@@ -541,7 +550,7 @@ class PublishingTests(StreamTestCase):
         self.assertEqual(payload["event"], "claimed")
         self.assertEqual(payload["state"], "human")
         self.assertEqual(payload["conversation_id"], str(row.id))
-        # The row was already `human` when the notification went out.
+        # The row was already `human` when the notification was queued.
         self.assertEqual(states, ["human"])
 
     def test_assign_publishes_the_new_assignee(self):
@@ -549,11 +558,10 @@ class PublishingTests(StreamTestCase):
         client = self._client()
         captured = []
 
-        async def capture(company_id, payload):
+        def capture(company_id, payload):
             captured.append(payload)
-            return True
 
-        with patch.object(inbox, "publish", side_effect=capture):
+        with patch.object(inbox, "publish_after_commit", side_effect=capture):
             response = client.post(
                 f"/api/inbox/conversations/{row.id}/assign",
                 json={"user_id": str(self.teammate.id)},
@@ -570,11 +578,10 @@ class PublishingTests(StreamTestCase):
         client = self._client()
         events = []
 
-        async def capture(company_id, payload):
+        def capture(company_id, payload):
             events.append(payload["event"])
-            return True
 
-        with patch.object(inbox, "publish", side_effect=capture):
+        with patch.object(inbox, "publish_after_commit", side_effect=capture):
             released = client.post(
                 f"/api/inbox/conversations/{row.id}/release"
             )
@@ -590,21 +597,21 @@ class PublishingTests(StreamTestCase):
         self.db.commit()
         client = self._client()
 
-        with patch.object(inbox, "publish", AsyncMock(return_value=True)) as publish:
+        with patch.object(inbox, "publish_after_commit") as publish:
             response = client.post(
                 f"/api/inbox/conversations/{row.id}/release"
             )
 
         self.assertEqual(response.status_code, 409, response.text)
-        publish.assert_not_awaited()
+        publish.assert_not_called()
 
     def test_the_service_never_publishes_on_its_own(self):
         row = self._conversation()
 
-        with patch.object(inbox, "publish", AsyncMock(return_value=True)) as publish:
+        with patch.object(inbox, "publish_after_commit") as publish:
             inbox.claim(self.db, self.company.id, row.id, self.agent)
 
-        publish.assert_not_awaited()
+        publish.assert_not_called()
         self.db.expire_all()
         self.assertEqual(
             self.db.get(models.Conversation, row.id).state, "human"
@@ -615,11 +622,10 @@ class PublishingTests(StreamTestCase):
         client = self._client()
         ids = []
 
-        async def capture(company_id, payload):
+        def capture(company_id, payload):
             ids.append(payload["id"])
-            return True
 
-        with patch.object(inbox, "publish", side_effect=capture):
+        with patch.object(inbox, "publish_after_commit", side_effect=capture):
             first = client.post(f"/api/inbox/conversations/{row.id}/claim")
             second = client.post(f"/api/inbox/conversations/{row.id}/claim")
 
@@ -627,6 +633,38 @@ class PublishingTests(StreamTestCase):
         self.assertEqual(second.status_code, 200, second.text)
         self.assertEqual(len(ids), 2)
         self.assertEqual(ids[0], ids[1])
+
+    def test_the_action_routes_stay_sync(self):
+        # A `FOR UPDATE` transaction on the event loop would stall every open
+        # stream, so these four must stay plain `def`.
+        for route in (
+            inbox_api.claim_conversation,
+            inbox_api.assign_conversation,
+            inbox_api.release_conversation,
+            inbox_api.close_conversation,
+        ):
+            with self.subTest(route=route.__name__):
+                self.assertFalse(inspect.iscoroutinefunction(route))
+
+    def test_the_queue_is_delivered_off_the_request_thread(self):
+        client = MagicMock()
+        client.publish = AsyncMock()
+        client.aclose = AsyncMock()
+        payload = inbox.presence_event(self.agent.id, "online")
+
+        with patch.object(
+            inbox.redis_service, "create_client", lambda: client
+        ):
+            self._notify(self.company.id, payload)
+            deadline = time.monotonic() + 5
+            while not client.publish.await_count and time.monotonic() < deadline:
+                time.sleep(0.01)
+
+        client.publish.assert_awaited_once()
+        channel, body = client.publish.await_args.args
+        self.assertEqual(channel, f"inbox:{self.company.id}")
+        self.assertEqual(json.loads(body)["id"], payload["id"])
+        client.aclose.assert_awaited_once()
 
 
 if __name__ == "__main__":

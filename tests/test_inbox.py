@@ -83,6 +83,12 @@ class InboxTestCase(unittest.TestCase):
         self._setting("handoff_enabled", "true")
         self.actor = self.agent
 
+        # Action routes hand their notification to a daemon publisher thread;
+        # unit tests must not open a Redis connection for it.
+        publisher = patch.object(inbox, "publish_after_commit")
+        publisher.start()
+        self.addCleanup(publisher.stop)
+
     def tearDown(self):
         self.db.close()
         self.engine.dispose()

@@ -122,17 +122,18 @@ def get_inbox_conversation(
 @router.post(
     "/conversations/{conversation_id}/claim", response_model=InboxConversation
 )
-async def claim_conversation(
+def claim_conversation(
     conversation_id: UUID,
     db: Session = Depends(get_db),
     user: models.User = Depends(live_inbox_user),
 ):
     """Take a waiting conversation. The loser of a race gets 409.
 
-    The route is `async` for one reason: `inbox.claim` commits before returning,
-    so the notification published right after it can only be sent once the new
-    state is durable. Publishing anything earlier would tell the other consoles
-    about a claim the database might still roll back.
+    Sync on purpose: this runs a `FOR UPDATE` transaction, and executing it on
+    the event loop would stall every open SSE stream while it waits. The
+    notification is queued after `inbox.claim` committed (never before, or the
+    consoles would be told about a claim the database might still roll back)
+    and delivered off the request thread.
     """
     try:
         row = inbox.claim(db, user.company_id, conversation_id, user)
@@ -143,14 +144,16 @@ async def claim_conversation(
         ) from exc
     except (inbox.InboxConflict, conversations.ConversationStateError) as exc:
         raise _conflict(exc) from exc
-    await inbox.publish(user.company_id, inbox.conversation_event(row, "claimed"))
+    inbox.publish_after_commit(
+        user.company_id, inbox.conversation_event(row, "claimed")
+    )
     return item
 
 
 @router.post(
     "/conversations/{conversation_id}/assign", response_model=InboxConversation
 )
-async def assign_conversation(
+def assign_conversation(
     conversation_id: UUID,
     body: InboxAssign,
     db: Session = Depends(get_db),
@@ -172,14 +175,16 @@ async def assign_conversation(
         ) from exc
     except (inbox.InboxConflict, conversations.ConversationStateError) as exc:
         raise _conflict(exc) from exc
-    await inbox.publish(user.company_id, inbox.conversation_event(row, "assigned"))
+    inbox.publish_after_commit(
+        user.company_id, inbox.conversation_event(row, "assigned")
+    )
     return item
 
 
 @router.post(
     "/conversations/{conversation_id}/release", response_model=InboxConversation
 )
-async def release_conversation(
+def release_conversation(
     conversation_id: UUID,
     db: Session = Depends(get_db),
     user: models.User = Depends(live_inbox_user),
@@ -194,14 +199,16 @@ async def release_conversation(
         ) from exc
     except (inbox.InboxConflict, conversations.ConversationStateError) as exc:
         raise _conflict(exc) from exc
-    await inbox.publish(user.company_id, inbox.conversation_event(row, "released"))
+    inbox.publish_after_commit(
+        user.company_id, inbox.conversation_event(row, "released")
+    )
     return item
 
 
 @router.post(
     "/conversations/{conversation_id}/close", response_model=InboxConversation
 )
-async def close_conversation(
+def close_conversation(
     conversation_id: UUID,
     db: Session = Depends(get_db),
     user: models.User = Depends(live_inbox_user),
@@ -216,7 +223,9 @@ async def close_conversation(
         ) from exc
     except (inbox.InboxConflict, conversations.ConversationStateError) as exc:
         raise _conflict(exc) from exc
-    await inbox.publish(user.company_id, inbox.conversation_event(row, "closed"))
+    inbox.publish_after_commit(
+        user.company_id, inbox.conversation_event(row, "closed")
+    )
     return item
 
 
