@@ -19,6 +19,7 @@ import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import type {
   AnalyticsSummary,
+  DigestGroup,
   DigestTopic,
   UnansweredQuestion,
 } from '../types/api';
@@ -97,10 +98,28 @@ export function Analytics() {
 
   const ratings = data ? data.feedback_up + data.feedback_down : 0;
   const positiveShare = ratings > 0 ? Math.round(((data?.feedback_up ?? 0) / ratings) * 100) : 0;
+  // Only populated when the window is exactly whole, completed digest weeks.
+  const groups = data?.topic_groups ?? [];
+  const groupSampled = groups.length
+    ? Math.max(...groups.map((group) => group.sampled_messages))
+    : 0;
+  const groupEligible = groups.length
+    ? Math.max(...groups.map((group) => group.eligible_messages))
+    : 0;
 
   const topicColumns: ColumnsType<DigestTopic> = [
     { title: 'Topic', dataIndex: 'term', key: 'term' },
     { title: 'Mentions', dataIndex: 'count', key: 'count', width: 110 },
+  ];
+
+  const groupColumns: ColumnsType<DigestGroup> = [
+    { title: 'Topic', dataIndex: 'label', key: 'label' },
+    {
+      title: 'Summary',
+      dataIndex: 'summary',
+      key: 'summary',
+      render: (text: string | null) => text || <Text type='secondary'>—</Text>,
+    },
   ];
 
   const unansweredColumns: ColumnsType<UnansweredQuestion> = [
@@ -220,17 +239,38 @@ export function Analytics() {
         </Row>
       </Card>
 
-      <Card title='Top topics' style={{ marginBottom: 16 }}>
-        <Table
-          columns={topicColumns}
-          dataSource={data?.top_topics ?? []}
-          loading={loading}
-          rowKey='term'
-          pagination={false}
-          size='small'
-          locale={{ emptyText: 'No visitor questions in this window' }}
-        />
-      </Card>
+      {groups.length > 0 ? (
+        <Card
+          title='Topic groups'
+          style={{ marginBottom: 16 }}
+          extra={
+            <Text type='secondary' style={{ fontSize: 12 }}>
+              Named from {groupSampled} of {groupEligible} visitor questions
+            </Text>
+          }
+        >
+          <Table
+            columns={groupColumns}
+            dataSource={groups}
+            loading={loading}
+            rowKey={(item) => `${item.period_start}-${item.label}`}
+            pagination={false}
+            size='small'
+          />
+        </Card>
+      ) : (
+        <Card title='Top topics' style={{ marginBottom: 16 }}>
+          <Table
+            columns={topicColumns}
+            dataSource={data?.top_topics ?? []}
+            loading={loading}
+            rowKey='term'
+            pagination={false}
+            size='small'
+            locale={{ emptyText: 'No visitor questions in this window' }}
+          />
+        </Card>
+      )}
 
       <Card title='Questions your content could not answer'>
         <Table

@@ -12,8 +12,12 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
 from site_gpt.app import models
-from site_gpt.app.services import digest
+from site_gpt.app.db.base import Base
+from site_gpt.app.services import digest, topics
 
 
 def _chain(**kwargs):
@@ -121,6 +125,52 @@ class RenderDigestHtmlTests(unittest.TestCase):
     def test_default_title_when_no_company_name(self):
         self.assertIn("Weekly digest", digest.render_digest_html(self._data()))
 
+    def test_without_groups_the_term_list_is_unchanged(self):
+        # Clustering off (the default) must render exactly what V2.1 rendered.
+        self.assertIn(
+            "<h3>Top topics</h3><ul><li>pricing — 5</li></ul>"
+            "<h3>Questions your content could not answer</h3>",
+            digest.render_digest_html(self._data()),
+        )
+
+    def test_groups_replace_the_terms_and_disclose_the_sample(self):
+        html = digest.render_digest_html(
+            self._data(
+                topic_groups=[
+                    {
+                        "label": "Pricing and plans",
+                        "summary": "Visitors ask what it costs.",
+                        "period_start": "2026-11-09T00:00:00+00:00",
+                        "sampled_messages": 40,
+                        "eligible_messages": 50,
+                    }
+                ]
+            )
+        )
+        self.assertIn("<h3>Topic groups</h3>", html)
+        self.assertIn("<strong>Pricing and plans</strong>", html)
+        self.assertIn("Visitors ask what it costs.", html)
+        self.assertIn("Named from 40 of 50 visitor questions", html)
+        self.assertNotIn("<h3>Top topics</h3>", html)
+
+    def test_group_labels_and_summaries_are_escaped(self):
+        html = digest.render_digest_html(
+            self._data(
+                topic_groups=[
+                    {
+                        "label": "<b>Prices</b>",
+                        "summary": "<script>x</script>",
+                        "period_start": "2026-11-09T00:00:00+00:00",
+                        "sampled_messages": 1,
+                        "eligible_messages": 1,
+                    }
+                ]
+            )
+        )
+        self.assertNotIn("<script>", html)
+        self.assertIn("&lt;script&gt;", html)
+        self.assertIn("&lt;b&gt;Prices&lt;/b&gt;", html)
+
 
 class BuildDigestTests(unittest.TestCase):
     def test_counts_topics_and_unanswered_questions(self):
@@ -158,6 +208,8 @@ class BuildDigestTests(unittest.TestCase):
             _chain(count_value=2),  # new contacts
             _chain(count_value=3),  # feedback up
             _chain(count_value=1),  # feedback down
+            # No `topic_clustering_enabled` row: the off default, so no cluster read.
+            _chain(all_value=[]),
         ]
 
         with patch.object(digest, "_period_messages", return_value=messages):
@@ -180,6 +232,166 @@ class BuildDigestTests(unittest.TestCase):
             "what is the pricing model?",
         )
         self.assertEqual(data["unanswered_questions"][0]["website_name"], "Acme")
+
+
+class TopicGroupTests(unittest.TestCase):
+    """Named groups are an opt-in read of stored rows, never a computed topic list."""
+
+    START = datetime(2026, 11, 9, tzinfo=UTC)  # a Monday
+    END = START + timedelta(days=7)
+
+    def _db(self, clustering: str):
+        """`build_digest`'s queries in order: sites, contacts, votes, flag."""
+        db = MagicMock()
+        db.query.side_effect = [
+            _chain(all_value=[]),  # websites
+            _chain(count_value=0),  # new contacts
+            _chain(count_value=0),  # feedback up
+            _chain(count_value=0),  # feedback down
+            _chain(all_value=[("topic_clustering_enabled", clustering)]),
+        ]
+        return db
+
+    def test_flag_off_keeps_the_v21_payload(self):
+        db = self._db("false")
+        with patch.object(digest, "_period_messages", return_value=[]), patch.object(
+            topics,
+            "completed_windows",
+            side_effect=AssertionError("clusters must not be read with the flag off"),
+        ):
+            data = digest.build_digest(db, uuid4(), self.START, self.END)
+
+        self.assertEqual(
+            list(data),
+            [
+                "company_id",
+                "period_start",
+                "period_end",
+                "conversation_volume",
+                "message_count",
+                "new_contacts",
+                "feedback_up",
+                "feedback_down",
+                "top_topics",
+                "unanswered_questions",
+            ],
+        )
+
+    def test_flag_on_reports_the_stored_groups(self):
+        company_id = uuid4()
+        db = self._db("true")
+        cluster = SimpleNamespace(
+            label="Pricing",
+            summary="Visitors ask what it costs.",
+            sampled_messages=40,
+            eligible_messages=50,
+        )
+        with patch.object(digest, "_period_messages", return_value=[]), patch.object(
+            topics, "completed_windows", return_value=[(self.START, [cluster])]
+        ) as windows:
+            data = digest.build_digest(db, company_id, self.START, self.END)
+
+        # The gate gets the digest's own interval: no widening to whole weeks.
+        windows.assert_called_once_with(db, company_id, self.START, self.END)
+        self.assertEqual(
+            data["topic_groups"],
+            [
+                {
+                    "label": "Pricing",
+                    "summary": "Visitors ask what it costs.",
+                    "period_start": self.START.isoformat(),
+                    "sampled_messages": 40,
+                    "eligible_messages": 50,
+                }
+            ],
+        )
+        # The old field survives, so existing clients keep reading it.
+        self.assertEqual(data["top_topics"], [])
+
+    def test_flag_on_keeps_terms_when_coverage_is_not_exact(self):
+        db = self._db("true")
+        with patch.object(digest, "_period_messages", return_value=[]), patch.object(
+            topics, "completed_windows", return_value=None
+        ):
+            data = digest.build_digest(db, uuid4(), self.START, self.END)
+
+        self.assertNotIn("topic_groups", data)
+
+
+class TopicGroupDatabaseTests(unittest.TestCase):
+    """The read path over real rows: the flag row, the join and the run status."""
+
+    START = datetime(2026, 11, 9, tzinfo=UTC)
+    END = START + timedelta(days=7)
+    TABLES = [
+        models.Company.__table__,
+        models.Website.__table__,
+        models.ChatMessage.__table__,
+        models.Contact.__table__,
+        models.ChatFeedback.__table__,
+        models.Setting.__table__,
+        models.TopicCluster.__table__,
+        models.TopicClusterRun.__table__,
+    ]
+
+    def setUp(self):
+        engine = create_engine("sqlite+pysqlite:///:memory:")
+        Base.metadata.create_all(engine, tables=self.TABLES)
+        self.db = sessionmaker(bind=engine)()
+        self.company = models.Company(name="Acme")
+        self.db.add(self.company)
+        self.db.commit()
+
+    def tearDown(self):
+        self.db.close()
+
+    def _window(self, status="completed"):
+        self.db.add(
+            models.Setting(
+                company_id=self.company.id,
+                key="topic_clustering_enabled",
+                value="true",
+            )
+        )
+        self.db.add(
+            models.TopicClusterRun(
+                company_id=self.company.id,
+                period_start=self.START,
+                status=status,
+            )
+        )
+        self.db.add(
+            models.TopicCluster(
+                company_id=self.company.id,
+                period_start=self.START,
+                cluster_key="c1",
+                label="Pricing and plans",
+                summary="Visitors ask what it costs.",
+                sampled_messages=40,
+                eligible_messages=50,
+            )
+        )
+        self.db.commit()
+
+    def test_a_completed_week_reaches_the_payload_and_the_email(self):
+        self._window()
+
+        data = digest.build_digest(self.db, self.company.id, self.START, self.END)
+
+        self.assertEqual(
+            [(group["label"], group["sampled_messages"]) for group in data["topic_groups"]],
+            [("Pricing and plans", 40)],
+        )
+        self.assertIn(
+            "Named from 40 of 50 visitor questions", digest.render_digest_html(data)
+        )
+
+    def test_an_unfinished_week_falls_back_to_terms(self):
+        self._window(status="running")
+
+        data = digest.build_digest(self.db, self.company.id, self.START, self.END)
+
+        self.assertNotIn("topic_groups", data)
 
 
 class ClaimPeriodTests(unittest.TestCase):

@@ -286,6 +286,14 @@ export interface DigestTopic {
   count: number;
 }
 
+export interface DigestGroup {
+  label: string;
+  summary?: string | null;
+  period_start: string;
+  sampled_messages: number;
+  eligible_messages: number;
+}
+
 export interface UnansweredQuestion {
   question?: string | null;
   website_id: string;
@@ -305,6 +313,8 @@ export interface DigestSummary {
   feedback_up: number;
   feedback_down: number;
   top_topics: DigestTopic[];
+  /** Empty unless the period was exactly whole completed digest weeks. */
+  topic_groups: DigestGroup[];
   unanswered_questions: UnansweredQuestion[];
 }
 

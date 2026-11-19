@@ -6,6 +6,20 @@ class DigestTopic(BaseModel):
     count: int
 
 
+class DigestGroup(BaseModel):
+    """A named topic group, read back from the stored clusters (V3 F2).
+
+    Present only when the period was exactly a whole number of completed digest
+    weeks; `sampled_messages`/`eligible_messages` disclose a truncated sample.
+    """
+
+    label: str
+    summary: str | None = None
+    period_start: str
+    sampled_messages: int
+    eligible_messages: int
+
+
 class UnansweredQuestion(BaseModel):
     question: str | None = None
     website_id: str
@@ -26,6 +40,9 @@ class DigestData(BaseModel):
     feedback_up: int
     feedback_down: int
     top_topics: list[DigestTopic] = []
+    # Empty when clustering is off or the period is not exactly covered; the
+    # term counts above are then the answer (and stay populated either way).
+    topic_groups: list[DigestGroup] = []
     unanswered_questions: list[UnansweredQuestion] = []
 
 

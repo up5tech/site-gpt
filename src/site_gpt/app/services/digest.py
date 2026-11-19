@@ -10,6 +10,12 @@ sent (with `sent_at` NULL); a crash, a retry or a second worker therefore finds
 the claim and sends nothing, and only the claiming worker stamps `sent_at`. A
 claim that is still unsent after the stale window belongs to a dead worker and
 can be taken over.
+
+Named topic groups (V3 F2) are read back from `topic_clusters`, never computed
+here: the worker already spent the embedding and naming calls, so rendering a
+digest stays a pure database read. They are only reported when the requested
+interval is exactly a whole number of digest weeks whose runs all completed;
+otherwise the term counts stay the answer. See `_topic_groups`.
 """
 
 import html
@@ -140,6 +146,40 @@ def _topics(messages: list[models.ChatMessage]) -> list[dict]:
     ]
 
 
+def _topic_groups(
+    db: Session, company_id: UUID, start: datetime, end: datetime
+) -> list[dict] | None:
+    """Named clusters for `[start, end)`, or None when it is not exactly covered.
+
+    `topics.completed_windows` is the whole gate: it returns None unless the
+    interval is a whole number of digest-aligned weeks and every window has a
+    `completed` run, which is also what keeps a rolling `/analytics` window on the
+    term-count fallback instead of presenting a partly-built period as whole. The
+    feature is opt-in per company, so the flag is checked before any cluster read.
+    """
+    if not company_settings.flag(db, company_id, "topic_clustering_enabled"):
+        return None
+    # Imported here because `topics` reads this module (stopwords, normalize_period).
+    from site_gpt.app.services import topics
+
+    windows = topics.completed_windows(db, company_id, start, end)
+    if windows is None:
+        return None
+    return [
+        {
+            "label": cluster.label,
+            "summary": cluster.summary,
+            "period_start": window_start.isoformat(),
+            # Window-level counts, repeated on every row by the writer: they say
+            # how much of the week's questions the groups were built from.
+            "sampled_messages": cluster.sampled_messages,
+            "eligible_messages": cluster.eligible_messages,
+        }
+        for window_start, clusters in windows
+        for cluster in clusters
+    ]
+
+
 def _unanswered(
     messages: list[models.ChatMessage], websites: dict[str, str]
 ) -> list[dict]:
@@ -197,7 +237,7 @@ def build_digest(
         .count()
     )
 
-    return {
+    payload = {
         "company_id": str(company_id),
         "period_start": start.isoformat(),
         "period_end": end.isoformat(),
@@ -210,6 +250,14 @@ def build_digest(
         "unanswered_questions": _unanswered(messages, websites),
     }
 
+    # Added only for an exactly covered interval, so with the feature off (its
+    # default) the payload is the V2.1 one key for key. `top_topics` stays either
+    # way: `/api/v1` clients keep reading the fields they already know.
+    groups = _topic_groups(db, company_id, start, end)
+    if groups is not None:
+        payload["topic_groups"] = groups
+    return payload
+
 
 def render_digest_html(data: dict, company_name: str = "") -> str:
     """Plain f-string HTML: no templating dependency, previewable in a browser."""
@@ -217,10 +265,35 @@ def render_digest_html(data: dict, company_name: str = "") -> str:
     start = str(data["period_start"])[:10]
     end = str(data["period_end"])[:10]
 
-    topics = "".join(
+    terms = "".join(
         f"<li>{html.escape(str(topic['term']))} — {topic['count']}</li>"
         for topic in data["top_topics"]
     ) or "<li>No topics yet</li>"
+
+    groups = data.get("topic_groups") or []
+    if groups:
+        # Window-level counts, so a truncated sample is disclosed rather than
+        # presented as the week's total.
+        sampled = max(int(group["sampled_messages"]) for group in groups)
+        eligible = max(int(group["eligible_messages"]) for group in groups)
+        topics_block = (
+            "<h3>Topic groups</h3><ul>"
+            + "".join(
+                f"<li><strong>{html.escape(str(group['label']))}</strong>"
+                + (
+                    f" — {html.escape(str(group['summary']))}"
+                    if group.get("summary")
+                    else ""
+                )
+                + "</li>"
+                for group in groups
+            )
+            + "</ul>"
+            f'<p style="color:#555">Named from {sampled} of {eligible} '
+            "visitor questions.</p>"
+        )
+    else:
+        topics_block = "<h3>Top topics</h3><ul>" + terms + "</ul>"
 
     unanswered = "".join(
         "<li>"
@@ -242,8 +315,8 @@ def render_digest_html(data: dict, company_name: str = "") -> str:
         f"<li>New contacts: <strong>{data['new_contacts']}</strong></li>"
         f"<li>Feedback: 👍 {data['feedback_up']} / 👎 {data['feedback_down']}</li>"
         "</ul>"
-        "<h3>Top topics</h3><ul>" + topics + "</ul>"
-        "<h3>Questions your content could not answer</h3><ul>"
+        + topics_block
+        + "<h3>Questions your content could not answer</h3><ul>"
         + unanswered
         + "</ul></body></html>"
     )
