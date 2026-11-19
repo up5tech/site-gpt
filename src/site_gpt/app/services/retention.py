@@ -50,7 +50,10 @@ MAX_RETENTION_DAYS = 3650
 # that a normal purge is one round trip.
 RETENTION_BATCH_SIZE = 1000
 
-# Tables scoped through the company's websites.
+# Tables scoped through the company's websites. `conversations` is deliberately
+# not here: it expires on `last_message_at` rather than `created_at`, because the
+# metadata must not outlive the messages that make the session readable (see
+# `purge_company`).
 SCOPED_BY_WEBSITE: tuple[tuple[str, type], ...] = (
     ("chat_messages", models.ChatMessage),
     ("chat_feedback", models.ChatFeedback),
@@ -368,6 +371,7 @@ def purge_company(
     deleted: dict[str, int] = {
         name: 0 for name, _ in SCOPED_BY_WEBSITE + SCOPED_BY_COMPANY
     }
+    deleted["conversations"] = 0
     deleted["attachments"] = 0
     deleted["extra_documents"] = 0
 
@@ -389,6 +393,21 @@ def purge_company(
             deleted[name] = delete_in_batches(
                 db, model, filters, batch_size, dry_run
             )
+
+        # Inbox metadata goes when its **newest** message is past the cutoff: the
+        # messages above are deleted by message age, so at that point the session
+        # has no transcript left to read. A conversation with a fresh message
+        # keeps its state and assignee, whichever way its `created_at` falls.
+        conversation_filters = [models.Conversation.last_message_at < cutoff]
+        if website_ids:
+            conversation_filters.append(
+                models.Conversation.website_id.in_(website_ids)
+            )
+        else:
+            conversation_filters.append(false())
+        deleted["conversations"] = delete_in_batches(
+            db, models.Conversation, conversation_filters, batch_size, dry_run
+        )
 
         for name, model in SCOPED_BY_COMPANY:
             filters = [model.company_id == company_id, model.created_at < cutoff]

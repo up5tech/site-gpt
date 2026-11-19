@@ -268,6 +268,63 @@ class ChatMessage(BaseModel):
     # "unknown" — rows written before V2, and the partial answer saved after a
     # stream failure — never "unanswered".
     answered: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # Set on `role='agent'` rows: the team member who answered inside the widget
+    # (M9). NULL for the visitor, for the bot, and for every row written before
+    # V3 — the author is optional history, not a required attribute.
+    author_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+
+
+class Conversation(BaseModel):
+    """Durable inbox state for one widget session (M9, F3).
+
+    Until V3 a session existed only as `chat_messages.session_id`; an agent needs
+    something to attach to, so this row carries the state machine (`bot` →
+    `waiting` → `human`, `human` → `waiting` on release, `human` → `closed`), the
+    assignee and the queue timestamps. Rows are created lazily when a session
+    first writes a message (D2) — no backfill, and a session without a row still
+    lists, reads and deletes through the message helpers.
+    """
+
+    __tablename__ = "conversations"
+
+    __table_args__ = (
+        # The same `session_id` may be reused on two websites; the pair is the
+        # identity, and it is also what makes lazy creation race-safe.
+        UniqueConstraint("website_id", "session_id"),
+        # The inbox lists one website's queue by state, newest activity first.
+        # The website is company-scoped by its own FK, so this composite is what
+        # keeps "waiting, newest first" from sorting every session of a tenant.
+        Index(
+            "idx_conversations_website_id_state_last_message_at",
+            "website_id",
+            "state",
+            "last_message_at",
+        ),
+    )
+
+    website_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("websites.id", ondelete="CASCADE"), nullable=False
+    )
+    session_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    # "bot" | "waiting" | "human" | "closed" — see services.conversations.
+    state: Mapped[str] = mapped_column(String(20), nullable=False, default="bot")
+    # Whoever holds the session; NULL while the bot or the queue owns it.
+    assigned_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    claimed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    closed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # The newest message moment. Retention expires a conversation on this clock,
+    # so metadata can never outlive the messages it describes.
+    last_message_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
 
 
 class ChatFeedback(BaseModel):

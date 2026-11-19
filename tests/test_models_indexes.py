@@ -6,6 +6,12 @@ wrong — a plain unique index on `website_id` would block the revoked history t
 rotation depends on. So these tests pin the model declaration, the compiled
 PostgreSQL DDL, and the migration that ships it.
 
+`conversations` (M9, F3): one inbox row per `(website_id, session_id)` plus the
+queue index and the optional `chat_messages.author_user_id`. The author FK is
+added `NOT VALID` and then validated, so the busy message table is never locked
+for writes; the migration tests pin that pair, the stripped drift and the
+downgrade.
+
 `topic_clusters` / `topic_cluster_runs` (M8, F2): one run per company+window and
 one row per cluster identity inside a window. Both are plain unique constraints,
 but they are the whole idempotency story for the clustering worker, and the
@@ -32,6 +38,8 @@ M7_PATH = ROOT / "alembic" / "versions" / f"{M7_REVISION}_v3_m7_embed_tokens.py"
 M7_PARENT = "c9d3e5a71b28"
 M8_REVISION = "afef1e91e0b5"
 M8_PATH = ROOT / "alembic" / "versions" / f"{M8_REVISION}_v3_m8_topic_clusters.py"
+M9_REVISION = "1c5516fa864d"
+M9_PATH = ROOT / "alembic" / "versions" / f"{M9_REVISION}_v3_m9_inbox.py"
 ACTIVE_INDEX = "uq_embed_tokens_website_id_active"
 
 
@@ -155,9 +163,11 @@ class EmbedTokenMigrationTests(unittest.TestCase):
         config.set_main_option("script_location", str(ROOT / "alembic"))
         script = ScriptDirectory.from_config(config)
 
-        # M8 is the head now; M7 must still be exactly one step behind it and
-        # still chained from the V2 head, or M8 was rebased onto the wrong parent.
-        self.assertEqual(script.get_heads(), [M8_REVISION])
+        # Each migration must stay exactly one step behind the next one and the
+        # chain must still start at the V2 head, or a later one was rebased onto
+        # the wrong parent.
+        self.assertEqual(script.get_heads(), [M9_REVISION])
+        self.assertEqual(script.get_revision(M9_REVISION).down_revision, M8_REVISION)
         self.assertEqual(script.get_revision(M8_REVISION).down_revision, M7_REVISION)
         self.assertEqual(script.get_revision(M7_REVISION).down_revision, M7_PARENT)
 
@@ -313,8 +323,74 @@ class TopicClusterMigrationTests(unittest.TestCase):
         config.set_main_option("script_location", str(ROOT / "alembic"))
         script = ScriptDirectory.from_config(config)
 
-        self.assertEqual(script.get_heads(), [M8_REVISION])
+        self.assertEqual(script.get_heads(), [M9_REVISION])
         self.assertEqual(script.get_revision(M8_REVISION).down_revision, M7_REVISION)
+
+
+class ConversationSchemaTests(unittest.TestCase):
+    """M9: one inbox row per session, and an optional author on agent messages."""
+
+    def test_the_session_pair_is_unique(self):
+        self.assertIn(
+            ("session_id", "website_id"),
+            _unique_column_sets(models.Conversation),
+        )
+
+    def test_the_queue_index_leads_with_the_website(self):
+        index = next(
+            item
+            for item in models.Conversation.__table__.indexes
+            if item.name == "idx_conversations_website_id_state_last_message_at"
+        )
+
+        self.assertEqual(
+            [column.name for column in index.columns],
+            ["website_id", "state", "last_message_at"],
+        )
+        self.assertFalse(index.unique)
+
+    def test_agent_messages_may_carry_an_author(self):
+        column = models.ChatMessage.__table__.c.author_user_id
+
+        self.assertTrue(column.nullable)
+        foreign_key = next(iter(column.foreign_keys))
+        self.assertEqual(foreign_key.target_fullname, "users.id")
+        self.assertEqual(foreign_key.ondelete, "SET NULL")
+
+    def test_websites_cascade_to_their_conversations(self):
+        foreign_key = next(iter(models.Conversation.__table__.c.website_id.foreign_keys))
+
+        self.assertEqual(foreign_key.target_fullname, "websites.id")
+        self.assertEqual(foreign_key.ondelete, "CASCADE")
+
+
+class ConversationMigrationTests(unittest.TestCase):
+    """M9 needs no `CONCURRENTLY`, and the author FK must not lock writes."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.source = M9_PATH.read_text()
+
+    def test_m9_chains_from_m8(self):
+        self.assertIn(f"down_revision: Union[str, Sequence[str], None] = '{M8_REVISION}'", self.source)
+
+    def test_the_known_drift_is_not_in_the_migration(self):
+        self.assertNotIn("alter_column", self.source)
+        self.assertNotIn("drop_constraint", self.source)
+
+    def test_new_table_indexes_are_built_transactionally(self):
+        self.assertNotIn("autocommit_block()", self.source)
+        self.assertNotIn("postgresql_concurrently=True", self.source)
+
+    def test_the_author_fk_is_validated_without_blocking_writes(self):
+        self.assertIn("ON DELETE SET NULL NOT VALID", self.source)
+        self.assertIn("VALIDATE CONSTRAINT", self.source)
+
+    def test_downgrade_removes_the_column_and_the_table(self):
+        downgrade = self.source.split("def downgrade()", 1)[1]
+
+        self.assertIn("drop_column('chat_messages', 'author_user_id')", downgrade)
+        self.assertIn("drop_table('conversations')", downgrade)
 
 
 if __name__ == "__main__":

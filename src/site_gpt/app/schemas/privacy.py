@@ -42,6 +42,19 @@ class PrivacyHandoff(BaseModel):
     created_at: datetime
 
 
+class PrivacyConversation(BaseModel):
+    """The inbox state of one session (M9): owner, queue and close timestamps."""
+
+    id: UUID
+    session_id: str
+    state: str
+    assigned_user_id: UUID | None = None
+    claimed_at: datetime | None = None
+    closed_at: datetime | None = None
+    last_message_at: datetime
+    created_at: datetime
+
+
 class PrivacyExport(BaseModel):
     """Everything the app stores about one website, for a data-subject request.
 
@@ -56,6 +69,7 @@ class PrivacyExport(BaseModel):
     contacts: list[PrivacyContact]
     chat_feedback: list[PrivacyFeedback]
     handoff_requests: list[PrivacyHandoff]
+    conversations: list[PrivacyConversation] = []
 
 
 class PrivacyDeletionResult(BaseModel):

@@ -49,6 +49,9 @@ class RetentionEndpointTests(unittest.TestCase):
                 # M8: the purge sweeps derived topic rows with everything else.
                 models.TopicCluster.__table__,
                 models.TopicClusterRun.__table__,
+                # M9: inbox metadata and the K4 token the erasure path removes.
+                models.Conversation.__table__,
+                models.SessionToken.__table__,
             ],
         )
         self.db = sessionmaker(bind=self.engine)()

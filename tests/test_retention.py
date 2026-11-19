@@ -42,6 +42,8 @@ TABLES = [
     # were built from, so the purge has to know about them.
     models.TopicCluster.__table__,
     models.TopicClusterRun.__table__,
+    # Inbox metadata (M9): expires with the newest message it describes.
+    models.Conversation.__table__,
 ]
 
 
@@ -726,6 +728,8 @@ class PurgeTests(unittest.TestCase):
                 # cannot be deleted invisibly.
                 "topic_clusters": 0,
                 "topic_cluster_runs": 0,
+                # M9 inbox rows, on the same reporting rule.
+                "conversations": 0,
                 "attachments": 0,
                 "extra_documents": 0,
             },

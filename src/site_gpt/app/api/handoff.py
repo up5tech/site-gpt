@@ -18,7 +18,7 @@ from site_gpt.app.core.auth import get_manager_user
 from site_gpt.app.db.session import get_db
 from site_gpt.app.schemas.app import PaginatedResponse
 from site_gpt.app.schemas.handoff import HandoffCreate, HandoffItem, HandoffUpdate
-from site_gpt.app.services import company_settings
+from site_gpt.app.services import company_settings, conversations
 from site_gpt.app.services.integrations import emit_event_async
 from site_gpt.app.services.mail import send_email_async
 from site_gpt.app.services.rag import get_chat_history
@@ -196,6 +196,9 @@ async def create_handoff(
         if reopened:
             # A closed request asked for again is a new call for attention.
             existing.status = "pending"
+        # M9: asking for a human puts the session in the inbox queue. The call is
+        # idempotent, so a second click cannot pull a claimed session back.
+        conversations.mark_waiting(db, website.id, body.session_id)
         db.commit()
         db.refresh(existing)
         if reopened:
@@ -211,6 +214,7 @@ async def create_handoff(
         channel="widget",
     )
     db.add(request)
+    conversations.mark_waiting(db, website.id, body.session_id)
     db.commit()
     db.refresh(request)
 

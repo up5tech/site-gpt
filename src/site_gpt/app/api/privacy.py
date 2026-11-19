@@ -22,6 +22,7 @@ from site_gpt.app.core.auth import get_admin_user
 from site_gpt.app.db.session import get_db
 from site_gpt.app.schemas.privacy import (
     PrivacyContact,
+    PrivacyConversation,
     PrivacyDeletionResult,
     PrivacyExport,
     PrivacyFeedback,
@@ -31,7 +32,7 @@ from site_gpt.app.schemas.privacy import (
     RetentionPurgeResult,
 )
 from site_gpt.app.services import retention
-from site_gpt.app.services.conversations import delete_conversation
+from site_gpt.app.services.conversations import erase_session
 
 router = APIRouter()
 
@@ -92,6 +93,14 @@ def export_website_data(
         .order_by(models.HandoffRequest.created_at.asc())
         .all()
     )
+    # M9: the inbox state of each session (assignee id only — the export never
+    # includes another user's credentials).
+    inbox = (
+        db.query(models.Conversation)
+        .filter(models.Conversation.website_id == website.id)
+        .order_by(models.Conversation.created_at.asc())
+        .all()
+    )
 
     return PrivacyExport(
         website_id=website.id,
@@ -141,6 +150,19 @@ def export_website_data(
             )
             for h in handoffs
         ],
+        conversations=[
+            PrivacyConversation(
+                id=row.id,
+                session_id=row.session_id,
+                state=row.state,
+                assigned_user_id=row.assigned_user_id,
+                claimed_at=row.claimed_at,
+                closed_at=row.closed_at,
+                last_message_at=row.last_message_at,
+                created_at=row.created_at,
+            )
+            for row in inbox
+        ],
     )
 
 
@@ -151,12 +173,14 @@ def erase_conversation(
     db: Session = Depends(get_db),
     user: models.User = Depends(get_admin_user),
 ):
-    """Erase one conversation: its messages, its ratings and its handoffs.
+    """Erase one conversation: messages, inbox row, ratings, handoffs and token.
 
     The contact row is kept — it is the owner's lead record, and it has its own
-    endpoint below. Anything pointing at the erased messages is cleared by the
-    schema (`chat_feedback.message_id` is ON DELETE SET NULL), so no dangling
-    reference survives.
+    endpoint below. Everything session-scoped is deleted by **one** service call
+    in one transaction (`conversations.erase_session`), including the K4 session
+    token: leaving a credential behind for a session that no longer exists would
+    be a dangling capability. Anything pointing at the erased messages is cleared
+    by the schema (`chat_feedback.message_id` is ON DELETE SET NULL).
 
     Derived topic clusters for the weeks those messages fell in are dropped too:
     their labels and summaries were generated from the erased questions, so
@@ -182,26 +206,10 @@ def erase_conversation(
         .all()
     ]
 
-    # Ratings and handoffs carry the visitor's words too, so they go with the
-    # conversation; leaving them would make the erasure incomplete.
-    deleted_feedback = (
-        db.query(models.ChatFeedback)
-        .filter(
-            models.ChatFeedback.website_id == website.id,
-            models.ChatFeedback.session_id == session_id,
-        )
-        .delete()
-    )
-    deleted_handoffs = (
-        db.query(models.HandoffRequest)
-        .filter(
-            models.HandoffRequest.website_id == website.id,
-            models.HandoffRequest.session_id == session_id,
-        )
-        .delete()
-    )
-    db.commit()
-    deleted_messages = delete_conversation(db, website.id, session_id)
+    # Ratings, handoffs, the inbox row and the session token carry the visitor's
+    # session too, so they go with the messages, in one transaction: a partial
+    # erasure that leaves any of them behind is not an erasure.
+    deleted = erase_session(db, website.id, session_id)
     # Local, unconditional and provider-free: derived rows are rebuilt by the
     # worker, never kept as a copy of erased text.
     deleted_clusters = retention.invalidate_topic_windows(
@@ -211,12 +219,7 @@ def erase_conversation(
     return PrivacyDeletionResult(
         website_id=website.id,
         session_id=session_id,
-        deleted={
-            "chat_messages": deleted_messages,
-            "chat_feedback": deleted_feedback,
-            "handoff_requests": deleted_handoffs,
-            **deleted_clusters,
-        },
+        deleted={**deleted, **deleted_clusters},
     )
 
 

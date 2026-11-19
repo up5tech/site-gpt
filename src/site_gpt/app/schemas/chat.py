@@ -58,6 +58,10 @@ class ConversationSummary(BaseModel):
     message_count: int
     created_at: datetime
     last_message_at: datetime
+    # M9 inbox state. Both stay `None` for a session whose row does not exist
+    # yet (every session recorded before V3), so the old shape still parses.
+    conversation_id: UUID | None = None
+    state: str | None = None
 
 
 class ConversationListResponse(BaseModel):

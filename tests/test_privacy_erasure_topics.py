@@ -47,6 +47,10 @@ class EraseConversationTopicsTests(unittest.TestCase):
                 models.Contact.__table__,
                 models.TopicCluster.__table__,
                 models.TopicClusterRun.__table__,
+                # M9: the erasure is transactional over the whole session, so
+                # the inbox row and the K4 token must go with the messages.
+                models.Conversation.__table__,
+                models.SessionToken.__table__,
             ],
         )
         self.db = sessionmaker(bind=self.engine)()

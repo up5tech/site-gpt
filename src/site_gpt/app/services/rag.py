@@ -11,7 +11,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from site_gpt.app import models
 from site_gpt.app.core.config import RAG_MAX_DISTANCE
-from site_gpt.app.services import model_settings
+from site_gpt.app.services import conversations, model_settings
 from site_gpt.app.services.ingest import embed_texts
 from site_gpt.app.services.llm import get_llm
 
@@ -147,13 +147,17 @@ def save_message(
     role: str,
     message: str,
     answered: bool | None = None,
+    author_user_id: UUID | None = None,
 ) -> models.ChatMessage:
     """Persist one message and return it.
 
     The assistant row's id is what the widget sends back with a rating (F4), so
     callers need the refreshed row — `created_at` is a server default.
     `answered` is the digest's signal (F6): True/False only for a complete
-    answer, left NULL for a partial one and for pre-V2 rows.
+    answer, left NULL for a partial one and for pre-V2 rows. `author_user_id` is
+    the agent who wrote an `agent` row (M9); the transcript and the inbox are
+    updated in the same transaction, so the queue can never disagree with the
+    messages.
     """
     msg = models.ChatMessage(
         session_id=session_id,
@@ -161,8 +165,12 @@ def save_message(
         message=message,
         website_id=website_id,
         answered=answered,
+        author_user_id=author_user_id,
     )
     db.add(msg)
+    # M9: the inbox row is created lazily here, on the session's first message,
+    # and every message refreshes its `last_message_at` clock.
+    conversations.note_message(db, website_id, session_id, role)
     db.commit()
     db.refresh(msg)
     return msg
