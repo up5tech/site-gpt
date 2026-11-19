@@ -7,7 +7,7 @@ import { Dropdown, Layout, MenuProps, Space, Typography } from 'antd';
 import { useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { getInboxStatus } from '../utils/api';
+import { getInboxStatus, INBOX_STATUS_CHANGED } from '../utils/api';
 
 const { Header, Content } = Layout;
 const { Text } = Typography;
@@ -25,6 +25,14 @@ export function LayoutComponent({ children }: Props) {
   // whole surface answers 404, so the navigation must not offer it. One tiny
   // read per session answers `{enabled}` without touching the queue.
   const [inboxEnabled, setInboxEnabled] = useState(false);
+  // Settings → the live-inbox switch asks for a re-read instead of a reload.
+  const [inboxStatusRefresh, setInboxStatusRefresh] = useState(0);
+
+  useEffect(() => {
+    const refresh = () => setInboxStatusRefresh((value) => value + 1);
+    window.addEventListener(INBOX_STATUS_CHANGED, refresh);
+    return () => window.removeEventListener(INBOX_STATUS_CHANGED, refresh);
+  }, []);
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -42,7 +50,7 @@ export function LayoutComponent({ children }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [isAuthenticated]);
+  }, [isAuthenticated, inboxStatusRefresh]);
 
   const menuItems = [
     { key: '/', label: 'Dashboard' },

@@ -32,6 +32,7 @@ import api, {
   applyRetentionPurge,
   getApiErrorMessage,
   getSettings,
+  notifyInboxStatusChanged,
   previewRetentionPurge,
   updateSettings,
 } from '../utils/api';
@@ -240,9 +241,11 @@ export function Settings() {
   const { message, modal } = useApp();
   const [profileForm] = Form.useForm();
   const [appearanceForm] = Form.useForm();
+  const [inboxForm] = Form.useForm();
   const [modelForm] = Form.useForm();
   const [loading, setLoading] = useState(false);
   const [appearanceLoading, setAppearanceLoading] = useState(false);
+  const [inboxSaving, setInboxSaving] = useState(false);
   const [modelSaving, setModelSaving] = useState(false);
   const [retentionForm] = Form.useForm();
   const [retentionSaving, setRetentionSaving] = useState(false);
@@ -319,11 +322,16 @@ export function Settings() {
         privacy_policy_url: map.privacy_policy_url || '',
       };
       appearanceForm.setFieldsValue(values);
+      // The live inbox is an internal switch, so it has its own small form but
+      // rides on the same settings read.
+      inboxForm.setFieldsValue({
+        live_inbox_enabled: (map.live_inbox_enabled || 'false') === 'true',
+      });
       setPreview(buildPreview(values));
     } catch (error) {
       console.error('Fetch settings error', error);
     }
-  }, [appearanceForm]);
+  }, [appearanceForm, inboxForm]);
 
   const handleAppearanceSubmit = async (values: AppearanceFormValues) => {
     setAppearanceLoading(true);
@@ -347,6 +355,31 @@ export function Settings() {
       message.error('Failed to update appearance');
     } finally {
       setAppearanceLoading(false);
+    }
+  };
+
+  // The live-agent console is an internal switch, not a widget setting: only an
+  // admin may read internal settings at all, and `PUT /api/settings` is the
+  // admin-only endpoint that stores it. Saving asks the navigation to re-read
+  // the flag, so the `/inbox` link appears (or disappears) without a reload.
+  const handleInboxSubmit = async (values: { live_inbox_enabled?: boolean }) => {
+    setInboxSaving(true);
+    try {
+      await updateSettings([
+        {
+          key: 'live_inbox_enabled',
+          value: values.live_inbox_enabled ? 'true' : 'false',
+        },
+      ]);
+      message.success('Live inbox setting updated');
+      notifyInboxStatusChanged();
+    } catch (error) {
+      console.error('Update live inbox error', error);
+      message.error(
+        getApiErrorMessage(error, 'Failed to update the live inbox setting'),
+      );
+    } finally {
+      setInboxSaving(false);
     }
   };
 
@@ -923,6 +956,7 @@ export function Settings() {
         </span>
       ),
       children: (
+        <>
         <Card variant='borderless' className='premium-card'>
           <Title level={4}>Widget Appearance</Title>
           <Paragraph type='secondary'>
@@ -1058,6 +1092,41 @@ export function Settings() {
             </Col>
           </Row>
         </Card>
+        {user?.role === 'admin' && (
+          <Card
+            variant='borderless'
+            className='premium-card'
+            style={{ marginTop: 24 }}
+          >
+            <Title level={4}>Live-agent inbox</Title>
+            <Paragraph type='secondary'>
+              Turns on the Inbox page and the agent queue behind it. With it on,
+              a "talk to a human" click also puts the session in that queue;
+              with it off the handoff keeps working exactly as before — one
+              request, one email, the Handoffs page — and no queue entry is
+              created.
+            </Paragraph>
+            <Form form={inboxForm} layout='vertical' onFinish={handleInboxSubmit}>
+              <Form.Item
+                name='live_inbox_enabled'
+                label='Enable the live-agent inbox'
+                valuePropName='checked'
+                tooltip='Admins only. Agents answer queued visitors from the Inbox page; the bot stays quiet while a session is with them.'
+              >
+                <Switch />
+              </Form.Item>
+              <Button
+                type='primary'
+                htmlType='submit'
+                icon={<SaveOutlined />}
+                loading={inboxSaving}
+              >
+                Save inbox setting
+              </Button>
+            </Form>
+          </Card>
+        )}
+        </>
       ),
     },
   ];

@@ -201,6 +201,17 @@ export const deleteConversation = (websiteId: string, sessionId: string) =>
 // Live-agent inbox (V3-44). `getInboxStatus` is the navigation gate: it answers
 // `{enabled}` for a manager instead of the 404 the rest of the surface gives
 // when the company has not turned the inbox on.
+
+/**
+ * Settings caches nothing, but the navigation reads the flag once per session.
+ * Saving the live-inbox switch fires this so it re-reads `getInboxStatus` and
+ * adds or removes the `/inbox` link without a page reload.
+ */
+export const INBOX_STATUS_CHANGED = 'inbox-status-changed';
+
+export const notifyInboxStatusChanged = () => {
+  window.dispatchEvent(new Event(INBOX_STATUS_CHANGED));
+};
 export const getInboxStatus = () => api.get<InboxStatus>('/inbox/status');
 
 export const getInboxConversations = (

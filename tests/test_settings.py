@@ -105,6 +105,15 @@ class SettingsRegistryTests(unittest.TestCase):
         self.assertEqual(INTERNAL_SETTINGS["topic_cluster_count"], "5")
         self.assertEqual(INTERNAL_SETTINGS["live_inbox_enabled"], "false")
 
+    def test_live_inbox_is_an_internal_switch_off_by_default(self):
+        # V3-44/V3-45: the agent console is opt-in per company; Settings writes
+        # it through the admin-only `PUT /api/settings`, and it must never reach
+        # the public widget config (the widget has no consent to show a queue).
+        self.assertIn("live_inbox_enabled", INTERNAL_SETTINGS)
+        self.assertEqual(INTERNAL_SETTINGS["live_inbox_enabled"], "false")
+        self.assertNotIn("live_inbox_enabled", WIDGET_PUBLIC_KEYS)
+        self.assertNotIn("live_inbox_enabled", DEFAULT_SETTINGS)
+
     def test_widget_public_keys_are_the_pinned_literal(self):
         # An explicit tuple, not derived from a dict: order is part of the
         # contract the widget receives.
