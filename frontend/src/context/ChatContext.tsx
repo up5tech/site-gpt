@@ -4,7 +4,8 @@ import api from '../utils/api';
 import type { ChatSource, ConversationMessage } from '../types/api';
 
 interface ChatMessageItem {
-  role: 'user' | 'assistant';
+  // `agent` is a teammate's reply from the live inbox (V3-43).
+  role: 'user' | 'assistant' | 'agent';
   content: string;
   sources?: ChatSource[];
   // The stored assistant row: a rating sends it back so the admin review can
@@ -109,7 +110,11 @@ export const ChatProvider = ({ children }: Props) => {
   const loadMessages = (items: ConversationMessage[]) => {
     setMessages(
       items
-        .filter((m) => m.role === 'user' || m.role === 'assistant')
+        // Agent replies belong in the transcript too: a session that went
+        // through a human must not read as if the bot answered everything.
+        .filter(
+          (m) => m.role === 'user' || m.role === 'assistant' || m.role === 'agent',
+        )
         .map((m) => ({ role: m.role, content: m.message, message_id: m.id })),
     );
   };

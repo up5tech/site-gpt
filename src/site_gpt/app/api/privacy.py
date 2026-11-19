@@ -112,6 +112,7 @@ def export_website_data(
                 session_id=m.session_id,
                 role=m.role,
                 message=m.message,
+                author_user_id=m.author_user_id,
                 created_at=m.created_at,
             )
             for m in messages

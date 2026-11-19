@@ -341,6 +341,18 @@ def get_conversation_messages(
     )
 
 
+def human_handling(db: Session, website_id: UUID, session_id: str) -> bool:
+    """True while a teammate owns the session, so the bot must stay quiet.
+
+    Only `human` silences the bot: a `waiting` session is queued but still
+    unattended, so it keeps getting answers until an agent claims it. A closed
+    session is reopened by the visitor's next message (`note_message`), which is
+    how the bot takes over again after the agent is done.
+    """
+    row = conversation_for(db, website_id, session_id)
+    return row is not None and row.state == STATE_HUMAN
+
+
 def question_for_answer(
     db: Session, website_id: UUID, session_id: str, answer: models.ChatMessage
 ) -> models.ChatMessage | None:

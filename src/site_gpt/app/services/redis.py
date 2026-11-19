@@ -12,7 +12,10 @@ limiter's in-process fallback, V3-10). Pub/sub notifications are
 best-effort — persist first, publish after commit, reconcile from DB.
 """
 
+import asyncio
 import json
+import queue
+import threading
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -145,6 +148,60 @@ async def lease_keys(pattern: str) -> list[str]:
         print(f"[redis] scan {pattern} failed: {e}")
         return []
     return keys
+
+
+# -- notifications from sync code -------------------------------------------
+# A sync route (a claim, an agent reply) must not wait on Redis: the publish is
+# a hint the console can miss and recover from the database, so it belongs off
+# the request thread. One daemon thread owns a private loop and client, so a
+# publish from a worker thread neither blocks the response nor borrows the
+# server loop's connection pool (redis-py binds a connection to its loop).
+_outbox: "queue.SimpleQueue[tuple[str, dict]]" = queue.SimpleQueue()
+_outbox_started = False
+_outbox_lock = threading.Lock()
+
+
+async def _publish_queued(channel: str, payload: dict) -> None:
+    client = create_client()
+    try:
+        await client.publish(channel, json.dumps(payload))
+    finally:
+        await client.aclose()
+
+
+def _drain_outbox() -> None:
+    """Drain the outbox forever; a failure loses a hint, never a request."""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    while True:
+        channel, payload = _outbox.get()
+        try:
+            loop.run_until_complete(_publish_queued(channel, payload))
+        except Exception as e:  # noqa: BLE001 - callers already committed
+            print(f"[redis] notification on {channel} lost: {e}")
+
+
+def enqueue_publish(channel: str, payload: dict) -> None:
+    """Queue one notification and return immediately. Never raises.
+
+    The publisher thread is started on first use. Call this **after** the
+    transaction committed; the subscriber re-reads the database anyway, so a
+    lost notification costs a poll, not a wrong screen.
+    """
+    global _outbox_started
+    try:
+        if not _outbox_started:
+            with _outbox_lock:
+                if not _outbox_started:
+                    threading.Thread(
+                        target=_drain_outbox,
+                        name="redis-publisher",
+                        daemon=True,
+                    ).start()
+                    _outbox_started = True
+        _outbox.put((channel, payload))
+    except Exception as e:  # noqa: BLE001 - the next poll recovers
+        print(f"[redis] could not queue a notification: {e}")
 
 
 async def increment(key: str, ttl_seconds: int | None = None) -> int | None:

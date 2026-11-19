@@ -44,9 +44,25 @@ class ConversationMessage(BaseModel):
     id: UUID
     session_id: str
     website_id: UUID
-    role: str  # "user" | "assistant"
+    role: str  # "user" | "assistant" | "agent" (a human teammate)
     message: str
     created_at: datetime
+
+
+class WidgetMessage(BaseModel):
+    """A message the widget renders from its live/poll endpoint (V3-43)."""
+
+    id: UUID
+    role: str  # "user" | "assistant" | "agent"
+    message: str
+    created_at: datetime
+
+
+class WidgetMessagesResponse(BaseModel):
+    """One page of a session's messages plus the cursor to resume from."""
+
+    items: list[WidgetMessage] = []
+    next_cursor: str | None = None
 
 
 class ConversationSummary(BaseModel):

@@ -32,6 +32,8 @@ from site_gpt.app.schemas.chat import (
     FeedbackRequest,
     RecentConversation,
     RecentConversationsResponse,
+    WidgetMessage,
+    WidgetMessagesResponse,
 )
 from site_gpt.app.schemas.company import CompanyRegister
 from site_gpt.app.services.integrations import emit_event
@@ -45,9 +47,11 @@ from site_gpt.app.schemas.session_token import (
     SessionTokenResponse,
 )
 from site_gpt.app.schemas.user import UserLogin
+from site_gpt.app.services import rag
 from site_gpt.app.services.conversations import (
     delete_conversation,
     get_conversation_messages,
+    human_handling,
     list_conversations,
     list_recent_conversations,
 )
@@ -120,6 +124,13 @@ async def chat(
         )
     ensure_website_active(website)
     ensure_embed_allowed(request, db, website, allow_authenticated=True)
+    # A teammate owns the session: store the visitor's message and stop. The bot
+    # must not answer over the agent, and since nothing is generated no LLM call
+    # is made and no daily quota is spent.
+    if await asyncio.to_thread(human_handling, db, website.id, body.session_id):
+        return await asyncio.to_thread(
+            rag.queue_visitor_message, db, website.id, body.session_id, body.question
+        )
     # Daily per-website ceiling: per-IP limits do not bound a viral embed. The
     # company's own setting wins; without one the env default applies.
     if not await consume_message(
@@ -512,6 +523,14 @@ async def chat_stream(
         )
     ensure_website_active(website)
     ensure_embed_allowed(request, db, website, allow_authenticated=True)
+    # Same rule as the sync handler: while an agent answers, the message is
+    # persisted and the stream says so, in the shape the widget already parses.
+    if await asyncio.to_thread(human_handling, db, website.id, body.session_id):
+        return StreamingResponse(
+            rag.queued_stream(db, website.id, body.session_id, body.question),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
     if not await consume_message(
         website.id, limit=company_daily_message_limit(db, website.company_id)
     ):
@@ -524,6 +543,94 @@ async def chat_stream(
         ask_stream(db, body.website_id, body.session_id, body.question),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+WIDGET_STREAM_UNAVAILABLE = (
+    "Live updates need Redis; the widget keeps polling the message endpoint"
+)
+
+
+def _widget_session(
+    db: Session,
+    website_id: str,
+    session_id: str,
+    request: Request,
+    token: str | None,
+) -> models.Website:
+    """Resolve + authorize a public widget read (K4, F4, active website).
+
+    The session token — never the embed token alone — is what allows reading a
+    session's messages: the embed token is public in the page HTML, so it says
+    nothing about who the visitor is.
+    """
+    website = _session_website(db, website_id)
+    ensure_website_active(website)
+    ensure_embed_allowed(request, db, website)
+    session_token_queries.authorize(db, website, session_id, token)
+    return website
+
+
+@router.get("/api/chat/messages", response_model=WidgetMessagesResponse)
+def widget_messages(
+    website_id: str,
+    session_id: str,
+    request: Request,
+    after: str | None = None,
+    limit: int = 50,
+    db: Session = Depends(get_db),
+    x_session_token: str | None = Header(default=None, alias="X-Session-Token"),
+):
+    """Public: one session's messages after a `(created_at, id)` cursor.
+
+    This is the widget's fallback when the live stream is blocked or
+    reconnecting: the cursor makes it resumable, so an agent reply written
+    while the socket was down is still delivered, exactly once.
+    """
+    website = _widget_session(db, website_id, session_id, request, x_session_token)
+    rows = rag.messages_after(db, website.id, session_id, after, limit)
+    return WidgetMessagesResponse(
+        items=[WidgetMessage(**rag.widget_message(m)) for m in rows],
+        next_cursor=rag.message_cursor(rows[-1]) if rows else after,
+    )
+
+
+@router.get("/api/chat/messages/stream")
+async def widget_message_stream(
+    website_id: str,
+    session_id: str,
+    request: Request,
+    after: str | None = None,
+    db: Session = Depends(get_db),
+    x_session_token: str | None = Header(default=None, alias="X-Session-Token"),
+):
+    """Public SSE of a session's messages: replayed from the cursor, then live.
+
+    Read with `fetch()` so both widget tokens can be sent. Auth, the active
+    website check and the embed guard all run before the response starts; with
+    Redis unavailable the route answers 503 and the widget polls instead, so a
+    Redis outage degrades to the cursor endpoint rather than a hanging socket.
+    """
+    website = _widget_session(db, website_id, session_id, request, x_session_token)
+    if not await redis_ping():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=WIDGET_STREAM_UNAVAILABLE,
+        )
+    replay = [
+        rag.widget_message(m)
+        for m in rag.messages_after(db, website.id, session_id, after, 50)
+    ]
+    return StreamingResponse(
+        rag.message_stream(
+            website.id, session_id, replay, disconnect=request.is_disconnected
+        ),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
     )
 
 

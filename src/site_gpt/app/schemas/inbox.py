@@ -68,6 +68,16 @@ class InboxAssign(BaseModel):
     user_id: UUID
 
 
+class InboxReply(BaseModel):
+    """An agent's reply to the visitor (V3-43).
+
+    Whitespace-only is refused by the route: an empty bubble in the transcript
+    would look like a reply the visitor never received.
+    """
+
+    message: str
+
+
 class InboxPresence(BaseModel):
     """An agent watching the inbox right now (V3-42).
 

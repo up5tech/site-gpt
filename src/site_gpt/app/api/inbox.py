@@ -26,9 +26,11 @@ from site_gpt.app.schemas.inbox import (
     InboxAssign,
     InboxConversation,
     InboxConversationDetail,
+    InboxMessage,
     InboxPresence,
+    InboxReply,
 )
-from site_gpt.app.services import conversations, inbox
+from site_gpt.app.services import conversations, inbox, rag
 from site_gpt.app.services import redis as redis_service
 
 router = APIRouter()
@@ -227,6 +229,55 @@ def close_conversation(
         user.company_id, inbox.conversation_event(row, "closed")
     )
     return item
+
+
+@router.post(
+    "/conversations/{conversation_id}/messages", response_model=InboxMessage
+)
+def send_agent_reply(
+    conversation_id: UUID,
+    body: InboxReply,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(live_inbox_user),
+):
+    """Answer the visitor as `role='agent'`; only the holder, only while `human`.
+
+    The reply is persisted before anything is published (the widget and the
+    other consoles re-read the row), and the two notifications go out after
+    that commit: one on the inbox channel so every console sees the new message,
+    one on the session's own channel so the visitor's widget renders it without
+    a reload.
+    """
+    text = body.message.strip()
+    if not text:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="message must not be empty",
+        )
+    try:
+        row, message = inbox.reply(
+            db, user.company_id, conversation_id, user, text
+        )
+    except inbox.InboxNotFound as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+        ) from exc
+    except (inbox.InboxConflict, conversations.ConversationStateError) as exc:
+        raise _conflict(exc) from exc
+
+    inbox.publish_after_commit(
+        user.company_id, inbox.conversation_event(row, "message")
+    )
+    rag.publish_agent_reply(row.website_id, row.session_id, message)
+    return InboxMessage(
+        id=message.id,
+        role=message.role,
+        message=message.message,
+        author_user_id=message.author_user_id,
+        author_name=f"{user.first_name or ''} {user.last_name or ''}".strip()
+        or None,
+        created_at=message.created_at,
+    )
 
 
 @router.get("/events")

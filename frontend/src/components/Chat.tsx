@@ -433,7 +433,8 @@ export function Chat() {
           dataSource={messages}
           renderItem={(
             item: {
-              role: 'user' | 'assistant';
+              // `agent` is a human teammate's reply (V3-43).
+              role: 'user' | 'assistant' | 'agent';
               content: string;
               sources?: ChatSource[];
               message_id?: string;

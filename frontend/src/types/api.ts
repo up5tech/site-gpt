@@ -113,7 +113,8 @@ export interface ConversationMessage {
   id: string;
   session_id: string;
   website_id: string;
-  role: 'user' | 'assistant';
+  // `agent` is a human teammate answering from the live inbox (V3-43), not the bot.
+  role: 'user' | 'assistant' | 'agent';
   message: string;
   created_at: string;
 }

@@ -51,6 +51,8 @@ class WebsiteStatusWriteTests(unittest.TestCase):
                 models.Website.__table__,
                 models.WebsitePage.__table__,
                 models.Setting.__table__,
+                # The chat handlers read the inbox state (V3-43).
+                models.Conversation.__table__,
             ],
         )
         self.Session = sessionmaker(bind=self.engine)

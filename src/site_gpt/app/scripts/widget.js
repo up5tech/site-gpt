@@ -238,6 +238,8 @@
     localStorage.removeItem('chat_widget_contact');
     // A new session gets its own token; the old one belongs to the old id.
     localStorage.removeItem('chat_widget_session_token');
+    // The agent-reply cursor belongs to the old session's transcript.
+    localStorage.removeItem('chat_widget_agent_cursor');
     return id;
   }
 
@@ -1084,6 +1086,160 @@
     addMessage(UNAVAILABLE_MESSAGE, 'bot');
   }
 
+  // ================= LIVE AGENT REPLIES (V3 F3) =================
+  // An agent can answer this session from the console (the server keeps the
+  // session in `state='human'`). The reply is already stored, so the widget only
+  // has to notice it: a `fetch()` SSE stream while it is open, and the cursor
+  // endpoint when that fails. The cursor is `(created_at, id)`, so a reconnect
+  // resumes exactly where it stopped instead of replaying or losing messages.
+  const AGENT_CURSOR_KEY = 'chat_widget_agent_cursor';
+  const AGENT_POLL_MS = 5000;
+  const AGENT_POLL_MAX_MS = 60000;
+  let agentCursor = localStorage.getItem(AGENT_CURSOR_KEY) || '';
+  let agentPollTimer = null;
+  let agentPollDelay = AGENT_POLL_MS;
+  let agentLiveAbort = null;
+
+  function agentCursorOf(item) {
+    if (!item || !item.created_at || !item.id) return '';
+    return `${item.created_at}|${item.id}`;
+  }
+
+  // Show only the agent rows the visitor has not seen, but move the cursor past
+  // every row: the visitor's own and the bot's messages are already on screen,
+  // so re-reading them on every poll would cost bandwidth and duplicate work.
+  function agentMessagesToShow(items, cursor) {
+    const messages = [];
+    let next = cursor || '';
+    for (const item of Array.isArray(items) ? items : []) {
+      const key = agentCursorOf(item);
+      if (!key) continue;
+      if (cursor && key <= cursor) continue;
+      if (key > next) next = key;
+      if (
+        item.role === 'agent' &&
+        typeof item.message === 'string' &&
+        item.message
+      ) {
+        messages.push(item.message);
+      }
+    }
+    return { messages, cursor: next };
+  }
+
+  function rememberAgentCursor(cursor) {
+    if (!cursor || cursor === agentCursor) return;
+    agentCursor = cursor;
+    localStorage.setItem(AGENT_CURSOR_KEY, cursor);
+  }
+
+  function showAgentMessages(items) {
+    const result = agentMessagesToShow(items, agentCursor);
+    result.messages.forEach((text) => {
+      addMessage(text, 'agent');
+      saveHistory('agent', text);
+    });
+    rememberAgentCursor(result.cursor);
+  }
+
+  function agentHeaders() {
+    // Both tokens: the session token says which visitor, the embed token lets
+    // the owner revoke a deployed snippet.
+    return Object.assign({}, embedTokenHeaders(), sessionTokenHeaders());
+  }
+
+  function parseAgentFrame(part) {
+    const lines = String(part || '').split('\n');
+    if (!lines.some((line) => line.startsWith('event: message'))) return null;
+    const dataLine = lines.find((line) => line.startsWith('data:'));
+    if (!dataLine) return null;
+    try {
+      const item = JSON.parse(dataLine.slice(5).trim());
+      return item && item.id && item.created_at ? item : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  async function fetchAgentMessages() {
+    if (!hasWebsiteId || !config.apiUrl) return false;
+    await sessionTokenReady;
+    const base = config.apiUrl.replace(/\/$/, '');
+    const params = new URLSearchParams({
+      website_id: String(config.website_id),
+      session_id: sessionId,
+    });
+    if (agentCursor) params.set('after', agentCursor);
+    const res = await fetch(`${base}/api/chat/messages?${params}`, {
+      headers: agentHeaders(),
+    });
+    if (!res.ok) return false;
+    const data = await res.json();
+    showAgentMessages(data.items);
+    return true;
+  }
+
+  function scheduleAgentPoll(delay = AGENT_POLL_MS) {
+    if (agentPollTimer) return;
+    agentPollTimer = setTimeout(async () => {
+      agentPollTimer = null;
+      let ok = false;
+      try {
+        ok = await fetchAgentMessages();
+      } catch (e) {
+        ok = false;
+      }
+      // Back off while the API is unreachable, but keep trying: an agent may
+      // reply minutes after the visitor wrote.
+      agentPollDelay = ok
+        ? AGENT_POLL_MS
+        : Math.min(agentPollDelay * 2, AGENT_POLL_MAX_MS);
+      scheduleAgentPoll(agentPollDelay);
+    }, delay);
+  }
+
+  // SSE first (instant), polling if it cannot connect or drops. A blocked
+  // stream is not an error: the visitor still gets the reply on the next poll.
+  async function startAgentLive() {
+    if (!hasWebsiteId || !config.apiUrl || agentLiveAbort) return;
+    await sessionTokenReady;
+    const base = config.apiUrl.replace(/\/$/, '');
+    const params = new URLSearchParams({
+      website_id: String(config.website_id),
+      session_id: sessionId,
+    });
+    if (agentCursor) params.set('after', agentCursor);
+    const controller =
+      typeof AbortController === 'function' ? new AbortController() : null;
+    agentLiveAbort = controller;
+    try {
+      const res = await fetch(`${base}/api/chat/messages/stream?${params}`, {
+        headers: agentHeaders(),
+        signal: controller ? controller.signal : undefined,
+      });
+      if (!res.ok || !res.body) throw new Error('stream unavailable');
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const parts = buffer.split('\n\n');
+        buffer = parts.pop() || '';
+        for (const part of parts) {
+          const item = parseAgentFrame(part);
+          if (item) showAgentMessages([item]);
+        }
+      }
+    } catch (e) {
+      // Blocked, offline or closed: the poll below covers it.
+    } finally {
+      agentLiveAbort = null;
+    }
+    scheduleAgentPoll();
+  }
+
   // ================= SEND =================
   async function sendMessage(prefillText) {
     if (needsContact()) {
@@ -1414,6 +1570,13 @@
   function renderServerHistory(items) {
     if (!Array.isArray(items) || !items.length) return false;
     items.forEach((m) => addMessage(m.message, m.role, false, true));
+    // Everything just painted has been seen: start the live cursor after it, so
+    // a returning visitor is not shown their own agent replies twice.
+    const newest = items.reduce((acc, m) => {
+      const key = agentCursorOf(m);
+      return key > acc ? key : acc;
+    }, agentCursor || '');
+    rememberAgentCursor(newest);
     return true;
   }
 
@@ -1466,6 +1629,9 @@
     renderSuggestions();
 
     scrollToBottomForce();
+
+    // Agent replies arrive after the page settled: stream them, poll as backup.
+    startAgentLive();
   }
 
   init();

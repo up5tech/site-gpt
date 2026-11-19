@@ -154,6 +154,9 @@ class ChatUsesTheCompanyLimitTests(unittest.TestCase):
                 models.Company.__table__,
                 models.Website.__table__,
                 models.Setting.__table__,
+                # The chat handlers read the inbox state (V3-43): a `human`
+                # session is answered by a teammate, not the bot.
+                models.Conversation.__table__,
             ],
         )
         self.db = sessionmaker(bind=self.engine)()
@@ -295,7 +298,13 @@ class StreamUsesTheCompanyLimitTests(unittest.TestCase):
             quota, "redis_client", FakeRedis()
         ), patch.object(
             routes, "ask_stream", return_value=iter([])
-        ) as ask_stream:
+        ) as ask_stream, patch.object(
+            # This handler's db is a mock, so the inbox lookup is stubbed: the
+            # session is not held by an agent, which is the case under test.
+            routes,
+            "human_handling",
+            return_value=False,
+        ):
             self.stream()  # 1st message: allowed
             capped = self.stream()  # 2nd: over the company's limit of 1
 

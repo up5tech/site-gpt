@@ -28,8 +28,6 @@ presence cannot be cleared by the first one leaving.
 
 import asyncio
 import json
-import queue
-import threading
 from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
@@ -42,7 +40,7 @@ from site_gpt.app.core.config import (
     INBOX_PRESENCE_TTL_SECONDS,
     INBOX_STREAM_HEARTBEAT_SECONDS,
 )
-from site_gpt.app.services import company_settings, conversations
+from site_gpt.app.services import company_settings, conversations, rag
 from site_gpt.app.services import redis as redis_service
 
 # The per-company switch (V3-03 registry key). Off means the whole agent surface
@@ -227,6 +225,37 @@ def assign(
     return _take(
         db, company_id, conversation_id, target.id, action="assigned", when=when
     )
+
+
+def reply(
+    db: Session,
+    company_id: UUID,
+    conversation_id: UUID,
+    user: models.User,
+    message: str,
+) -> tuple[models.Conversation, models.ChatMessage]:
+    """An agent answers the visitor: store a `role='agent'` row, then return it.
+
+    Only the holder (or an admin) may write, and only while the session is
+    `human` — a queued or bot-run conversation has nobody to answer as. The row
+    carries `author_user_id`, so the transcript, the inbox detail and the
+    privacy export all name the teammate who wrote it. `rag.save_message`
+    commits (and refreshes the conversation's `last_message_at`), so callers
+    publish the notifications afterwards, never before.
+    """
+    row = _require(db, company_id, conversation_id)
+    if row.state != conversations.STATE_HUMAN:
+        raise InboxConflict(f"Conversation is {row.state}, not with an agent")
+    _ensure_holder(row, user)
+    saved = rag.save_message(
+        db,
+        row.website_id,
+        row.session_id,
+        rag.AGENT_ROLE,
+        message,
+        author_user_id=user.id,
+    )
+    return row, saved
 
 
 def release(
@@ -634,63 +663,17 @@ async def publish(company_id: UUID, payload: dict) -> bool:
     return await redis_service.publish_event(channel(company_id), payload)
 
 
-# The action routes are sync on purpose: a claim runs a `FOR UPDATE`
-# transaction, and running it on the event loop would hold every open SSE
-# stream (and every other async request) for the duration of the database
-# round trips. A sync route runs in a worker thread, so its notification cannot
-# be awaited there without either blocking the response or borrowing a loop it
-# does not own. One daemon thread drains this outbox instead: its own loop, its
-# own client, no interaction with the server's loop or its connection pool.
-_outbox: "queue.SimpleQueue[tuple[UUID, dict]]" = queue.SimpleQueue()
-_outbox_started = False
-_outbox_lock = threading.Lock()
-
-
-async def _deliver(company_id: UUID, payload: dict) -> None:
-    """One publish on the publisher thread's loop, with its own connection."""
-    client = redis_service.create_client()
-    try:
-        await client.publish(channel(company_id), json.dumps(payload))
-    finally:
-        await client.aclose()
-
-
-def _publisher_loop() -> None:
-    """Drain the outbox forever; a failure loses a hint, never a request."""
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    while True:
-        company_id, payload = _outbox.get()
-        try:
-            loop.run_until_complete(_deliver(company_id, payload))
-        except Exception as e:  # noqa: BLE001 - pub/sub is a hint, the DB is truth
-            print(f"[inbox] notification for {company_id} lost: {e}")
-
-
-def _start_publisher() -> None:
-    global _outbox_started
-    with _outbox_lock:
-        if _outbox_started:
-            return
-        threading.Thread(
-            target=_publisher_loop, name="inbox-publisher", daemon=True
-        ).start()
-        _outbox_started = True
-
-
 def publish_after_commit(company_id: UUID, payload: dict) -> None:
-    """Queue one notification and return immediately. Never raises.
+    """Queue one notification for this company and return immediately.
 
     Call this **after** the service committed: the event describes a state the
-    database already holds, and the console re-reads that state anyway. A Redis
-    outage, a slow publish or a full thread cannot delay or fail a claim, which
-    is why this is a queue put rather than an await.
+    database already holds, and the console re-reads that state anyway. The
+    action routes are sync because a claim runs a `FOR UPDATE` transaction,
+    which must not hold the event loop (and every open SSE stream) while the
+    database answers; `redis.enqueue_publish` drains the queue on its own
+    thread, so a slow or dead Redis cannot delay or fail a claim.
     """
-    try:
-        _start_publisher()
-        _outbox.put((company_id, payload))
-    except Exception as e:  # noqa: BLE001 - the console's next poll recovers
-        print(f"[inbox] could not queue a notification: {e}")
+    redis_service.enqueue_publish(channel(company_id), payload)
 
 
 def presence_key(company_id: UUID, user_id: UUID, lease_id: str) -> str:

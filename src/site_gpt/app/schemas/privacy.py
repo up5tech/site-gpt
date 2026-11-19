@@ -11,6 +11,9 @@ class PrivacyMessage(BaseModel):
     session_id: str
     role: str
     message: str
+    # V3-43: an `agent` row names the teammate who wrote it, so an export keeps
+    # the same attribution the transcript shows.
+    author_user_id: UUID | None = None
     created_at: datetime
 
 

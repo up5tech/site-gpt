@@ -2,20 +2,27 @@ import asyncio
 import json
 import logging
 import traceback
+from collections.abc import AsyncIterator, Awaitable, Callable
+from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import text
+from sqlalchemy import and_, or_, text
 from sqlalchemy.orm import Session
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from site_gpt.app import models
-from site_gpt.app.core.config import RAG_MAX_DISTANCE
+from site_gpt.app.core.config import INBOX_STREAM_HEARTBEAT_SECONDS, RAG_MAX_DISTANCE
 from site_gpt.app.services import conversations, model_settings
+from site_gpt.app.services import redis as redis_service
 from site_gpt.app.services.ingest import embed_texts
 from site_gpt.app.services.llm import get_llm
 
 logger = logging.getLogger(__name__)
+
+# The role a teammate's reply is stored with (M9, V3-43). `assistant` stays the
+# bot, so the transcript, the prompt and the widget can tell them apart.
+AGENT_ROLE = "agent"
 
 
 def search(
@@ -133,9 +140,20 @@ def get_chat_history(db: Session, website_id: UUID, session_id: str, limit: int 
 
 
 def format_history(messages):
+    """Render stored messages for the prompt.
+
+    An `agent` row was written by a human teammate, so it gets its own label:
+    telling the model it said those words as the assistant would let it answer
+    as if the bot had promised something an agent actually wrote.
+    """
     history = ""
     for m in messages:
-        role = "User" if m.role == "user" else "Assistant"
+        if m.role == "user":
+            role = "User"
+        elif m.role == AGENT_ROLE:
+            role = "Agent"
+        else:
+            role = "Assistant"
         history += f"{role}: {m.message}\n"
     return history
 
@@ -183,6 +201,206 @@ NO_CONTEXT_ANSWER = (
     "I'm sorry, I don't have information about that. "
     "Please contact the team for more details."
 )
+
+
+# ================= VISITOR MESSAGES WHILE AN AGENT ANSWERS (V3-43) =========
+# While a session is `human`, the bot must not answer over the teammate. The
+# visitor's message is still stored (so the agent sees it and the transcript
+# stays whole) and the reply says it was handed over. No LLM call, and no daily
+# quota spent: nothing was generated.
+
+QUEUED_MESSAGE = (
+    "Thanks! A member of our team is answering you here — your message has "
+    "been passed to them."
+)
+
+
+def queue_visitor_message(
+    db: Session, website_id: UUID, session_id: str, question: str
+) -> dict:
+    """Persist a visitor message for a human-held session; never calls the LLM."""
+    saved = save_message(db, website_id, session_id, "user", question)
+    return {
+        "answer": QUEUED_MESSAGE,
+        "sources": [],
+        "message_id": saved.id,
+        "queued": True,
+    }
+
+
+async def queued_stream(
+    db: Session, website_id: UUID, session_id: str, question: str
+) -> AsyncIterator[str]:
+    """SSE body for the same case, in the stream's normal `{chunk}` shape."""
+    saved = await asyncio.to_thread(
+        save_message, db, website_id, session_id, "user", question
+    )
+    yield f"data: {json.dumps({'chunk': QUEUED_MESSAGE})}\n\n"
+    yield f"data: {json.dumps({'done': True, 'sources': [], 'message_id': str(saved.id), 'queued': True})}\n\n"
+
+
+# ================= WIDGET LIVE MESSAGES (V3-43) ===========================
+# The agent's reply has to reach the visitor without a reload. The widget reads
+# with `fetch()` (it needs `X-Session-Token` and `X-Embed-Token`), so the stream
+# is a plain SSE body on a per-session channel, and the same keyset cursor backs
+# the poll endpoint used when SSE is blocked or reconnects.
+
+
+def widget_channel(website_id: UUID, session_id: str) -> str:
+    """One channel per session: another visitor's replies can never arrive here."""
+    return f"chat:{website_id}:{session_id}"
+
+
+def widget_message(message: models.ChatMessage) -> dict:
+    """One stored message in the shape the widget renders."""
+    return {
+        "id": str(message.id),
+        "role": message.role,
+        "message": message.message,
+        "created_at": message.created_at.isoformat() if message.created_at else None,
+    }
+
+
+def message_cursor(message: models.ChatMessage) -> str:
+    """The keyset cursor of one row: `(created_at, id)`, stable and resumable."""
+    return f"{message.created_at.isoformat()}|{message.id}"
+
+
+def parse_cursor(raw: str | None) -> tuple[datetime, UUID] | None:
+    """A cursor the caller sent back, or None when it is absent or unusable."""
+    if not raw or "|" not in raw:
+        return None
+    stamp, _, identifier = raw.partition("|")
+    try:
+        return datetime.fromisoformat(stamp), UUID(identifier)
+    except (TypeError, ValueError):
+        return None
+
+
+def messages_after(
+    db: Session,
+    website_id: UUID,
+    session_id: str,
+    cursor: str | None = None,
+    limit: int = 50,
+) -> list[models.ChatMessage]:
+    """Messages of one session newer than `cursor`, oldest first.
+
+    Keyset, not offset: `(created_at, id)` is unique and stable, so nothing is
+    skipped or repeated while messages are being written. A cursor the caller
+    cannot have produced is ignored (a fresh start), and an unreadable one is a
+    full replay rather than an error.
+    """
+    limit = max(1, min(int(limit), 200))
+    query = db.query(models.ChatMessage).filter(
+        models.ChatMessage.website_id == website_id,
+        models.ChatMessage.session_id == session_id,
+    )
+    parsed = parse_cursor(cursor)
+    if parsed is not None:
+        moment, last_id = parsed
+        query = query.filter(
+            or_(
+                models.ChatMessage.created_at > moment,
+                and_(
+                    models.ChatMessage.created_at == moment,
+                    models.ChatMessage.id > last_id,
+                ),
+            )
+        )
+    return (
+        query.order_by(
+            models.ChatMessage.created_at.asc(), models.ChatMessage.id.asc()
+        )
+        .limit(limit)
+        .all()
+    )
+
+
+def message_frame(payload: dict) -> str:
+    """One SSE frame for a stored message."""
+    return f"id: {payload['id']}\nevent: message\ndata: {json.dumps(payload)}\n\n"
+
+
+def publish_agent_reply(
+    website_id: UUID, session_id: str, message: models.ChatMessage
+) -> None:
+    """Tell the visitor's widget about a committed agent reply (off-thread).
+
+    Called by the route **after** `save_message` committed. The widget also
+    polls, so a missed notification is recovered from the database.
+    """
+    redis_service.enqueue_publish(
+        widget_channel(website_id, session_id), widget_message(message)
+    )
+
+
+def _live_frame(raw: str) -> str:
+    """A published widget message as an SSE frame."""
+    try:
+        payload = json.loads(raw)
+    except (TypeError, ValueError):
+        return f"event: message\ndata: {raw}\n\n"
+    if not isinstance(payload, dict) or "id" not in payload:
+        return f"event: message\ndata: {raw}\n\n"
+    return message_frame(payload)
+
+
+async def message_stream(
+    website_id: UUID,
+    session_id: str,
+    replay: list[dict] | None = None,
+    *,
+    disconnect: Callable[[], Awaitable[bool]] | None = None,
+    heartbeat_seconds: int | None = None,
+) -> AsyncIterator[str]:
+    """SSE body of the widget's message stream.
+
+    `replay` is what the route read from the database for the caller's cursor,
+    so a reconnect resumes instead of losing the messages written while the
+    socket was down. Live rows arrive over the session channel. The socket read
+    is one pending task raced against a sleep (a read timeout would leave the
+    pub/sub parser mid-frame) and a quiet connection gets a heartbeat comment.
+    """
+    heartbeat = max(1, heartbeat_seconds or INBOX_STREAM_HEARTBEAT_SECONDS)
+    try:
+        async with redis_service.subscribe(
+            widget_channel(website_id, session_id)
+        ) as pubsub:
+            yield "retry: 3000\n\n"
+            for item in replay or []:
+                yield message_frame(item)
+            reader = asyncio.ensure_future(
+                pubsub.get_message(ignore_subscribe_messages=True)
+            )
+            try:
+                while True:
+                    done, _ = await asyncio.wait({reader}, timeout=heartbeat)
+                    if disconnect is not None and await disconnect():
+                        break
+                    if not done:
+                        yield f": heartbeat {datetime.now(UTC).isoformat()}\n\n"
+                        continue
+                    try:
+                        message = reader.result()
+                    except Exception as e:  # noqa: BLE001 - end, client reconnects
+                        yield (
+                            "event: error\n"
+                            f"data: {json.dumps({'event': 'stream_interrupted', 'detail': str(e)})}\n\n"
+                        )
+                        break
+                    reader = asyncio.ensure_future(
+                        pubsub.get_message(ignore_subscribe_messages=True)
+                    )
+                    if message:
+                        yield _live_frame(message.get("data"))
+            finally:
+                reader.cancel()
+    except Exception as e:  # noqa: BLE001 - a stream that cannot subscribe
+        yield (
+            "event: error\n"
+            f"data: {json.dumps({'event': 'stream_unavailable', 'detail': str(e)})}\n\n"
+        )
 
 
 def _no_context_answer(db: Session, website_id: UUID, session_id: str, question: str):

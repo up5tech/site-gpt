@@ -762,7 +762,36 @@ class PurgeTests(unittest.TestCase):
         }
         self.assertEqual(remaining, {"s3"})
 
-    def test_the_cutoff_row_itself_survives(self):
+    def test_agent_authored_messages_expire_with_the_transcript(self):
+        # V3-43: an agent reply is a `chat_messages` row like any other, so the
+        # company's policy covers it too. Keeping it would leave a teammate's
+        # words behind after the transcript they answered is gone.
+        agent = _user(self.db, self.company)
+        self.db.add(
+            models.ChatMessage(
+                website_id=self.website.id,
+                session_id="s-agent",
+                role="agent",
+                message="answered by a human",
+                author_user_id=agent.id,
+                created_at=self.older,
+                updated_at=self.older,
+            )
+        )
+        self.db.commit()
+
+        retention.purge_company(
+            self.db, self.company.id, days=7, dry_run=False, now=NOW
+        )
+
+        self.assertEqual(
+            self.db.query(models.ChatMessage)
+            .filter(models.ChatMessage.session_id == "s-agent")
+            .count(),
+            0,
+        )
+
+    def test_the_cutoff_row_itself_stays(self):
         # A row created exactly at the cutoff is not older than it.
         _seed(self.db, self.website, self.company, NOW - timedelta(days=7), session_id="edge")
         retention.purge_company(self.db, self.company.id, days=7, dry_run=False, now=NOW)
