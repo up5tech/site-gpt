@@ -236,6 +236,12 @@ interface RetentionFormValues {
   retention_days?: number;
 }
 
+// V4 F4: the per-session cap is an internal setting like `retention_days`, so it
+// is edited here and read back through the same key/value endpoint.
+interface LimitFormValues {
+  session_message_limit?: number;
+}
+
 export function Settings() {
   const { user, fetchUser } = useAuth();
   const { message, modal } = useApp();
@@ -255,6 +261,8 @@ export function Settings() {
   const [retentionApplied, setRetentionApplied] =
     useState<RetentionPurgeResult | null>(null);
   const [retentionApplying, setRetentionApplying] = useState(false);
+  const [limitForm] = Form.useForm();
+  const [limitSaving, setLimitSaving] = useState(false);
   const [websites, setWebsites] = useState<Website[]>([]);
   const [selectedWebsiteId, setSelectedWebsiteId] = useState<string>('');
   const [preview, setPreview] = useState(buildPreview(DEFAULT_APPEARANCE));
@@ -459,6 +467,42 @@ export function Settings() {
     }
   };
 
+  // `session_message_limit` (V4 F4) is another internal server-side limit, so it
+  // is fetched and saved exactly like `retention_days`.
+  const fetchLimits = useCallback(async () => {
+    try {
+      const response = await getSettings();
+      const map: Record<string, string> = {};
+      (response.data || []).forEach((s) => {
+        map[s.key] = s.value;
+      });
+      limitForm.setFieldsValue({
+        session_message_limit: Number(map.session_message_limit || 0),
+      });
+    } catch (error) {
+      console.error('Fetch message limits error', error);
+    }
+  }, [limitForm]);
+
+  const handleLimitSubmit = async (values: LimitFormValues) => {
+    setLimitSaving(true);
+    try {
+      await updateSettings([
+        {
+          key: 'session_message_limit',
+          value: String(values.session_message_limit ?? 0),
+        },
+      ]);
+      message.success('Message limit updated');
+    } catch (error) {
+      message.error(
+        getApiErrorMessage(error, 'Failed to update the message limit'),
+      );
+    } finally {
+      setLimitSaving(false);
+    }
+  };
+
   // Always a dry run: this answers "what would go?" for the value in the form,
   // so a policy can be tried before it is saved or ever applied.
   const handleRetentionPreview = async () => {
@@ -541,6 +585,7 @@ export function Settings() {
     fetchAppearance();
     fetchModel();
     fetchRetention();
+    fetchLimits();
   }, [
     user,
     profileForm,
@@ -548,6 +593,7 @@ export function Settings() {
     fetchAppearance,
     fetchModel,
     fetchRetention,
+    fetchLimits,
   ]);
 
   // Ask the API for the current widget.js hash so the install snippet carries a
@@ -833,6 +879,47 @@ export function Settings() {
               </Descriptions>
             </div>
           )}
+          <Title level={4} style={{ marginTop: 32 }}>
+            Message limits
+          </Title>
+          <Paragraph type='secondary'>
+            How many messages one visitor session may send before the assistant
+            politely stops answering that session. Counted per visitor session
+            and idle-reset after 24 hours; <Text strong>0</Text> is unlimited.
+            It is checked before the daily message ceiling, so a capped session
+            spends nothing from the website's daily budget.
+          </Paragraph>
+          <Form
+            form={limitForm}
+            layout='vertical'
+            onFinish={handleLimitSubmit}
+            style={{ maxWidth: 480, marginTop: 24 }}
+          >
+            <Form.Item
+              name='session_message_limit'
+              label='Messages per session'
+              rules={[
+                { required: true, message: 'Enter a number of messages' },
+              ]}
+            >
+              <InputNumber
+                min={0}
+                precision={0}
+                style={{ width: '100%' }}
+                placeholder='0'
+              />
+            </Form.Item>
+            <Form.Item>
+              <Button
+                type='primary'
+                htmlType='submit'
+                icon={<SaveOutlined />}
+                loading={limitSaving}
+              >
+                Save limit
+              </Button>
+            </Form.Item>
+          </Form>
         </Card>
       ),
     },

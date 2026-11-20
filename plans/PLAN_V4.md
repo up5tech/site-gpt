@@ -3,7 +3,7 @@
 | | | |
 |---|---|---|
 | Version | **V4** — closes the feature gap against sitegpt.ai recorded in the 2026-11-20 comparison (§2): advanced analytics, per-conversation AI insights, new training sources, per-conversation cost caps + sitemap auto-scan, and a hosted chat page |
-| Status | **In progress — Wave 0 and Wave 1 complete (gates V4-0G and V4-1G signed off): V4-10 done (trend, funnel, top questions), V4-11 done (aggregate CSV export), V4-12 done (analytics page: SVG trend, funnel, top questions, export button), V4-13 done (docs: the analytics surface in README/AGENTS/api-v1); gate V4-1G signed off (both suites, widget suite, build/lint, `trail build`, digest byte-comparison, CSV by way of the API, `/api/v1` summary + foreign-id 404). Wave 2 is under way: V4-20 done (per-session message cap). No migration written yet — Alembic head is still `1c5516fa864d`.** D1–D9 confirmed twice against code anchors (§3) |
+| Status | **In progress — Wave 0 and Wave 1 complete (gates V4-0G and V4-1G signed off): V4-10 done (trend, funnel, top questions), V4-11 done (aggregate CSV export), V4-12 done (analytics page: SVG trend, funnel, top questions, export button), V4-13 done (docs: the analytics surface in README/AGENTS/api-v1); gate V4-1G signed off (both suites, widget suite, build/lint, `trail build`, digest byte-comparison, CSV by way of the API, `/api/v1` summary + foreign-id 404). Wave 2 is under way: V4-20 done (per-session message cap), V4-21 done (Settings field + docs). No migration written yet — Alembic head is still `1c5516fa864d`.** D1–D9 confirmed twice against code anchors (§3) |
 | Created | 2026-11-20 |
 | Derived from | `plans/PLAN_V3.md` (§2 non-goals, §4 invariants, §8 release-tag policy), `plans/SPEC.md`, `README.md` §V3, `docs/security.md` §5 (K18 stays accepted), and the sitegpt.ai feature/pricing comparison of 2026-11-20 (gap list reproduced in §2 so this plan is self-contained) |
 | Baseline | V3 tag `v3` = `2e5ab734b09b4eb229f927a875e737153c544779` (immutable); `master` HEAD `59e0cc2d13c51dacdb05fb3572715d0e5c40d85f` is docs-only after the tag (8 commits, incl. this plan); `feat/v4` branched from it at V4-01; Alembic head `1c5516fa864d`; suite counts are historical (V3-4G recorded 47 modules / 718 Python tests / 46 node checks; the **V4 baseline is 47 / 720 / 46**, recorded in §3's pre-flight block) and **must be re-run at pre-flight, never copied** |
@@ -604,7 +604,7 @@ V4 adds provider-cost features. Both opt-in, both fail safe. **Entry:** V4-1G.
     otherwise answer the settings read with the website row. Suite: **50
     modules / 770 tests, OK** (9.1 s).
 
-- [ ] **V4-21 · Session cap in Settings + dashboard visibility** — `S`, depends: V4-20, migration: —
+- [x] **V4-21 · Session cap in Settings + dashboard visibility** — `S`, depends: V4-20, migration: —
   - Files: `frontend/src/pages/Settings.tsx`, `frontend/src/pages/Dashboard.tsx`,
     `README.md`.
   - Do: expose `session_message_limit` in Settings (internal key, admin-only
@@ -614,6 +614,23 @@ V4 adds provider-cost features. Both opt-in, both fail safe. **Entry:** V4-1G.
   - Done when: saving the key round-trips through `PUT /api/settings`, the
     widget-config allowlist is still 14 keys, and the README settings table
     documents the key and its ordering.
+  - Done: the Privacy tab gains a **Message limits** section next to the other
+    internal server-side limit (`retention_days`; this console has no
+    `daily_message_limit` field to sit beside, and the Dashboard quota bar stays
+    read-only as the task specifies): an `InputNumber` for
+    `session_message_limit` (min 0) with the helper text "counted per visitor
+    session and idle-reset after 24 hours; 0 is unlimited ... checked before the
+    daily message ceiling", fetched through `getSettings` and saved through
+    `updateSettings` → `PUT /api/settings` exactly like the retention field.
+    Round-trip on a throwaway Postgres database (`v4_task21`, dropped
+    afterwards): default `0` → `PUT 3` → `GET /api/settings` reads `3` → `PUT 0`
+    back, while `GET /api/widget-config` still publishes exactly **14 keys** and
+    `session_message_limit` is not one of them. README's settings row gains the
+    UI location ("Settings → Privacy → Message limits writes it through
+    `PUT /api/settings`"); its ordering wording (after the per-IP limiter, before
+    the daily quota) was already there from V4-02. `npm run build` (✓ 1.95 s) and
+    `npm run lint` (`--max-warnings 0`) both exit 0; the backend is untouched.
+
 
 - [ ] **V4-22 · Daily sitemap auto-scan** — `L`, depends: V4-21, migration: —
   - Files: `worker.py` (`sitemap_loop`, `handle_sitemap_scan`,
@@ -1098,11 +1115,11 @@ provider absence.
 |---|---|---|---|
 | 0 — Foundation | 4 | 4 / 4 | ☑ V4-0G |
 | 1 — Advanced analytics (F1) | 4 | 4 / 4 | ☑ V4-1G |
-| 2 — Cost & freshness (F4) | 4 | 1 / 4 | ☐ V4-2G |
+| 2 — Cost & freshness (F4) | 4 | 2 / 4 | ☐ V4-2G |
 | 3 — Training sources (F3) | 4 | 0 / 4 | ☐ V4-3G |
 | 4 — Conversation insights (F2) | 6 | 0 / 6 | ☐ V4-4G |
 | 5 — Hosted chat page (F5) | 3 | 0 / 3 | ☐ V4-5G |
-| **Total** | **25 tasks + 6 gates** | **9 / 25** | **2 / 6 gates** |
+| **Total** | **25 tasks + 6 gates** | **10 / 25** | **2 / 6 gates** |
 
 ---
 
