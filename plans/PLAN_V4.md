@@ -3,7 +3,7 @@
 | | | |
 |---|---|---|
 | Version | **V4** — closes the feature gap against sitegpt.ai recorded in the 2026-11-20 comparison (§2): advanced analytics, per-conversation AI insights, new training sources, per-conversation cost caps + sitemap auto-scan, and a hosted chat page |
-| Status | **In progress — Wave 0 complete (gate V4-0G signed off) and Wave 1 under way: V4-10 done (trend, funnel, top questions), V4-11 done (aggregate CSV export), V4-12 done (analytics page: SVG trend, funnel, top questions, export button), V4-13 done (docs: the analytics surface in README/AGENTS/api-v1); gate V4-1G pending. No migration written yet — Alembic head is still `1c5516fa864d`.** D1–D9 confirmed twice against code anchors (§3) |
+| Status | **In progress — Wave 0 and Wave 1 complete (gates V4-0G and V4-1G signed off): V4-10 done (trend, funnel, top questions), V4-11 done (aggregate CSV export), V4-12 done (analytics page: SVG trend, funnel, top questions, export button), V4-13 done (docs: the analytics surface in README/AGENTS/api-v1); gate V4-1G signed off (both suites, widget suite, build/lint, `trail build`, digest byte-comparison, CSV by way of the API, `/api/v1` summary + foreign-id 404). No migration written yet — Alembic head is still `1c5516fa864d`. No migration written yet — Alembic head is still `1c5516fa864d`.** D1–D9 confirmed twice against code anchors (§3) |
 | Created | 2026-11-20 |
 | Derived from | `plans/PLAN_V3.md` (§2 non-goals, §4 invariants, §8 release-tag policy), `plans/SPEC.md`, `README.md` §V3, `docs/security.md` §5 (K18 stays accepted), and the sitegpt.ai feature/pricing comparison of 2026-11-20 (gap list reproduced in §2 so this plan is self-contained) |
 | Baseline | V3 tag `v3` = `2e5ab734b09b4eb229f927a875e737153c544779` (immutable); `master` HEAD `59e0cc2d13c51dacdb05fb3572715d0e5c40d85f` is docs-only after the tag (8 commits, incl. this plan); `feat/v4` branched from it at V4-01; Alembic head `1c5516fa864d`; suite counts are historical (V3-4G recorded 47 modules / 718 Python tests / 46 node checks; the **V4 baseline is 47 / 720 / 46**, recorded in §3's pre-flight block) and **must be re-run at pre-flight, never copied** |
@@ -503,14 +503,59 @@ definitions, no new index and no chart library. **Entry:** V4-0G.
 
 #### Gate V4-1G
 
-- [ ] Both suites + widget suite + build + lint + `trail build` pass; `alembic current` unchanged.
-- [ ] Digest byte-comparison: `build_digest` JSON + HTML for a fixed fixture
+- [x] Both suites + widget suite + build + lint + `trail build` pass; `alembic current` unchanged.
+  - Done: `uv run python -m unittest discover -s tests` → **49 modules / 752
+    tests, OK** (9.1 s); `node --test tests/*.mjs` → **46 checks, 46 pass, 0
+    fail**; `cd frontend && npm run build` (✓ built in 1.98 s) and `npm run lint`
+    (`eslint … --max-warnings 0`) both exit 0; `trail build` → 201 cards /
+    2656 nodes / 5912 edges, exit 0; `uv run alembic current` is `1c5516fa864d
+    (head)`, unchanged — V4 has written no migration.
+- [x] Digest byte-comparison: `build_digest` JSON + HTML for a fixed fixture
       identical to the module loaded from tag `v3` (the V3-3G technique).
-- [ ] CSV downloaded by hand from the dev API; formula cell neutralized; no PII
+  - Done: a throwaway Postgres database (`v4_gate_1g`, migrated to
+    `1c5516fa864d` and **dropped afterwards**; the dev database was not touched)
+    held one fixed fixture for `[2026-11-02, 2026-11-09)` — 2 sessions, 5
+    messages including one `answered=False`, 1 contact, 1 👍, 1 handoff,
+    clustering off. `build_digest` ran twice against those rows: once from HEAD
+    (`PYTHONPATH=src`, `site_gpt.__file__` = the repo's `src/site_gpt/__init__.py`)
+    and once from a `git archive v3` checkout (`site_gpt.__file__` =
+    `/tmp/…/v3/src/site_gpt/__init__.py`; tag `v3` is the annotated tag
+    `f82ea09` on commit `2e5ab73`) — code-to-code, not a copy. JSON **744 B** and
+    `render_digest_html` **691 B** were byte-identical (`cmp` silent, sha256
+    `3be8818a…` for both JSONs and `4925960…` for both HTMLs), with only the V3
+    keys: `company_id, conversation_volume, feedback_down, feedback_up,
+    message_count, new_contacts, period_end, period_start, top_topics,
+    unanswered_questions` — no `days`/`trend`/`funnel`/`top_questions` leaked in.
+- [x] CSV downloaded by hand from the dev API; formula cell neutralized; no PII
       column present (record the header line here).
-- [ ] `/api/v1/analytics/summary` with a `read`-scoped key returns the new fields
+  - Done: a local API (`uvicorn … --port 8099`) served the gate database; the
+    seeded admin logged in, minted the run's read key and downloaded
+    `GET /api/analytics/export.csv?days=7` → **200 `text/csv; charset=utf-8`,
+    `attachment; filename="analytics-2026-11-13_2026-11-20.csv"`** (401 without
+    auth). **Header line:** `date,conversations,messages,visitor_messages,
+    new_contacts,feedback_up,feedback_down,unanswered`, then `stage,sessions`,
+    then `question,count` — no session id, contact field, email or transcript
+    column anywhere. A question stored as `=HYPERLINK("http://x.test","click")`
+    was written as `'=hyperlink("http://x.test","click` and `@SUM(A1:A9)` as
+    `'@sum(a1:a9`: both carry the leading `'`, so neither is a live formula, and
+    the funnel section (`started 2, answered 2, lead 1, handoff 1, human 1`)
+    matched the JSON the page reads. The CSV was taken from the running API and
+    inspected as a file, not asserted from a unit test.
+- [x] `/api/v1/analytics/summary` with a `read`-scoped key returns the new fields
       and still refuses a foreign website id with 404.
-- [ ] commit `chore(v4): V4-1G gate — advanced analytics`.
+  - Done: a key minted with `scopes: ["read"]` (`POST /api/api-keys`, raw value
+    returned once) got **200** from `/api/v1/analytics/summary?days=7` with
+    `trend` (8 UTC-day rows), `funnel` (`started 2 / answered 2 / lead 1 /
+    handoff 1 / human 1`) and `top_questions`; `days=500` answered `days: 90`
+    (clamped) and a keyless call **401**. The summary route takes no
+    `website_id` (the company comes from the key), so the foreign-id refusal was
+    exercised on the same `_scoped_website` guard:
+    `/api/v1/conversations?website_id=<own>` → 200 and
+    `?website_id=<another company's>` → **404 `{"detail":"Website not
+    found"}`**. Read-only key, so no mutation was attempted.
+- [x] commit `chore(v4): V4-1G gate — advanced analytics`.
+  - Done: this commit; the gate database and temporary fixtures were removed
+    afterwards, and `git status` is clean.
 
 ---
 
@@ -1029,12 +1074,12 @@ provider absence.
 | Wave | Tasks | Done | Gate |
 |---|---|---|---|
 | 0 — Foundation | 4 | 4 / 4 | ☑ V4-0G |
-| 1 — Advanced analytics (F1) | 4 | 4 / 4 | ☐ V4-1G |
+| 1 — Advanced analytics (F1) | 4 | 4 / 4 | ☑ V4-1G |
 | 2 — Cost & freshness (F4) | 4 | 0 / 4 | ☐ V4-2G |
 | 3 — Training sources (F3) | 4 | 0 / 4 | ☐ V4-3G |
 | 4 — Conversation insights (F2) | 6 | 0 / 6 | ☐ V4-4G |
 | 5 — Hosted chat page (F5) | 3 | 0 / 3 | ☐ V4-5G |
-| **Total** | **25 tasks + 6 gates** | **8 / 25** | **1 / 6 gates** |
+| **Total** | **25 tasks + 6 gates** | **8 / 25** | **2 / 6 gates** |
 
 ---
 
