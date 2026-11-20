@@ -432,6 +432,52 @@ def delete_website_page(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def add_missing_pages(
+    db: Session, website_id: UUID, urls: list[str]
+) -> tuple[int, bool]:
+    """Create the sitemap URLs this website does not have yet.
+
+    Shared by the admin sync endpoint and the V4 daily scan (`sitemap_scan`), so
+    the cap rule exists once. Additions only: retiring a vanished page and
+    deleting its document is the scan's own step, deliberately not here, because
+    the manual endpoint has never removed anything.
+
+    The cap counts only the pages this call creates; existing pages do not
+    consume the budget, so repeated syncs keep making progress instead of
+    re-scanning the same first N URLs. Returns `(added, truncated)`; the caller
+    commits.
+    """
+    added = 0
+    truncated = False
+    for url in urls:
+        # Stop creating pages once this sync hits the cap: a sitemap can list
+        # tens of thousands of URLs, and the next ingest crawls them all.
+        if SITEMAP_SYNC_MAX_URLS > 0 and added >= SITEMAP_SYNC_MAX_URLS:
+            truncated = True
+            break
+        # Scoped to this website: pages of another tenant that happen to share a
+        # URL must not make this sync skip them.
+        if (
+            db.query(models.WebsitePage)
+            .filter(
+                models.WebsitePage.website_id == website_id,
+                models.WebsitePage.url == url,
+            )
+            .first()
+        ):
+            continue
+        db.add(
+            models.WebsitePage(
+                url=url,
+                name=url,
+                description="",
+                website_id=website_id,
+            )
+        )
+        added += 1
+    return added, truncated
+
+
 @router.post("/{website_id}/load-site-map")
 def load_website_site_map(
     website_id: UUID,
@@ -471,36 +517,7 @@ def load_website_site_map(
         )
 
     try:
-        added = 0
-        truncated = False
-        for url in urls:
-            # Stop creating pages once this sync hits the cap: a sitemap can list
-            # tens of thousands of URLs, and the next ingest crawls them all.
-            # Existing pages do not consume the budget, so repeated syncs keep
-            # making progress instead of re-scanning the same first N URLs.
-            if SITEMAP_SYNC_MAX_URLS > 0 and added >= SITEMAP_SYNC_MAX_URLS:
-                truncated = True
-                break
-            # Scoped to this website: pages of another tenant that happen to
-            # share a URL must not make this sync skip them.
-            if (
-                db.query(models.WebsitePage)
-                .filter(
-                    models.WebsitePage.website_id == website_id,
-                    models.WebsitePage.url == url,
-                )
-                .first()
-            ):
-                continue
-            db.add(
-                models.WebsitePage(
-                    url=url,
-                    name=url,
-                    description="",
-                    website_id=website_id,
-                )
-            )
-            added += 1
+        added, truncated = add_missing_pages(db, website_id, urls)
         db.commit()
     except HTTPException:
         raise

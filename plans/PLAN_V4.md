@@ -3,7 +3,7 @@
 | | | |
 |---|---|---|
 | Version | **V4** — closes the feature gap against sitegpt.ai recorded in the 2026-11-20 comparison (§2): advanced analytics, per-conversation AI insights, new training sources, per-conversation cost caps + sitemap auto-scan, and a hosted chat page |
-| Status | **In progress — Wave 0 and Wave 1 complete (gates V4-0G and V4-1G signed off): V4-10 done (trend, funnel, top questions), V4-11 done (aggregate CSV export), V4-12 done (analytics page: SVG trend, funnel, top questions, export button), V4-13 done (docs: the analytics surface in README/AGENTS/api-v1); gate V4-1G signed off (both suites, widget suite, build/lint, `trail build`, digest byte-comparison, CSV by way of the API, `/api/v1` summary + foreign-id 404). Wave 2 is under way: V4-20 done (per-session message cap), V4-21 done (Settings field + docs). No migration written yet — Alembic head is still `1c5516fa864d`.** D1–D9 confirmed twice against code anchors (§3) |
+| Status | **In progress — Wave 0 and Wave 1 complete (gates V4-0G and V4-1G signed off): V4-10 done (trend, funnel, top questions), V4-11 done (aggregate CSV export), V4-12 done (analytics page: SVG trend, funnel, top questions, export button), V4-13 done (docs: the analytics surface in README/AGENTS/api-v1); gate V4-1G signed off (both suites, widget suite, build/lint, `trail build`, digest byte-comparison, CSV by way of the API, `/api/v1` summary + foreign-id 404). Wave 2 is under way: V4-20 done (per-session message cap), V4-21 done (Settings field + docs), V4-22 done (daily sitemap diff scan). No migration written yet — Alembic head is still `1c5516fa864d`.** D1–D9 confirmed twice against code anchors (§3) |
 | Created | 2026-11-20 |
 | Derived from | `plans/PLAN_V3.md` (§2 non-goals, §4 invariants, §8 release-tag policy), `plans/SPEC.md`, `README.md` §V3, `docs/security.md` §5 (K18 stays accepted), and the sitegpt.ai feature/pricing comparison of 2026-11-20 (gap list reproduced in §2 so this plan is self-contained) |
 | Baseline | V3 tag `v3` = `2e5ab734b09b4eb229f927a875e737153c544779` (immutable); `master` HEAD `59e0cc2d13c51dacdb05fb3572715d0e5c40d85f` is docs-only after the tag (8 commits, incl. this plan); `feat/v4` branched from it at V4-01; Alembic head `1c5516fa864d`; suite counts are historical (V3-4G recorded 47 modules / 718 Python tests / 46 node checks; the **V4 baseline is 47 / 720 / 46**, recorded in §3's pre-flight block) and **must be re-run at pre-flight, never copied** |
@@ -632,7 +632,7 @@ V4 adds provider-cost features. Both opt-in, both fail safe. **Entry:** V4-1G.
     `npm run lint` (`--max-warnings 0`) both exit 0; the backend is untouched.
 
 
-- [ ] **V4-22 · Daily sitemap auto-scan** — `L`, depends: V4-21, migration: —
+- [x] **V4-22 · Daily sitemap auto-scan** — `L`, depends: V4-21, migration: —
   - Files: `worker.py` (`sitemap_loop`, `handle_sitemap_scan`,
     `enqueue_due_sitemap_scans`), `services/crawler.py` (reuse only),
     `api/website.py` (reuse the sync helpers), `tests/test_sitemap_scan.py` (new).
@@ -653,6 +653,32 @@ V4 adds provider-cost features. Both opt-in, both fail safe. **Entry:** V4-1G.
     changes zero rows; a successful diff adds/removes exactly the delta; a
     second concurrent scan cannot double-queue ingest (claim 409 path); the
     flag off queues nothing; removals never run before a successful fetch.
+  - Done: `worker.py` gains `sitemap_scan_key`, `sitemap_recently_scanned`,
+    `mark_sitemap_scanned`, `enqueue_due_sitemap_scans`, `handle_sitemap_scan`
+    and `sitemap_loop`, registered in `worker()` (the loop task plus the
+    `sitemap_scan` dispatch branch). The loop queues
+    `{"type": "sitemap_scan", "website_id": …}` only for an opted-in company's
+    `active` websites that have a sitemap URL and no live
+    `sitemap:scan:<website_id>` key (Redis `SET … EX SITEMAP_SCAN_INTERVAL_SECONDS`
+    after queueing; a Redis error answers "not scanned", so an outage costs one
+    extra scan, never a missed one). The handler fetches through
+    `extract_urls_from_sitemap` and returns **before touching a row** when the
+    set is empty — a failed fetch and a genuinely empty sitemap take the same
+    path, so neither can retire pages. On a successful non-empty fetch it adds
+    missing pages through `api/website.py::add_missing_pages` (the manual
+    `/load-site-map` endpoint now calls that same helper, so the cap rule exists
+    once and existing pages cost nothing), marks vanished `active` pages
+    `inactive` and deletes their documents (embeddings cascade), commits, and
+    only when `added or removed` claims through `claim_ingest` and queues
+    **one** ingest — a `processing` website keeps its page changes and gets no
+    second crawl. `tests/test_sitemap_scan.py` (new, 19 cases) proves the
+    failed / empty / raising fetch paths change zero rows, the exact add+retire
+    delta with documents, the `409` claim path, the cap counting only new pages,
+    an already-retired page not re-counted, a second scan of the same sitemap as
+    a no-op, the flag off / `false` queueing nothing, one queue per interval, and
+    the Redis-outage still-queue path. Suite: **51 modules / 789 tests, OK**
+    (10.0 s); `import site_gpt.app.main` and `import site_gpt.app.worker` pass.
+    AGENTS.md's job-type list records `sitemap_scan` and its rules.
 
 - [ ] **V4-23 · Docs: caps and freshness** — `S`, depends: V4-22, migration: —
   - Files: `README.md` (Limit composition, env table, worker job types),
@@ -1115,11 +1141,11 @@ provider absence.
 |---|---|---|---|
 | 0 — Foundation | 4 | 4 / 4 | ☑ V4-0G |
 | 1 — Advanced analytics (F1) | 4 | 4 / 4 | ☑ V4-1G |
-| 2 — Cost & freshness (F4) | 4 | 2 / 4 | ☐ V4-2G |
+| 2 — Cost & freshness (F4) | 4 | 3 / 4 | ☐ V4-2G |
 | 3 — Training sources (F3) | 4 | 0 / 4 | ☐ V4-3G |
 | 4 — Conversation insights (F2) | 6 | 0 / 6 | ☐ V4-4G |
 | 5 — Hosted chat page (F5) | 3 | 0 / 3 | ☐ V4-5G |
-| **Total** | **25 tasks + 6 gates** | **10 / 25** | **2 / 6 gates** |
+| **Total** | **25 tasks + 6 gates** | **11 / 25** | **2 / 6 gates** |
 
 ---
 

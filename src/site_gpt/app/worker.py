@@ -6,9 +6,10 @@ import traceback
 from datetime import datetime, timedelta, UTC
 from uuid import UUID
 
-from site_gpt.app.services.crawler import crawl_website
+from site_gpt.app.api.website import add_missing_pages
+from site_gpt.app.services.crawler import crawl_website, extract_urls_from_sitemap
 from site_gpt.app.services.ingest import ingest_document, ingest_extra_document
-from site_gpt.app.services.ingest_claim import STUCK_INGEST_AFTER
+from site_gpt.app.services.ingest_claim import STUCK_INGEST_AFTER, claim_ingest
 from site_gpt.app.services.parse import extract_text_from_file
 from site_gpt.app.services.redis import redis_client, enqueue_job
 from site_gpt.app.core.config import (
@@ -17,6 +18,7 @@ from site_gpt.app.core.config import (
     DELIVERY_RETENTION_CHECK_SECONDS,
     DIGEST_CHECK_SECONDS,
     RETENTION_CHECK_SECONDS,
+    SITEMAP_SCAN_INTERVAL_SECONDS,
     TOPIC_CLUSTER_INTERVAL_SECONDS,
     DIGEST_ENABLED,
     DIGEST_HOUR,
@@ -136,6 +138,9 @@ async def worker():
     # The loop only reads settings, so with nobody opted in it makes no provider
     # call and no job is ever queued.
     asyncio.create_task(topic_loop())
+    # Daily sitemap diff scan for companies that opted in (`sitemap_scan_enabled`,
+    # V4 F4). Reads settings only, so an untouched deployment queues nothing.
+    asyncio.create_task(sitemap_loop())
     while True:
         try:
             _, job = await redis_client.brpop("queue:jobs")  # type: ignore
@@ -170,6 +175,12 @@ async def worker():
                 await handle_topic_clusters(data)
             except Exception as e:
                 print(f"[worker] topic clustering failed: {e}")
+                traceback.print_exc()
+        elif data.get("type") == "sitemap_scan":
+            try:
+                await handle_sitemap_scan(data)
+            except Exception as e:
+                print(f"[worker] sitemap scan failed: {e}")
                 traceback.print_exc()
 
 
@@ -571,6 +582,195 @@ async def topic_loop():
             await enqueue_due_topics()
         except Exception as e:
             print(f"[topics] loop error: {e}")
+            traceback.print_exc()
+
+
+# -- Sitemap diff scan (V4 F4, D7) -------------------------------------------
+# Best-effort bookkeeping: Redis remembers when a website was last queued so the
+# daily loop does not queue it again on the next tick. A lost key (outage, flush,
+# a new Redis) costs one extra scan — never a wrong deletion, because the scan
+# only ever removes pages after a fully successful, non-empty fetch.
+
+
+def sitemap_scan_key(website_id) -> str:
+    return f"sitemap:scan:{website_id}"
+
+
+async def sitemap_recently_scanned(website_id) -> bool:
+    """True when this website was queued inside the current interval.
+
+    A Redis error answers False on purpose: the cost of a duplicate scan is one
+    sitemap fetch, while treating an unknown as "already scanned" would stop the
+    scan entirely during an outage.
+    """
+    try:
+        return bool(await redis_client.exists(sitemap_scan_key(website_id)))  # type: ignore[attr-defined]
+    except Exception as e:  # noqa: BLE001 - one extra scan is harmless
+        print(f"[sitemap] could not read last scan for website {website_id}: {e}")
+        return False
+
+
+async def mark_sitemap_scanned(website_id) -> None:
+    """Remember that this website's scan was queued; never raises."""
+    try:
+        await redis_client.set(  # type: ignore[attr-defined]
+            sitemap_scan_key(website_id),
+            datetime.now(UTC).isoformat(),
+            ex=SITEMAP_SCAN_INTERVAL_SECONDS,
+        )
+    except Exception as e:  # noqa: BLE001 - best-effort, see the block comment
+        print(f"[sitemap] could not record the scan for website {website_id}: {e}")
+
+
+async def enqueue_due_sitemap_scans() -> list[str]:
+    """Queue one scan per opted-in `active` website that is due.
+
+    The switch is per company (`sitemap_scan_enabled`, off by default), so a
+    deployment where nobody opted in queues nothing. Only websites that are
+    `active` and have a sitemap URL are considered; the last-scan key is Redis
+    and best-effort, so a Redis outage may queue one extra scan.
+    """
+    db = SessionLocal()
+    queued: list[str] = []
+    try:
+        for company in db.query(models.Company).all():
+            if not company_settings.flag(db, company.id, "sitemap_scan_enabled"):
+                continue
+            sites = (
+                db.query(models.Website)
+                .filter(
+                    models.Website.company_id == company.id,
+                    models.Website.status == "active",
+                )
+                .all()
+            )
+            for site in sites:
+                if not (site.site_map_url or "").strip():
+                    continue
+                if await sitemap_recently_scanned(site.id):
+                    continue
+                try:
+                    await enqueue_job(
+                        {"type": "sitemap_scan", "website_id": str(site.id)}
+                    )
+                except Exception as e:
+                    # One Redis hiccup must not skip the remaining websites.
+                    print(f"[sitemap] could not queue website {site.id}: {e}")
+                    continue
+                await mark_sitemap_scanned(site.id)
+                queued.append(str(site.id))
+                print(f"[sitemap] queued scan for website {site.id}")
+    finally:
+        db.close()
+    return queued
+
+
+async def handle_sitemap_scan(data):
+    """Diff one website's sitemap and queue one ingest when something changed.
+
+    The order is the safety property (D7): fetch first, and return before
+    touching any row when the fetch failed or came back empty — a transient 500
+    or an empty sitemap is not evidence that pages vanished. Only a fully
+    successful, non-empty fetch may add pages or retire vanished ones; retiring a
+    page also deletes its document (the embeddings cascade), matching the admin
+    page-delete semantics. Ingest is queued through `claim_ingest`, so a website
+    already processing is skipped instead of double-crawled.
+    """
+    website_id = data.get("website_id")
+    if not website_id:
+        print(f"[sitemap] incomplete job: {data}")
+        return
+    # The job carries the id as a string; coerce once so the query binds a UUID
+    # on every dialect (the digest/topic handlers do the same).
+    website_id = UUID(str(website_id))
+
+    db = SessionLocal()
+    try:
+        website = (
+            db.query(models.Website)
+            .filter(models.Website.id == website_id)
+            .first()
+        )
+        if not website:
+            print(f"[sitemap] website {website_id} not found")
+            return
+        if (website.status or "").strip().lower() != "active":
+            print(f"[sitemap] skipping scan for disabled website {website.id}")
+            return
+        sitemap_url = (website.site_map_url or "").strip()
+        if not sitemap_url:
+            print(f"[sitemap] website {website.id} has no sitemap URL")
+            return
+
+        # `extract_urls_from_sitemap` swallows fetch/parse errors and returns an
+        # empty list, which is exactly the fail-safe input this handler wants.
+        urls = extract_urls_from_sitemap(sitemap_url)
+        if not urls:
+            print(
+                f"[sitemap] no usable URLs for website {website.id}; "
+                "nothing changed"
+            )
+            return
+
+        added, truncated = add_missing_pages(db, website.id, urls)
+
+        listed = set(urls)
+        pages = (
+            db.query(models.WebsitePage)
+            .filter(models.WebsitePage.website_id == website.id)
+            .all()
+        )
+        removed = 0
+        for page in pages:
+            if page.url in listed:
+                continue
+            # Only a page that is currently serving knowledge can vanish; a row
+            # retired by an earlier scan stays as history.
+            if (page.status or "active").strip().lower() != "active":
+                continue
+            document = (
+                db.query(models.Document)
+                .filter(
+                    models.Document.website_id == website.id,
+                    models.Document.url == page.url,
+                )
+                .first()
+            )
+            if document:
+                # Embeddings cascade via the FK, so the document is enough.
+                db.delete(document)
+            page.status = "inactive"
+            removed += 1
+        db.commit()
+
+        changed = bool(added or removed)
+        queued = False
+        if changed and claim_ingest(db, website.id, website.company_id):
+            await enqueue_job({"type": "ingest", "website_id": str(website.id)})
+            queued = True
+        elif changed:
+            print(
+                f"[sitemap] website {website.id}: an ingest is already running, "
+                "not queueing a second one"
+            )
+        print(
+            f"[sitemap] website {website.id}: added={added} removed={removed} "
+            f"truncated={truncated} queued={queued}"
+        )
+    finally:
+        db.close()
+
+
+async def sitemap_loop():
+    """Wake every SITEMAP_SCAN_INTERVAL_SECONDS and queue the opted-in scans."""
+    while True:
+        await asyncio.sleep(SITEMAP_SCAN_INTERVAL_SECONDS)
+        try:
+            queued = await enqueue_due_sitemap_scans()
+            if queued:
+                print(f"[sitemap] queued {len(queued)} website scan(s)")
+        except Exception as e:
+            print(f"[sitemap] loop error: {e}")
             traceback.print_exc()
 
 
