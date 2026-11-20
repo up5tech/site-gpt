@@ -3,7 +3,7 @@
 | | | |
 |---|---|---|
 | Version | **V4** — closes the feature gap against sitegpt.ai recorded in the 2026-11-20 comparison (§2): advanced analytics, per-conversation AI insights, new training sources, per-conversation cost caps + sitemap auto-scan, and a hosted chat page |
-| Status | **In progress — Wave 0 complete (gate V4-0G signed off) and Wave 1 under way: V4-10 done (trend, funnel, top questions), V4-11 done (aggregate CSV export); V4-12, V4-13 and gate V4-1G pending. No migration written yet — Alembic head is still `1c5516fa864d`.** D1–D9 confirmed twice against code anchors (§3) |
+| Status | **In progress — Wave 0 complete (gate V4-0G signed off) and Wave 1 under way: V4-10 done (trend, funnel, top questions), V4-11 done (aggregate CSV export), V4-12 done (analytics page: SVG trend, funnel, top questions, export button); V4-13 and gate V4-1G pending. No migration written yet — Alembic head is still `1c5516fa864d`.** D1–D9 confirmed twice against code anchors (§3) |
 | Created | 2026-11-20 |
 | Derived from | `plans/PLAN_V3.md` (§2 non-goals, §4 invariants, §8 release-tag policy), `plans/SPEC.md`, `README.md` §V3, `docs/security.md` §5 (K18 stays accepted), and the sitegpt.ai feature/pricing comparison of 2026-11-20 (gap list reproduced in §2 so this plan is self-contained) |
 | Baseline | V3 tag `v3` = `2e5ab734b09b4eb229f927a875e737153c544779` (immutable); `master` HEAD `59e0cc2d13c51dacdb05fb3572715d0e5c40d85f` is docs-only after the tag (8 commits, incl. this plan); `feat/v4` branched from it at V4-01; Alembic head `1c5516fa864d`; suite counts are historical (V3-4G recorded 47 modules / 718 Python tests / 46 node checks; the **V4 baseline is 47 / 720 / 46**, recorded in §3's pre-flight block) and **must be re-run at pre-flight, never copied** |
@@ -435,7 +435,34 @@ definitions, no new index and no chart library. **Entry:** V4-0G.
     a question starting with `=HYPERLINK(...)` comes out neutralized, and
     asserts a manager of another company gets 404/empty-for-own-data only.
 
-- [ ] **V4-12 · Analytics page: SVG trend, funnel, top questions, export** — `M`, depends: V4-11, migration: —
+- [x] **V4-12 · Analytics page: SVG trend, funnel, top questions, export** — `M`, depends: V4-11, migration: —
+  - Done (V4-12): three new cards on `frontend/src/pages/Analytics.tsx`, all fed
+    by the summary the page already fetches (every existing card untouched):
+    **Daily activity** — a hand-rolled SVG bar chart (D1: no chart library), two
+    grouped bars per UTC day (messages `#0958d9`, conversations `#bae0ff`, chosen
+    for luminance separation rather than hue), zero-based axis ticks, `<title>`
+    per bar, direct value labels while the slot has room (~≤30 days) and thinned
+    date labels, and "No data in this window" instead of an empty axis;
+    **Engagement funnel** — five labelled horizontal bars with the count and the
+    share of the previous stage, "Distinct sessions; stages overlap" in the
+    header, "No data in this window" when every stage is zero; **Top questions**
+    — an Ant Design table (Question / Asked) with its own empty state. An
+    **Export CSV** button in the window row downloads the V4-11 route for the
+    page's current `days`: `utils/api.ts::exportAnalyticsCsv` fetches the file as
+    a blob because a plain link cannot carry the JWT, and names the download from
+    `Content-Disposition`. `types/api.ts` gains `TrendPoint`, `FunnelStage`,
+    `TopQuestion` and the three additive `AnalyticsSummary` fields. The digest
+    button pair gained `Space wrap` — at 390 px the pre-existing pair overflowed
+    its half-width column by ~130 px and pushed the card past the viewport; the
+    fix is one prop in this task's own file. **Render check:** the dev database
+    holds zero chat messages, so the page was exercised with a fixture (a
+    temporary Vite entry and a stubbed axios adapter, both deleted afterwards):
+    the single-point series a 1-day window returns, the 90-day window (180 bars,
+    2.7-unit bars, ~10 date labels), the funnel conversions and the questions
+    table all render; no horizontal overflow at 1280×900 or 390×844
+    (`scrollWidth == clientWidth`), and clicking Export CSV produced a
+    `text/csv` blob saved as `analytics-2026-11-13_2026-11-20.csv` with no error
+    toast. `npm run build` and `npm run lint` green; zero new JS dependencies.
   - Files: `frontend/src/pages/Analytics.tsx`, `frontend/src/types/api.ts`,
     `frontend/src/utils/api.ts`.
   - Do: render the daily trend as a hand-rolled SVG bar/line chart (D1) with
@@ -986,12 +1013,12 @@ provider absence.
 | Wave | Tasks | Done | Gate |
 |---|---|---|---|
 | 0 — Foundation | 4 | 4 / 4 | ☑ V4-0G |
-| 1 — Advanced analytics (F1) | 4 | 2 / 4 | ☐ V4-1G |
+| 1 — Advanced analytics (F1) | 4 | 3 / 4 | ☐ V4-1G |
 | 2 — Cost & freshness (F4) | 4 | 0 / 4 | ☐ V4-2G |
 | 3 — Training sources (F3) | 4 | 0 / 4 | ☐ V4-3G |
 | 4 — Conversation insights (F2) | 6 | 0 / 6 | ☐ V4-4G |
 | 5 — Hosted chat page (F5) | 3 | 0 / 3 | ☐ V4-5G |
-| **Total** | **25 tasks + 6 gates** | **6 / 25** | **1 / 6 gates** |
+| **Total** | **25 tasks + 6 gates** | **7 / 25** | **1 / 6 gates** |
 
 ---
 

@@ -138,6 +138,28 @@ export const resendIntegrationDelivery = (id: string) =>
 export const getAnalyticsSummary = (days = 7) =>
   api.get<AnalyticsSummary>('/analytics/summary', { params: { days } });
 
+/**
+ * Download the window's aggregate CSV (V4-11). A plain link cannot carry the
+ * JWT, so the file is fetched as a blob and saved under the filename the server
+ * chose in `Content-Disposition` (it carries the window's dates).
+ */
+export const exportAnalyticsCsv = async (days = 7) => {
+  const response = await api.get<Blob>('/analytics/export.csv', {
+    params: { days },
+    responseType: 'blob',
+  });
+  const disposition = String(response.headers['content-disposition'] ?? '');
+  const filename = disposition.match(/filename="?([^";]+)"?/)?.[1];
+  const url = URL.createObjectURL(response.data);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename ?? `analytics-${days}d.csv`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+};
+
 export const previewDigest = () =>
   api.post<DigestPreview>('/digest/preview');
 

@@ -319,8 +319,37 @@ export interface DigestSummary {
   unanswered_questions: UnansweredQuestion[];
 }
 
+/** One UTC day of the analytics window (V4 F1). `conversations` is that day's
+ * distinct sessions, so the daily rows do not sum to `conversation_volume`. */
+export interface TrendPoint {
+  date: string;
+  conversations: number;
+  messages: number;
+  visitor_messages: number;
+  new_contacts: number;
+  feedback_up: number;
+  feedback_down: number;
+  unanswered: number;
+}
+
+/** One engagement stage: distinct sessions that overlap rather than nest, so a
+ * later stage can count a session the previous stage did not. */
+export interface FunnelStage {
+  stage: string;
+  sessions: number;
+}
+
+/** A normalized visitor question and how often it was asked in the window. */
+export interface TopQuestion {
+  question: string;
+  count: number;
+}
+
 export interface AnalyticsSummary extends DigestSummary {
   days: number;
+  trend: TrendPoint[];
+  funnel: FunnelStage[];
+  top_questions: TopQuestion[];
 }
 
 export interface DigestPreview {
