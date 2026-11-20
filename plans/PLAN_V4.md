@@ -3,7 +3,7 @@
 | | | |
 |---|---|---|
 | Version | **V4** — closes the feature gap against sitegpt.ai recorded in the 2026-11-20 comparison (§2): advanced analytics, per-conversation AI insights, new training sources, per-conversation cost caps + sitemap auto-scan, and a hosted chat page |
-| Status | **In progress — Wave 0 and Wave 1 complete (gates V4-0G and V4-1G signed off): V4-10 done (trend, funnel, top questions), V4-11 done (aggregate CSV export), V4-12 done (analytics page: SVG trend, funnel, top questions, export button), V4-13 done (docs: the analytics surface in README/AGENTS/api-v1); gate V4-1G signed off (both suites, widget suite, build/lint, `trail build`, digest byte-comparison, CSV by way of the API, `/api/v1` summary + foreign-id 404). Wave 2 is under way: V4-20 done (per-session message cap), V4-21 done (Settings field + docs), V4-22 done (daily sitemap diff scan), V4-23 done (docs: caps and freshness). No migration written yet — Alembic head is still `1c5516fa864d`.** D1–D9 confirmed twice against code anchors (§3) |
+| Status | **In progress — Wave 0 and Wave 1 complete (gates V4-0G and V4-1G signed off): V4-10 done (trend, funnel, top questions), V4-11 done (aggregate CSV export), V4-12 done (analytics page: SVG trend, funnel, top questions, export button), V4-13 done (docs: the analytics surface in README/AGENTS/api-v1); gate V4-1G signed off (both suites, widget suite, build/lint, `trail build`, digest byte-comparison, CSV by way of the API, `/api/v1` summary + foreign-id 404). Wave 2 is under way: V4-20 done (per-session message cap), V4-21 done (Settings field + docs), V4-22 done (daily sitemap diff scan), V4-23 done (docs: caps and freshness); gate V4-2G signed off (both suites, widget suite, build/lint, `trail build`, `alembic current`, the session-cap refusal on the API, and the scan + 500-sitemap hand checks). No migration written yet — Alembic head is still `1c5516fa864d`.** D1–D9 confirmed twice against code anchors (§3) |
 | Created | 2026-11-20 |
 | Derived from | `plans/PLAN_V3.md` (§2 non-goals, §4 invariants, §8 release-tag policy), `plans/SPEC.md`, `README.md` §V3, `docs/security.md` §5 (K18 stays accepted), and the sitegpt.ai feature/pricing comparison of 2026-11-20 (gap list reproduced in §2 so this plan is self-contained) |
 | Baseline | V3 tag `v3` = `2e5ab734b09b4eb229f927a875e737153c544779` (immutable); `master` HEAD `59e0cc2d13c51dacdb05fb3572715d0e5c40d85f` is docs-only after the tag (8 commits, incl. this plan); `feat/v4` branched from it at V4-01; Alembic head `1c5516fa864d`; suite counts are historical (V3-4G recorded 47 modules / 718 Python tests / 46 node checks; the **V4 baseline is 47 / 720 / 46**, recorded in §3's pre-flight block) and **must be re-run at pre-flight, never copied** |
@@ -719,16 +719,50 @@ V4 adds provider-cost features. Both opt-in, both fail safe. **Entry:** V4-1G.
 
 #### Gate V4-2G
 
-- [ ] Both suites + widget suite + build + lint + `trail build` pass; `alembic current` unchanged.
-- [ ] Hand check on the dev API: set `session_message_limit=3`, send 4 messages
+- [x] Both suites + widget suite + build + lint + `trail build` pass; `alembic current` unchanged.
+  - Ran on `feat/v4` above V4-23: Python **51 modules / 790 tests, OK** (9.6 s),
+    node **46 + 46 passed, 0 failed**, `npm run build` ✓ (2.01 s) and
+    `npm run lint` clean, `trail build` exit 0, `alembic current` =
+    `1c5516fa864d (head)` — still no migration, as V4 requires.
+- [x] Hand check on the dev API: set `session_message_limit=3`, send 4 messages
       in one session → 4th is the friendly refusal, daily counter unchanged;
       a second session still chats. Set `0` → unlimited again.
-- [ ] Hand check: opt a test website in, point it at a local sitemap fixture,
+  - Ran the API (`uvicorn`, `:8099`, `/health` `{db:true, redis:true}`) against a
+    throwaway database (`v4_gate_2g` at `1c5516fa864d`, dropped afterwards) and
+    Redis DB index 15, against the configured provider (a real embedding call,
+    dim 1536): messages 1–3 were answered, the **4th** returned the friendly
+    `SESSION_CAP_MESSAGE` with `sources: []`, the session counter went 3 → 4
+    while the daily counter stayed **3 → 3** (the refusal spent no daily
+    budget); a second session on the same website was answered (counter 1);
+    setting the company value to `0` let the **same** session continue; and a
+    website with no `session_message_limit` wrote **no** `quota:session:*` key.
+- [x] Hand check: opt a test website in, point it at a local sitemap fixture,
       run one scan → new page added, removed page's document gone, one ingest
       queued; serve a 500 sitemap → zero changes (record both).
-- [ ] All V4 flags off → chat, ingest and worker behaviour identical to `v3`
+  - Throwaway DB + fixture server on `:8123` (`/sitemap.xml` lists `/keep` and
+    `/new`; `/broken-sitemap.xml` answers 500), website with active pages
+    `/keep` and `/old`, each with one `Document`. The SSRF guard
+    (`services/net_guard.py`) refuses loopback **by design**, so it was left
+    active for the first run: that refused fetch changed **zero** rows — and the
+    harness allowed only `127.0.0.1` for the other two runs. Then
+    `enqueue_due_sitemap_scans()` queued the website and set
+    `sitemap:scan:<id>` (TTL 86400), and `handle_sitemap_scan` added `/new`,
+    made `/old` `inactive`, deleted `/old`'s document (kept `/keep`'s), set
+    `ingest_status=processing` and left exactly **one** `ingest` job in
+    `queue:jobs` next to the `sitemap_scan` one. Re-pointing the website at the
+    500 sitemap left every page, document and `ingest_status` exactly as before.
+  - Deviation: the checks called the worker's own `enqueue_due_sitemap_scans` /
+    `handle_sitemap_scan` in-process against the real DB, Redis and HTTP fixture
+    rather than starting the worker **process**; the loop's sleep/dispatch
+    wiring is covered by `tests/test_sitemap_scan.py`, not by this hand check.
+- [x] All V4 flags off → chat, ingest and worker behaviour identical to `v3`
       (no scan jobs queued, no session counter written).
-- [ ] commit `chore(v4): V4-2G gate — cost & freshness`.
+  - A company without `sitemap_scan_enabled` was absent from
+    `enqueue_due_sitemap_scans()` and got no `sitemap:scan:*` key; a website
+    without `session_message_limit` wrote no session counter and was answered
+    normally. V4-20…23 added only new code paths behind those keys — the digest
+    payload/HTML are untouched and were byte-compared to tag `v3` at `V4-1G`.
+- [x] commit `chore(v4): V4-2G gate — cost & freshness`.
 
 ---
 
@@ -1167,11 +1201,11 @@ provider absence.
 |---|---|---|---|
 | 0 — Foundation | 4 | 4 / 4 | ☑ V4-0G |
 | 1 — Advanced analytics (F1) | 4 | 4 / 4 | ☑ V4-1G |
-| 2 — Cost & freshness (F4) | 4 | 4 / 4 | ☐ V4-2G |
+| 2 — Cost & freshness (F4) | 4 | 4 / 4 | ☑ V4-2G |
 | 3 — Training sources (F3) | 4 | 0 / 4 | ☐ V4-3G |
 | 4 — Conversation insights (F2) | 6 | 0 / 6 | ☐ V4-4G |
 | 5 — Hosted chat page (F5) | 3 | 0 / 3 | ☐ V4-5G |
-| **Total** | **25 tasks + 6 gates** | **12 / 25** | **2 / 6 gates** |
+| **Total** | **25 tasks + 6 gates** | **12 / 25** | **3 / 6 gates** |
 
 ---
 

@@ -497,7 +497,8 @@ tag `v2.1`, JSON and HTML, with cluster rows present or not.
 
 Waves 0–2 have landed: the settings/env scaffolding (gate `V4-0G`), advanced
 analytics (F1, gate `V4-1G`) and the cost & freshness pair (F4: a per-session
-message cap and the daily sitemap diff scan) — gate `V4-2G` is next. The rest of
+message cap and the daily sitemap diff scan), gate `V4-2G` signed off. Wave 3
+(new training sources) is next. The rest of
 [`plans/PLAN_V4.md`](plans/PLAN_V4.md)'s waves are still pending.
 
 #### Advanced analytics (F1)
