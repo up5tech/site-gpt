@@ -10,6 +10,7 @@ clear 401/400 and stores nothing.
 
 import asyncio
 import itertools
+import json
 import logging
 import os
 import tempfile
@@ -248,6 +249,108 @@ class NotionProviderTests(unittest.TestCase):
         self.assertEqual([f.filename for f in files], ["alpha.md", "beta.md"])
         self.assertEqual((total, truncated), (3, True))
         self.assertIn("Alpha body", files[0].content.decode("utf-8"))
+
+    def _windows(self, *windows):
+        """Route the database query to these responses in order, one per page."""
+        remaining = [
+            lambda response=response: response for response in windows
+        ]
+
+        def next_page():
+            self.assertTrue(remaining, "the query was paged past its last page")
+            return remaining.pop(0)()
+
+        return self.stub.route("POST", f"/v1/databases/{DB_ID}/query", next_page)
+
+    def _query_requests(self):
+        return [
+            request
+            for request in self.stub.requests
+            if request.url.path == f"/v1/databases/{DB_ID}/query"
+        ]
+
+    def test_the_total_counts_every_query_page_past_the_cap(self):
+        ids = [f"{n:032x}" for n in range(1, 151)]
+        self._windows(
+            httpx.Response(
+                200,
+                json={
+                    "results": [page(pid, f"Row {n}") for n, pid in enumerate(ids[:100], 1)],
+                    "has_more": True,
+                    "next_cursor": "cursor-2",
+                },
+            ),
+            httpx.Response(
+                200,
+                json={
+                    "results": [
+                        page(pid, f"Row {n}") for n, pid in enumerate(ids[100:], 101)
+                    ],
+                    "has_more": False,
+                    "next_cursor": None,
+                },
+            ),
+        )
+        for n, pid in enumerate(ids[:25], 1):
+            self.stub.route(
+                "GET",
+                f"/v1/blocks/{pid}/children",
+                children_page(para(f"body {n}")),
+            )
+
+        with patch.object(sources, "NOTION_MAX_PAGES", 25):
+            files, total, truncated = asyncio.run(
+                sources.NotionProvider().acquire_many(
+                    f"https://www.notion.so/{DB_ID}?v={DB_VIEW_ID}", TOKEN
+                )
+            )
+
+        # 150 pages really exist, so "25 of 150" — not "25 of 100".
+        self.assertEqual(len(files), 25)
+        self.assertEqual((total, truncated), (150, True))
+        queries = self._query_requests()
+        self.assertEqual(len(queries), 2)
+        self.assertEqual(json.loads(queries[1].content)["start_cursor"], "cursor-2")
+        # Counting past the cap reads page rows only: no blocks are fetched
+        # for a page the import never creates.
+        fetched = {request.url.path for request in self.stub.requests}
+        self.assertNotIn(f"/v1/blocks/{ids[25]}/children", fetched)
+
+    def test_a_database_spanning_query_pages_imports_every_page(self):
+        first = [page(f"{n:032x}", f"Row {n}") for n in range(1, 6)]
+        second = [page(f"{n:032x}", f"Row {n}") for n in range(6, 8)]
+        self._windows(
+            httpx.Response(
+                200,
+                json={"results": first, "has_more": True, "next_cursor": "more"},
+            ),
+            httpx.Response(
+                200,
+                json={"results": second, "has_more": False, "next_cursor": None},
+            ),
+        )
+        for item in first + second:
+            self.stub.route(
+                "GET",
+                f"/v1/blocks/{item['id']}/children",
+                children_page(para(f"body of {item['id']}")),
+            )
+
+        with patch.object(sources, "NOTION_MAX_PAGES", 25):
+            files, total, truncated = asyncio.run(
+                sources.NotionProvider().acquire_many(
+                    f"https://www.notion.so/{DB_ID}?v={DB_VIEW_ID}", TOKEN
+                )
+            )
+
+        self.assertEqual(len(files), 7)
+        self.assertEqual([f.filename for f in files[:2]], ["row-1.md", "row-2.md"])
+        self.assertEqual((total, truncated), (7, False))
+        self.assertEqual(len(self._query_requests()), 2)
+        # Both windows' blocks were fetched, so the count and the import agree.
+        fetched = {request.url.path for request in self.stub.requests}
+        for item in first + second:
+            self.assertIn(f"/v1/blocks/{item['id']}/children", fetched)
 
     def test_a_bare_id_asks_the_api_whether_it_is_a_page(self):
         self.stub.route(

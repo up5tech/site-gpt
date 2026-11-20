@@ -236,7 +236,10 @@ async def upload_from_notion(
     The integration token is used for this request only (the Google Drive
     `access_token` precedent): it is not stored, logged or echoed. One file per
     page, so the rest of the flow is the local-upload one, and the response
-    carries the same per-file shape plus `added`/`total`/`truncated`.
+    carries the same per-file shape plus `added`/`total`/`truncated`, where
+    `total` is the database's real page count — the query is read to its last
+    page even after `NOTION_MAX_PAGES` cut the import short, so a capped
+    500-page database reports "25 of 500", never "25 of 100".
     """
     provider = get_provider("notion")
     try:

@@ -518,7 +518,15 @@ class NotionProvider(SourceProvider):
     async def _database_pages(
         self, client: httpx.AsyncClient, headers: dict[str, str], database_id: str
     ) -> tuple[list[dict], int]:
+        """The pages to import (capped) and the database's real page count.
+
+        Every query page is read even past `NOTION_MAX_PAGES`: a `total` taken
+        from the first 100-page window would report a 500-page database as
+        "25 of 100". Only the rows up to the cap are kept and no blocks are
+        fetched for the rest, so counting costs query calls, not imports.
+        """
         pages: list[dict] = []
+        total = 0
         cursor = None
         while True:
             body: dict = {"page_size": 100}
@@ -531,20 +539,19 @@ class NotionProvider(SourceProvider):
                 f"/databases/{database_id}/query",
                 json_body=body,
             )
-            pages.extend(data.get("results") or [])
+            results = data.get("results") or []
+            total += len(results)
+            # Same rule as the other caps: 0 disables it.
+            if NOTION_MAX_PAGES > 0:
+                pages.extend(results[: max(NOTION_MAX_PAGES - len(pages), 0)])
+            else:
+                pages.extend(results)
             cursor = data.get("next_cursor")
             if not data.get("has_more") or not cursor:
                 break
-            # The cap is all the import can ever create, so stop paging for more.
-            if NOTION_MAX_PAGES > 0 and len(pages) >= NOTION_MAX_PAGES:
-                break
 
-        if not pages:
+        if not total:
             raise SourceRefError("That Notion database has no pages to import.")
-        total = len(pages)
-        # Same rule as the other caps: 0 disables it.
-        if NOTION_MAX_PAGES > 0:
-            pages = pages[:NOTION_MAX_PAGES]
         return pages, total
 
     async def _page_file(

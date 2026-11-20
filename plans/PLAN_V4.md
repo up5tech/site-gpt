@@ -914,18 +914,24 @@ pipeline: every source normalizes into a local file under `uploads/`, then
     across nesting and pagination; when it bites, the document ends with a
     `_Truncated: only the first N blocks…_` note so the cap is visible in the
     ingested text rather than silent. A database pages `POST /query` at
-    `page_size=100` until it has enough (or there is no more), then imports one
-    file per page, capped at `NOTION_MAX_PAGES` (0 disables), with `total` the
-    number of pages the query saw and `truncated` true when the cap dropped
-    some. `AcquiredFile.source_ref` is the `https://www.notion.so/<id>` page URL,
+    `page_size=100` to the **last** query page, then imports one file per page,
+    capped at `NOTION_MAX_PAGES` (0 disables), with `total` the database's real
+    page count and `truncated` true when the cap dropped some. Paging does not
+    stop at the cap: a total taken from the first 100-page window reported a
+    500-page database as "25 of 100". Only the rows up to the cap are kept and
+    no blocks are fetched for the rest, so an honest count costs query calls,
+    not imports. `AcquiredFile.source_ref` is the `https://www.notion.so/<id>` page URL,
     filenames are slugged titles. `POST /api/uploads/notion` (`NotionUploadIn.url`,
     `.token`) saves each file through the same `_save_attachment` and returns
     `{files: [{file_id, filename, file_url, file_size, file_type, source,
     source_ref}], added, total, truncated}` — same per-file shape as the other
-    imports. `tests/test_sources_notion.py` (new, 21 cases, every HTTP call
+    imports. `tests/test_sources_notion.py` (new, 23 cases, every HTTP call
     stubbed with a recording `httpx.MockTransport`) covers the full page render,
     the block cap, a capped database (3 pages, cap 2 → 2 files / total 3 /
-    truncated), the bare-id page probe and its database fallback, a rejected
+    truncated), a database spanning two query windows under the cap (7 pages →
+    7 files, two query calls) and one past it (150 pages over two windows, cap
+    25 → 25 files / total 150, the second window read for the count only and its
+    blocks never fetched), the bare-id page probe and its database fallback, a rejected
     token (provider `SourceAuthError`, endpoint 401, nothing written, token
     absent from the error and the response), a log-capture assertion that the
     token never appears in a record, every request's host being
@@ -933,8 +939,8 @@ pipeline: every source normalizes into a local file under `uploads/`, then
     request off-host, non-Notion and id-less refs refused without a request, a
     missing token refused up front, the markdown round-tripping through
     `extract_text_from_file`, registration, ref parsing and the endpoint's
-    shared response shape / 400 for a missing page. Suite: **53 modules / 831
-    tests, OK** (10.3 s); both imports pass. The frontend button and docs rows
+    shared response shape / 400 for a missing page. Suite: **53 modules / 833
+    tests, OK** (10.1 s); both imports pass. The frontend button and docs rows
     are V4-33's, so no UI change here.
 
 - [ ] **V4-33 · Frontend + docs: the new sources** — `S`, depends: V4-32, migration: —

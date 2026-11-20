@@ -143,7 +143,7 @@ npm install && npm run dev   # :5173
 | `INSIGHT_SETTLE_MINUTES` | `60` | V4 (F2): how long after its last message a conversation counts as settled before it is classified, so a live chat is not labelled mid-conversation |
 | `YOUTUBE_MAX_VIDEOS` | `25` | V4 (F3): most videos one YouTube playlist/channel import expands to; the response reports `added`/`total`/`truncated`, and `0` disables the cap (same rule as `SITEMAP_SYNC_MAX_URLS`) |
 | `NOTION_MAX_BLOCKS` | `1000` | V4 (F3): most blocks one Notion page render fetches before the document is marked truncated; `0` disables the cap |
-| `NOTION_MAX_PAGES` | `25` | V4 (F3): most pages one Notion database import creates (one file per page); the response reports `added`/`total`/`truncated`, and `0` disables the cap |
+| `NOTION_MAX_PAGES` | `25` | V4 (F3): most pages one Notion database import creates (one file per page); the response reports `added`/`total`/`truncated`, `total` being the database's real page count (every query page is read for the count, none are imported past the cap), and `0` disables the cap |
 | `CORS_ORIGINS` | `*` | comma-separated allowed origins; `allow_credentials` is disabled while it is `*` |
 | `TRUSTED_PROXY_IPS` | *(empty)* | comma-separated IPs/CIDRs of reverse proxies / load balancers whose `X-Forwarded-For` is trusted; loopback and private peers are trusted automatically |
 | `FRONTEND_URL` | `http://localhost:5173` | public admin URL, used in password-reset links |
