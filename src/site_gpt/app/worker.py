@@ -728,16 +728,19 @@ async def handle_sitemap_scan(data):
             # retired by an earlier scan stays as history.
             if (page.status or "active").strip().lower() != "active":
                 continue
-            document = (
+            documents = (
                 db.query(models.Document)
                 .filter(
                     models.Document.website_id == website.id,
                     models.Document.url == page.url,
                 )
-                .first()
+                .all()
             )
-            if document:
-                # Embeddings cascade via the FK, so the document is enough.
+            # Every row for that URL, not just the first: one URL can own more
+            # than one document (a re-crawl, a manual add), and a survivor would
+            # keep answering from a page the sitemap no longer lists.
+            # Embeddings cascade via the FK, so deleting the document is enough.
+            for document in documents:
                 db.delete(document)
             page.status = "inactive"
             removed += 1

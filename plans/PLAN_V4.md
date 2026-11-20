@@ -668,16 +668,19 @@ V4 adds provider-cost features. Both opt-in, both fail safe. **Entry:** V4-1G.
     missing pages through `api/website.py::add_missing_pages` (the manual
     `/load-site-map` endpoint now calls that same helper, so the cap rule exists
     once and existing pages cost nothing), marks vanished `active` pages
-    `inactive` and deletes their documents (embeddings cascade), commits, and
+    `inactive` and deletes **every** document row for that URL (embeddings
+    cascade), commits, and
     only when `added or removed` claims through `claim_ingest` and queues
     **one** ingest — a `processing` website keeps its page changes and gets no
-    second crawl. `tests/test_sitemap_scan.py` (new, 19 cases) proves the
+    second crawl. `tests/test_sitemap_scan.py` (new, 20 cases) proves the
     failed / empty / raising fetch paths change zero rows, the exact add+retire
-    delta with documents, the `409` claim path, the cap counting only new pages,
+    delta with documents, two documents on one retired URL both disappearing
+    (the admin page-delete path takes `.first()`, which would leak the second),
+    the `409` claim path, the cap counting only new pages,
     an already-retired page not re-counted, a second scan of the same sitemap as
     a no-op, the flag off / `false` queueing nothing, one queue per interval, and
-    the Redis-outage still-queue path. Suite: **51 modules / 789 tests, OK**
-    (10.0 s); `import site_gpt.app.main` and `import site_gpt.app.worker` pass.
+    the Redis-outage still-queue path. Suite: **51 modules / 790 tests, OK**
+    (9.4 s); `import site_gpt.app.main` and `import site_gpt.app.worker` pass.
     AGENTS.md's job-type list records `sitemap_scan` and its rules.
 
 - [ ] **V4-23 · Docs: caps and freshness** — `S`, depends: V4-22, migration: —

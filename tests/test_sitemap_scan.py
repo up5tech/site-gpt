@@ -244,6 +244,29 @@ class SitemapScanDiffTests(ScanFixture):
             {"type": "ingest", "website_id": str(self.site.id)}
         )
 
+    def test_every_document_of_a_retired_url_is_deleted(self):
+        # A URL can own more than one document row; `first()` would retire the
+        # page while one of them kept feeding the assistant.
+        self.add_page("https://example.com/gone")
+        self.add_document("https://example.com/gone")
+        self.add_document("https://example.com/gone")
+        self.add_page("https://example.com/a")
+        self.add_document("https://example.com/a")
+
+        enqueue, claim = self.run_scan(["https://example.com/a"])
+
+        self.assertEqual(
+            self.pages(),
+            {
+                "https://example.com/gone": "inactive",
+                "https://example.com/a": "active",
+            },
+        )
+        # Both rows of the retired URL are gone; the kept page's is untouched.
+        self.assertEqual(self.documents(), ["https://example.com/a"])
+        claim.assert_called_once()
+        enqueue.assert_awaited_once()
+
     def test_no_difference_queues_no_ingest(self):
         self.add_page("https://example.com/a")
 
