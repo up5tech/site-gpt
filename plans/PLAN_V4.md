@@ -3,10 +3,10 @@
 | | | |
 |---|---|---|
 | Version | **V4** — closes the feature gap against sitegpt.ai recorded in the 2026-11-20 comparison (§2): advanced analytics, per-conversation AI insights, new training sources, per-conversation cost caps + sitemap auto-scan, and a hosted chat page |
-| Status | **Draft — planning only. No task started, no gate run, no migration written.** D1–D9 below are defaults verified against code anchors (§3); the environment pre-flight is unticked and must run before Wave 0 closes |
+| Status | **In progress — Wave 0: V4-01 done (2026-11-20), environment pre-flight fully recorded in §3; V4-02…V4-04 and gate V4-0G pending. No gate run yet, no migration written.** D1–D9 confirmed twice against code anchors (§3) |
 | Created | 2026-11-20 |
 | Derived from | `plans/PLAN_V3.md` (§2 non-goals, §4 invariants, §8 release-tag policy), `plans/SPEC.md`, `README.md` §V3, `docs/security.md` §5 (K18 stays accepted), and the sitegpt.ai feature/pricing comparison of 2026-11-20 (gap list reproduced in §2 so this plan is self-contained) |
-| Baseline | V3 tag `v3` = `2e5ab734b09b4eb229f927a875e737153c544779` (immutable); current `master` HEAD `6dd8866e3bc3d4821d39727858fb4eb9a9f18871` is docs-only after the tag; V4 work lives on `feat/v4` branched from current `master`; Alembic head `1c5516fa864d`; suite counts are historical (V3-4G recorded 47 modules / 718 Python tests / 46 node checks) and **must be re-run at pre-flight, never copied** |
+| Baseline | V3 tag `v3` = `2e5ab734b09b4eb229f927a875e737153c544779` (immutable); `master` HEAD `59e0cc2d13c51dacdb05fb3572715d0e5c40d85f` is docs-only after the tag (8 commits, incl. this plan); `feat/v4` branched from it at V4-01; Alembic head `1c5516fa864d`; suite counts are historical (V3-4G recorded 47 modules / 718 Python tests / 46 node checks) and **must be re-run at pre-flight, never copied** |
 | Scope | 5 features (F1–F5), 6 waves (W0–W5), 6 gates, 1 migration (M10), 25 tasks, exactly 2 new Python dependencies (D2), 0 new JS dependencies |
 | Review note | Pre-implementation plan. Every feature is off by default; with all V4 flags off the deployment behaves exactly as tag `v3` |
 | Out of scope | iOS app, WhatsApp / Messenger / Google Chat / Freshdesk Messaging / Zoho SalesIQ channels, Zendesk AI Agent (OAuth install), AI Email Support, Dropbox / OneDrive / Box / GitHub sources (each needs its own OAuth app — V5 candidates), white-label / billing / plans, SOC 2 Type II / HIPAA BAA / signed DPA / "GDPR certification" (legal, not code — unchanged since V2), a charting library (D1), an `EMBEDDING_DIMENSIONS` change (**no re-ingest anywhere in V4**), WebSocket transport, a second auth library, and any backport of V4 work into V3 |
@@ -111,27 +111,88 @@ Changing one after its wave is complete means rework, so decide now.
 - D9: `docs/security.md` §1 makes no compliance claim; V4 keeps it that way.
   Confirmed.
 
+**D1–D9 re-verified (V4-01, 2026-11-20) — all confirmed, none rewritten:**
+
+- D1: `frontend/package.json` has no chart/plot/d3/echarts/recharts entry. ✓
+- D2: no `youtube`/`notion`/`pptx` match anywhere under `src/` (case-insensitive
+  sweep); `parse.py:45-63` optional-import pattern and `sources.py` httpx
+  download path unchanged. ✓
+- D3: `models.py:295` unique `(website_id, session_id)` on `conversations`;
+  `services/topics.py` claim/cap pattern intact. ✓
+- D4: `api/analytics.py:22-33` still delegates to `build_digest`;
+  `chat_messages.answered` (`models.py:270`) and
+  `idx_chat_messages_website_id_created_at` (`models.py:258`) present. ✓
+- D5: `api/privacy.py:63` `GET /export` owns the PII surface. ✓
+- D6: `services/quota.py:30-119` helpers unchanged. ✓
+- D7: `crawler.py:82` `extract_urls_from_sitemap(raise_on_error=…)`,
+  `worker.py:562-666` loop precedents unchanged. ✓
+- D8: `embed_guard.py:42` `LOOPBACK_HOSTS`, `:185` `ensure_embed_allowed`
+  unchanged. ✓
+- D9: `docs/security.md:18-22` explicitly lists no SOC 2 / HIPAA BAA / DPA /
+  GDPR certification. ✓
+- Anchor correction worth recording: `embed_texts` lives in
+  **`services/ingest.py:17`** (sync), not `llm.py` as PLAN_V3's D3 verification
+  said; invariant 5's reuse list is unaffected. `WIDGET_PUBLIC_KEYS` counted
+  at exactly **14** entries (`api/setting.py:82-98`).
+
 ### Environment pre-flight
 
-- [ ] Confirm `v3` resolves to `2e5ab734b09b4eb229f927a875e737153c544779`, record
+- [x] Confirm `v3` resolves to `2e5ab734b09b4eb229f927a875e737153c544779`, record
       `git rev-parse HEAD` (`6dd8866…` at authoring), inspect the delta from the
       tag (expected: docs-only), and branch `feat/v4` from current `master`.
       Keep unrelated code changes out of the V4 starting point.
-- [ ] `uv run alembic current` = `uv run alembic heads` = `1c5516fa864d` (single
+      Done (V4-01): tag `^{commit}` = `2e5ab73…` ✓; HEAD `59e0cc2` (the plan +
+      AGENTS pointer landed as `docs(v4): add plan and update agents tag rule`);
+      delta `v3..HEAD` = 8 docs-only commits touching exactly AGENTS.md,
+      README.md, docs/api-v1.md, docs/security.md, plans/PLAN_V3.md,
+      plans/PLAN_V4.md; working tree clean; `feat/v4` branched from `59e0cc2`.
+- [x] `uv run alembic current` = `uv run alembic heads` = `1c5516fa864d` (single
       head). M10 chains from it.
-- [ ] `pg_dump` backup before M10 (`backups/`, already gitignored).
-- [ ] Redis reachable (`GET /health` reports `redis: true`); if not, the session
+      Done (V4-01): both print `1c5516fa864d (head)` against `site_gpt_db`.
+- [x] `pg_dump` backup before M10 (`backups/`, already gitignored).
+      Done (V4-01): `backups/site_gpt_pre_v4.dump` (59K) via
+      `docker exec postgres16 pg_dump -U postgres -Fc site_gpt_db`.
+- [x] Redis reachable (`GET /health` reports `redis: true`); if not, the session
       cap and insight loop remain implementable but their Redis paths cannot be
       verified — record those checks as **blocked**, never tick them silently.
-- [ ] Baseline green, counts recorded from the **actual run**:
+      Done (V4-01): `asyncio.run(services.redis.ping())` → `True` (redis6
+      container, localhost:6379 db 0). Session-cap and insight Redis paths are
+      verifiable in Waves 2/4.
+- [x] Baseline green, counts recorded from the **actual run**:
       `uv run python -m unittest discover -s tests -v`,
       `node --test tests/*.mjs`, `cd frontend && npm run build && npm run lint`,
       `trail build`. (V3-4G recorded 47 modules / 718 / 46 — do not copy.)
-- [ ] Provider reachability probe for D2/D3: can this environment reach
+      Done (V4-01): **718 Python tests / 47 modules, OK** (9.3 s); **46 node
+      checks, 46 pass / 0 fail** across 8 `.mjs` files; `npm run build` +
+      `npm run lint` exit 0; `trail build` exit 0. Run with the sanitized
+      `NO_PROXY` below. Counts happen to equal the V3-4G record — they are
+      from this run, not copied.
+- [x] Provider reachability probe for D2/D3: can this environment reach
       `youtube.com` captions and `api.notion.com`, and is an LLM/embedding
       provider configured? If not, F2/F3 end-to-end checks are **blocked and
       unexecuted** at their gates (unit tests with stubs still run), exactly as
       V3-4G recorded its provider-bound items.
+      Done (V4-01): **providers are reachable here — unlike the V3 gate.**
+      Chat/embedding gateway `http://127.0.0.1:31415/v1` (`LLM_AI=custom_openai`,
+      model `auto`): `GET /models` 200 with key; one minimal chat completion
+      200; `services.ingest.embed_texts(["preflight probe"])` → **1536-dim**,
+      matching `EMBEDDING_DIMENSIONS` (a raw probe without the `dimensions`
+      param returns the router's native 3072 — the service layer requests
+      1536, which is what matters). `https://www.youtube.com/` → 200;
+      `https://api.notion.com/v1/users/me` → 401 (reachable, needs a token —
+      a live Notion import still needs a real integration token at V4-3G).
+      SMTP and browser steps remain unprobed; apply the blocked-item rule to
+      those at the gates, not to the provider-bound ones.
+
+**Environment note (V4-01):** this shell exports
+`NO_PROXY=localhost,.localhost,127.0.0.1,127.0.0.0/8,[::1],::1`. The `ollama`
+package builds a module-level `Client()` at import, and the installed httpx
+fails to parse the bare `[::1]` entry (`InvalidURL: Invalid port: ':1]'`), so
+`import site_gpt.app.services.llm` — and therefore the whole suite — crashes
+at import under that variable. All baseline commands were run with
+`NO_PROXY=localhost,127.0.0.1 no_proxy=localhost,127.0.0.1`. This is an
+environment quirk, not a V4 code change; any gate run in this shell must
+sanitize the variable the same way (or the operator fixes their profile).
 
 ---
 
@@ -189,7 +250,8 @@ Carried from `PLAN_V3.md` §4 and `AGENTS.md`; new V4 rules marked **V4**.
 env/settings scaffolding, and record a real baseline so no wave invents its own
 version. **Entry:** environment pre-flight above.
 
-- [ ] **V4-01 · Decisions + scope doc** — `S`, depends: —, migration: —
+- [x] **V4-01 · Decisions + scope doc** — `S`, depends: —, migration: —
+  - Done: D1–D9 re-verified against code (second verification block above) — all confirmed, none rewritten; one anchor correction recorded (`embed_texts` is `services/ingest.py:17`). Deferred list in §2 unchanged. Environment pre-flight fully recorded: tag/HEAD/delta/branch ✓, single alembic head ✓, `backups/site_gpt_pre_v4.dump` ✓, Redis ping True ✓, baseline 718/47 + 46 node + build/lint/trail green ✓, providers reachable (chat 200, embed 1536-dim, YouTube 200, Notion API reachable) ✓; `NO_PROXY`/httpx environment quirk documented with the sanitization used.
   - Files: `plans/PLAN_V4.md`.
   - Do: re-verify every D-row against the code (the anchors in §3 were checked
     at authoring; re-check anything that moved). Confirm the deferred list in
@@ -829,13 +891,13 @@ provider absence.
 
 | Wave | Tasks | Done | Gate |
 |---|---|---|---|
-| 0 — Foundation | 4 | 0 / 4 | ☐ V4-0G |
+| 0 — Foundation | 4 | 1 / 4 | ☐ V4-0G |
 | 1 — Advanced analytics (F1) | 4 | 0 / 4 | ☐ V4-1G |
 | 2 — Cost & freshness (F4) | 4 | 0 / 4 | ☐ V4-2G |
 | 3 — Training sources (F3) | 4 | 0 / 4 | ☐ V4-3G |
 | 4 — Conversation insights (F2) | 6 | 0 / 6 | ☐ V4-4G |
 | 5 — Hosted chat page (F5) | 3 | 0 / 3 | ☐ V4-5G |
-| **Total** | **25 tasks + 6 gates** | **0 / 25** | **0 / 6 gates** |
+| **Total** | **25 tasks + 6 gates** | **1 / 25** | **0 / 6 gates** |
 
 ---
 
