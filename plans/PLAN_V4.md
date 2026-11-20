@@ -6,7 +6,7 @@
 | Status | **In progress — Wave 0 complete: V4-01…V4-04 done and gate V4-0G signed off (2026-11-20); Wave 1 (F1 analytics) is next. No migration written yet — Alembic head is still `1c5516fa864d`.** D1–D9 confirmed twice against code anchors (§3) |
 | Created | 2026-11-20 |
 | Derived from | `plans/PLAN_V3.md` (§2 non-goals, §4 invariants, §8 release-tag policy), `plans/SPEC.md`, `README.md` §V3, `docs/security.md` §5 (K18 stays accepted), and the sitegpt.ai feature/pricing comparison of 2026-11-20 (gap list reproduced in §2 so this plan is self-contained) |
-| Baseline | V3 tag `v3` = `2e5ab734b09b4eb229f927a875e737153c544779` (immutable); `master` HEAD `59e0cc2d13c51dacdb05fb3572715d0e5c40d85f` is docs-only after the tag (8 commits, incl. this plan); `feat/v4` branched from it at V4-01; Alembic head `1c5516fa864d`; suite counts are historical (V3-4G recorded 47 modules / 718 Python tests / 46 node checks) and **must be re-run at pre-flight, never copied** |
+| Baseline | V3 tag `v3` = `2e5ab734b09b4eb229f927a875e737153c544779` (immutable); `master` HEAD `59e0cc2d13c51dacdb05fb3572715d0e5c40d85f` is docs-only after the tag (8 commits, incl. this plan); `feat/v4` branched from it at V4-01; Alembic head `1c5516fa864d`; suite counts are historical (V3-4G recorded 47 modules / 718 Python tests / 46 node checks; the **V4 baseline is 47 / 720 / 46**, recorded in §3's pre-flight block) and **must be re-run at pre-flight, never copied** |
 | Scope | 5 features (F1–F5), 6 waves (W0–W5), 6 gates, 1 migration (M10), 25 tasks, exactly 2 new Python dependencies (D2), 0 new JS dependencies |
 | Review note | Pre-implementation plan. Every feature is off by default; with all V4 flags off the deployment behaves exactly as tag `v3` |
 | Out of scope | iOS app, WhatsApp / Messenger / Google Chat / Freshdesk Messaging / Zoho SalesIQ channels, Zendesk AI Agent (OAuth install), AI Email Support, Dropbox / OneDrive / Box / GitHub sources (each needs its own OAuth app — V5 candidates), white-label / billing / plans, SOC 2 Type II / HIPAA BAA / signed DPA / "GDPR certification" (legal, not code — unchanged since V2), a charting library (D1), an `EMBEDDING_DIMENSIONS` change (**no re-ingest anywhere in V4**), WebSocket transport, a second auth library, and any backport of V4 work into V3 |
@@ -161,12 +161,21 @@ Changing one after its wave is complete means rework, so decide now.
 - [x] Baseline green, counts recorded from the **actual run**:
       `uv run python -m unittest discover -s tests -v`,
       `node --test tests/*.mjs`, `cd frontend && npm run build && npm run lint`,
-      `trail build`. (V3-4G recorded 47 modules / 718 / 46 — do not copy.)
+      `trail build`. (V3-4G recorded 47 modules / 718 / 46 — do not copy; the
+      number to use is the **last `Done` line here**: 47 modules / 720 Python
+      tests / 46 node checks, the V4-04 re-run of this same pre-flight.)
       Done (V4-01): **718 Python tests / 47 modules, OK** (9.3 s); **46 node
       checks, 46 pass / 0 fail** across 8 `.mjs` files; `npm run build` +
       `npm run lint` exit 0; `trail build` exit 0. Run with the sanitized
       `NO_PROXY` below. Counts happen to equal the V3-4G record — they are
       from this run, not copied.
+      Done (V4-04): **720 Python tests / 47 modules, OK** (8.7 s), **46 node
+      checks, 46 pass / 0 fail** across 8 `.mjs` files, `npm run build` +
+      `npm run lint` exit 0, `trail build` exit 0 (2563 nodes / 5718 edges /
+      198 cards) — the Wave 0 baseline every gate re-runs. V4-01's 718 above
+      was the pre-scaffolding run; the +2 are the V4-02 settings cases
+      (`test_v4_internal_defaults_are_off`, `test_no_v4_key_reaches_the_widget`).
+      Module count stayed 47: Wave 0 added no test module, by design.
 - [x] Provider reachability probe for D2/D3: can this environment reach
       `youtube.com` captions and `api.notion.com`, and is an LLM/embedding
       provider configured? If not, F2/F3 end-to-end checks are **blocked and
@@ -312,8 +321,9 @@ version. **Entry:** environment pre-flight above.
     runner; `PLAN_V4.md` §9 is the runbook; the two branch-local deps) and
     `trail build` ran clean — 2563 nodes / 5718 edges / 198 cards. Baseline from
     the actual run: **720 Python tests / 47 modules, OK** (8.7 s) and **46 node
-    checks, 46 pass / 0 fail**; `trail ask`/`trail grep` resolve the three new
-    keys to `api/setting.py`.
+    checks, 46 pass / 0 fail**, now also recorded in §3's pre-flight block so
+    the 718 left by V4-01 is not the count an agent reads first; `trail
+    ask`/`trail grep` resolve the three new keys to `api/setting.py`.
   - Files: `AGENTS.md`, `tests/`, `.trail/`.
   - Do: state in `AGENTS.md` which suites V4 extends (no new runner), point at
     this plan's §9 runbook, run `trail build`. Record the real baseline counts
