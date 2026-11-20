@@ -3,7 +3,7 @@
 | | | |
 |---|---|---|
 | Version | **V4** — closes the feature gap against sitegpt.ai recorded in the 2026-11-20 comparison (§2): advanced analytics, per-conversation AI insights, new training sources, per-conversation cost caps + sitemap auto-scan, and a hosted chat page |
-| Status | **In progress — Wave 0 and Wave 1 complete (gates V4-0G and V4-1G signed off): V4-10 done (trend, funnel, top questions), V4-11 done (aggregate CSV export), V4-12 done (analytics page: SVG trend, funnel, top questions, export button), V4-13 done (docs: the analytics surface in README/AGENTS/api-v1); gate V4-1G signed off (both suites, widget suite, build/lint, `trail build`, digest byte-comparison, CSV by way of the API, `/api/v1` summary + foreign-id 404). Wave 2 is under way: V4-20 done (per-session message cap), V4-21 done (Settings field + docs), V4-22 done (daily sitemap diff scan), V4-23 done (docs: caps and freshness); gate V4-2G signed off (both suites, widget suite, build/lint, `trail build`, `alembic current`, the session-cap refusal on the API, and the scan + 500-sitemap hand checks). No migration written yet — Alembic head is still `1c5516fa864d`.** D1–D9 confirmed twice against code anchors (§3) |
+| Status | **In progress — Wave 0 and Wave 1 complete (gates V4-0G and V4-1G signed off): V4-10 done (trend, funnel, top questions), V4-11 done (aggregate CSV export), V4-12 done (analytics page: SVG trend, funnel, top questions, export button), V4-13 done (docs: the analytics surface in README/AGENTS/api-v1); gate V4-1G signed off (both suites, widget suite, build/lint, `trail build`, digest byte-comparison, CSV by way of the API, `/api/v1` summary + foreign-id 404). Wave 2 is under way: V4-20 done (per-session message cap), V4-21 done (Settings field + docs), V4-22 done (daily sitemap diff scan), V4-23 done (docs: caps and freshness); gate V4-2G signed off (both suites, widget suite, build/lint, `trail build`, `alembic current`, the session-cap refusal on the API, and the scan + 500-sitemap hand checks). Wave 3 is under way: V4-30 done (PPTX extraction). No migration written yet — Alembic head is still `1c5516fa864d`.** D1–D9 confirmed twice against code anchors (§3) |
 | Created | 2026-11-20 |
 | Derived from | `plans/PLAN_V3.md` (§2 non-goals, §4 invariants, §8 release-tag policy), `plans/SPEC.md`, `README.md` §V3, `docs/security.md` §5 (K18 stays accepted), and the sitegpt.ai feature/pricing comparison of 2026-11-20 (gap list reproduced in §2 so this plan is self-contained) |
 | Baseline | V3 tag `v3` = `2e5ab734b09b4eb229f927a875e737153c544779` (immutable); `master` HEAD `59e0cc2d13c51dacdb05fb3572715d0e5c40d85f` is docs-only after the tag (8 commits, incl. this plan); `feat/v4` branched from it at V4-01; Alembic head `1c5516fa864d`; suite counts are historical (V3-4G recorded 47 modules / 718 Python tests / 46 node checks; the **V4 baseline is 47 / 720 / 46**, recorded in §3's pre-flight block) and **must be re-run at pre-flight, never copied** |
@@ -790,7 +790,7 @@ V4 adds provider-cost features. Both opt-in, both fail safe. **Entry:** V4-1G.
 pipeline: every source normalizes into a local file under `uploads/`, then
 `parse.py` → chunk 1000/200 → embed. **Entry:** V4-2G.
 
-- [ ] **V4-30 · PPTX extraction** — `S`, depends: V4-2G, migration: —
+- [x] **V4-30 · PPTX extraction** — `S`, depends: V4-2G, migration: —
   - Files: `services/parse.py`, `tests/test_parse.py` (extend).
   - Do: a `pptx` branch using `python-pptx` (branch-local import, D2): slide
     text from every shape with a text frame, plus speaker notes, joined per
@@ -799,6 +799,24 @@ pipeline: every source normalizes into a local file under `uploads/`, then
   - Done when: a seeded two-slide deck with notes extracts both slides' text
     and notes; a missing `python-pptx` raises a clear error; the existing
     parse tests stay green.
+  - Done: `services/parse.py` gains a `pptx` branch after the PDF/DOCX ones,
+    importing `python-pptx` branch-locally (D2) so a deployment without it raises
+    `ImportError` on use while `import site_gpt.app.main` / `worker` stay clean.
+    Per slide it reads every shape with a text frame (placeholders and added text
+    boxes, in slide order), appends the speaker notes through `_speaker_notes`
+    (which checks `has_notes_slide` first, because `slide.notes_slide` would
+    create one), and joins the parts with a newline; slides are joined with a
+    blank line, so a chunk never mixes two slides. A deck whose slides **and**
+    notes all carry no text raises
+    `ValueError("The presentation contains no readable text: …")`, while a legacy
+    `.ppt` still falls through to the existing `Unsupported file type: .ppt`.
+    `tests/test_parse.py` gains `PptxExtractionTests` — a seeded two-slide deck
+    with notes extracts both slides and both notes in order, a notes-only slide
+    still extracts, an empty deck raises the clear error, and `pptx` absent from
+    `sys.modules` raises `ImportError` — plus the legacy `.ppt` rejection: 5 new
+    cases, the 6 existing ones green. Suite: **51 modules / 795 tests, OK**
+    (9.5 s); both imports pass. No frontend change: `pptx` joins the upload
+    accept list in V4-33.
 
 - [ ] **V4-31 · YouTube provider** — `M`, depends: V4-30, migration: —
   - Files: `services/sources.py` (`YoutubeProvider`), `api/upload.py`
@@ -1220,10 +1238,10 @@ provider absence.
 | 0 — Foundation | 4 | 4 / 4 | ☑ V4-0G |
 | 1 — Advanced analytics (F1) | 4 | 4 / 4 | ☑ V4-1G |
 | 2 — Cost & freshness (F4) | 4 | 4 / 4 | ☑ V4-2G |
-| 3 — Training sources (F3) | 4 | 0 / 4 | ☐ V4-3G |
+| 3 — Training sources (F3) | 4 | 1 / 4 | ☐ V4-3G |
 | 4 — Conversation insights (F2) | 6 | 0 / 6 | ☐ V4-4G |
 | 5 — Hosted chat page (F5) | 3 | 0 / 3 | ☐ V4-5G |
-| **Total** | **25 tasks + 6 gates** | **12 / 25** | **3 / 6 gates** |
+| **Total** | **25 tasks + 6 gates** | **13 / 25** | **3 / 6 gates** |
 
 ---
 
