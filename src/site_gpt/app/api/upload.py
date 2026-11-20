@@ -9,7 +9,12 @@ from site_gpt.app.core.auth import get_current_user
 from site_gpt.app.core.config import MAX_UPLOAD_BYTES, MAX_UPLOAD_MB
 from site_gpt.app.db.session import get_db
 from site_gpt.app.services.net_guard import UnsafeUrl
-from site_gpt.app.services.sources import AcquiredFile, FileTooLarge, get_provider
+from site_gpt.app.services.sources import (
+    AcquiredFile,
+    FileTooLarge,
+    SourceRefError,
+    get_provider,
+)
 
 router = APIRouter()
 
@@ -60,6 +65,11 @@ class UrlUploadIn(BaseModel):
     url: str
     # Optional bearer token for authenticated/protected URLs.
     token: str | None = None
+
+
+class YoutubeUploadIn(BaseModel):
+    # A video URL or id, a playlist URL or a channel URL.
+    url: str
 
 
 class GoogleDriveUploadIn(BaseModel):
@@ -166,6 +176,45 @@ async def upload_from_url(
     return _save_attachment(
         db, user, acquired, source="url", source_ref=payload.url
     )
+
+
+@router.post("/youtube")
+async def upload_from_youtube(
+    payload: YoutubeUploadIn,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """Import a video, playlist or channel as caption markdown attachments.
+
+    Every video is saved as its own file, so the rest of the flow (`file_ids` →
+    `POST /api/extra_documents` → worker ingest) is exactly the local-upload one.
+    The response carries the same per-file shape as `/url` and `/google-drive`,
+    plus the sitemap-sync-style `added`/`total`/`truncated` counts.
+    """
+    provider = get_provider("youtube")
+    try:
+        acquired_files, total, truncated = await provider.acquire_many(payload.url)
+    except FileTooLarge:
+        raise _too_large()
+    except (SourceRefError, UnsafeUrl) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    files = [
+        _save_attachment(
+            db,
+            user,
+            acquired,
+            source="youtube",
+            source_ref=acquired.source_ref or payload.url,
+        )
+        for acquired in acquired_files
+    ]
+    return {
+        "files": files,
+        "added": len(files),
+        "total": total,
+        "truncated": truncated,
+    }
 
 
 @router.post("/google-drive")

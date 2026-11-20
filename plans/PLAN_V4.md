@@ -3,7 +3,7 @@
 | | | |
 |---|---|---|
 | Version | **V4** — closes the feature gap against sitegpt.ai recorded in the 2026-11-20 comparison (§2): advanced analytics, per-conversation AI insights, new training sources, per-conversation cost caps + sitemap auto-scan, and a hosted chat page |
-| Status | **In progress — Wave 0 and Wave 1 complete (gates V4-0G and V4-1G signed off): V4-10 done (trend, funnel, top questions), V4-11 done (aggregate CSV export), V4-12 done (analytics page: SVG trend, funnel, top questions, export button), V4-13 done (docs: the analytics surface in README/AGENTS/api-v1); gate V4-1G signed off (both suites, widget suite, build/lint, `trail build`, digest byte-comparison, CSV by way of the API, `/api/v1` summary + foreign-id 404). Wave 2 is under way: V4-20 done (per-session message cap), V4-21 done (Settings field + docs), V4-22 done (daily sitemap diff scan), V4-23 done (docs: caps and freshness); gate V4-2G signed off (both suites, widget suite, build/lint, `trail build`, `alembic current`, the session-cap refusal on the API, and the scan + 500-sitemap hand checks). Wave 3 is under way: V4-30 done (PPTX extraction). No migration written yet — Alembic head is still `1c5516fa864d`.** D1–D9 confirmed twice against code anchors (§3) |
+| Status | **In progress — Wave 0 and Wave 1 complete (gates V4-0G and V4-1G signed off): V4-10 done (trend, funnel, top questions), V4-11 done (aggregate CSV export), V4-12 done (analytics page: SVG trend, funnel, top questions, export button), V4-13 done (docs: the analytics surface in README/AGENTS/api-v1); gate V4-1G signed off (both suites, widget suite, build/lint, `trail build`, digest byte-comparison, CSV by way of the API, `/api/v1` summary + foreign-id 404). Wave 2 is under way: V4-20 done (per-session message cap), V4-21 done (Settings field + docs), V4-22 done (daily sitemap diff scan), V4-23 done (docs: caps and freshness); gate V4-2G signed off (both suites, widget suite, build/lint, `trail build`, `alembic current`, the session-cap refusal on the API, and the scan + 500-sitemap hand checks). Wave 3 is under way: V4-30 done (PPTX extraction), V4-31 done (YouTube source provider). No migration written yet — Alembic head is still `1c5516fa864d`.** D1–D9 confirmed twice against code anchors (§3) |
 | Created | 2026-11-20 |
 | Derived from | `plans/PLAN_V3.md` (§2 non-goals, §4 invariants, §8 release-tag policy), `plans/SPEC.md`, `README.md` §V3, `docs/security.md` §5 (K18 stays accepted), and the sitegpt.ai feature/pricing comparison of 2026-11-20 (gap list reproduced in §2 so this plan is self-contained) |
 | Baseline | V3 tag `v3` = `2e5ab734b09b4eb229f927a875e737153c544779` (immutable); `master` HEAD `59e0cc2d13c51dacdb05fb3572715d0e5c40d85f` is docs-only after the tag (8 commits, incl. this plan); `feat/v4` branched from it at V4-01; Alembic head `1c5516fa864d`; suite counts are historical (V3-4G recorded 47 modules / 718 Python tests / 46 node checks; the **V4 baseline is 47 / 720 / 46**, recorded in §3's pre-flight block) and **must be re-run at pre-flight, never copied** |
@@ -818,7 +818,7 @@ pipeline: every source normalizes into a local file under `uploads/`, then
     (9.5 s); both imports pass. No frontend change: `pptx` joins the upload
     accept list in V4-33.
 
-- [ ] **V4-31 · YouTube provider** — `M`, depends: V4-30, migration: —
+- [x] **V4-31 · YouTube provider** — `M`, depends: V4-30, migration: —
   - Files: `services/sources.py` (`YoutubeProvider`), `api/upload.py`
     (`POST /api/uploads/youtube`), `core/config.py` (reuse `YOUTUBE_MAX_VIDEOS`),
     `tests/test_sources_youtube.py` (new, stubbed).
@@ -837,6 +837,38 @@ pipeline: every source normalizes into a local file under `uploads/`, then
     400, oversize refusal, and that the produced file flows through
     `extract_text_from_file` unchanged; a live import is attempted at the gate
     (blocked-item rule if the network/provider is unavailable).
+  - Done: `services/sources.py` gains `parse_youtube_ref` + `YoutubeProvider`,
+    registered as `"youtube"` in `PROVIDERS`. The parser accepts a bare
+    11-character id, `youtu.be/…`, `/watch?v=…`, `/shorts/`, `/embed/`, `/live/`,
+    a `/playlist?list=…` page and a channel (`/@handle`, `/channel/`, `/c/`,
+    `/user/`) URL — a channel becomes its `/videos` tab — and rejects any
+    non-YouTube host **before** a request is made (`SourceRefError` → 400).
+    Playlist/channel pages are fetched, their `/watch?v=` ids deduped in page
+    order and capped at `YOUTUBE_MAX_VIDEOS`, with `total` and `truncated`
+    reported like the sitemap sync. Each video is one `AcquiredFile`: a `.md`
+    named from the oEmbed title (fallback `YouTube video <id>`) whose body is
+    `# title`, `Video: <watch url>`, then the caption text, preferring a
+    manually-created transcript over a generated one; no captions (or empty
+    ones) raises `SourceRefError` naming the video, so an import never stores an
+    empty document, and a synthesized file over `MAX_UPLOAD_BYTES` raises the
+    existing `FileTooLarge`. `AcquiredFile` gained an optional `source_ref` (the
+    watch URL) and `SourceProvider` an `acquire_many` default of one file, so the
+    multi-file case required no new provider interface. `POST /api/uploads/youtube`
+    (`YoutubeUploadIn.url`) saves every file through the same `_save_attachment`
+    as `/url` and `/google-drive` and answers
+    `{files: [{file_id, filename, file_url, file_size, file_type, source,
+    source_ref}], added, total, truncated}` — each item is exactly the existing
+    import shape; the list wrapper (a reading of "returns the exact shape") is
+    what a capped playlist needs instead of dropping all but one video.
+    `tests/test_sources_youtube.py` (new, 14 cases, every HTTP call and the
+    transcript library stubbed) covers a single video and a bare id,
+    manual-over-generated captions, a capped playlist (cap 2 → 2 files, total 3,
+    truncated), channel expansion, the no-caption error naming the video and its
+    400, oversized `FileTooLarge` and its 413 with nothing written, the
+    non-YouTube 400, the shared response shape, registration, and that the
+    produced markdown round-trips through `extract_text_from_file`. Suite:
+    **52 modules / 809 tests, OK** (9.5 s); both imports pass. The frontend
+    button and the docs rows are V4-33's, so no UI change here.
 
 - [ ] **V4-32 · Notion provider** — `M`, depends: V4-31, migration: —
   - Files: `services/sources.py` (`NotionProvider`), `api/upload.py`
@@ -1238,10 +1270,10 @@ provider absence.
 | 0 — Foundation | 4 | 4 / 4 | ☑ V4-0G |
 | 1 — Advanced analytics (F1) | 4 | 4 / 4 | ☑ V4-1G |
 | 2 — Cost & freshness (F4) | 4 | 4 / 4 | ☑ V4-2G |
-| 3 — Training sources (F3) | 4 | 1 / 4 | ☐ V4-3G |
+| 3 — Training sources (F3) | 4 | 2 / 4 | ☐ V4-3G |
 | 4 — Conversation insights (F2) | 6 | 0 / 6 | ☐ V4-4G |
 | 5 — Hosted chat page (F5) | 3 | 0 / 3 | ☐ V4-5G |
-| **Total** | **25 tasks + 6 gates** | **13 / 25** | **3 / 6 gates** |
+| **Total** | **25 tasks + 6 gates** | **14 / 25** | **3 / 6 gates** |
 
 ---
 
