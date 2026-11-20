@@ -3,7 +3,7 @@
 | | | |
 |---|---|---|
 | Version | **V4** — closes the feature gap against sitegpt.ai recorded in the 2026-11-20 comparison (§2): advanced analytics, per-conversation AI insights, new training sources, per-conversation cost caps + sitemap auto-scan, and a hosted chat page |
-| Status | **In progress — Wave 0 and Wave 1 complete (gates V4-0G and V4-1G signed off): V4-10 done (trend, funnel, top questions), V4-11 done (aggregate CSV export), V4-12 done (analytics page: SVG trend, funnel, top questions, export button), V4-13 done (docs: the analytics surface in README/AGENTS/api-v1); gate V4-1G signed off (both suites, widget suite, build/lint, `trail build`, digest byte-comparison, CSV by way of the API, `/api/v1` summary + foreign-id 404). Wave 2 is under way: V4-20 done (per-session message cap), V4-21 done (Settings field + docs), V4-22 done (daily sitemap diff scan), V4-23 done (docs: caps and freshness); gate V4-2G signed off (both suites, widget suite, build/lint, `trail build`, `alembic current`, the session-cap refusal on the API, and the scan + 500-sitemap hand checks). Wave 3 is under way: V4-30 done (PPTX extraction), V4-31 done (YouTube source provider). No migration written yet — Alembic head is still `1c5516fa864d`.** D1–D9 confirmed twice against code anchors (§3) |
+| Status | **In progress — Wave 0 and Wave 1 complete (gates V4-0G and V4-1G signed off): V4-10 done (trend, funnel, top questions), V4-11 done (aggregate CSV export), V4-12 done (analytics page: SVG trend, funnel, top questions, export button), V4-13 done (docs: the analytics surface in README/AGENTS/api-v1); gate V4-1G signed off (both suites, widget suite, build/lint, `trail build`, digest byte-comparison, CSV by way of the API, `/api/v1` summary + foreign-id 404). Wave 2 is under way: V4-20 done (per-session message cap), V4-21 done (Settings field + docs), V4-22 done (daily sitemap diff scan), V4-23 done (docs: caps and freshness); gate V4-2G signed off (both suites, widget suite, build/lint, `trail build`, `alembic current`, the session-cap refusal on the API, and the scan + 500-sitemap hand checks). Wave 3 is under way: V4-30 done (PPTX extraction), V4-31 done (YouTube source provider), V4-32 done (Notion source provider). No migration written yet — Alembic head is still `1c5516fa864d`.** D1–D9 confirmed twice against code anchors (§3) |
 | Created | 2026-11-20 |
 | Derived from | `plans/PLAN_V3.md` (§2 non-goals, §4 invariants, §8 release-tag policy), `plans/SPEC.md`, `README.md` §V3, `docs/security.md` §5 (K18 stays accepted), and the sitegpt.ai feature/pricing comparison of 2026-11-20 (gap list reproduced in §2 so this plan is self-contained) |
 | Baseline | V3 tag `v3` = `2e5ab734b09b4eb229f927a875e737153c544779` (immutable); `master` HEAD `59e0cc2d13c51dacdb05fb3572715d0e5c40d85f` is docs-only after the tag (8 commits, incl. this plan); `feat/v4` branched from it at V4-01; Alembic head `1c5516fa864d`; suite counts are historical (V3-4G recorded 47 modules / 718 Python tests / 46 node checks; the **V4 baseline is 47 / 720 / 46**, recorded in §3's pre-flight block) and **must be re-run at pre-flight, never copied** |
@@ -872,7 +872,7 @@ pipeline: every source normalizes into a local file under `uploads/`, then
     **52 modules / 810 tests, OK** (9.5 s); both imports pass. The frontend
     button and the docs rows are V4-33's, so no UI change here.
 
-- [ ] **V4-32 · Notion provider** — `M`, depends: V4-31, migration: —
+- [x] **V4-32 · Notion provider** — `M`, depends: V4-31, migration: —
   - Files: `services/sources.py` (`NotionProvider`), `api/upload.py`
     (`POST /api/uploads/notion`), `tests/test_sources_notion.py` (new, stubbed).
   - Do: accept a page or database URL/ID plus an **integration token passed per
@@ -889,6 +889,53 @@ pipeline: every source normalizes into a local file under `uploads/`, then
     token-never-logged (caplog assertion), redirect-host refusal, and the
     shared response shape; a live import is attempted at the gate or recorded
     blocked.
+  - Done: `services/sources.py` gains `parse_notion_ref`, `SourceAuthError`
+    (a `SourceRefError`, so callers can still catch one type) and
+    `NotionProvider`, registered as `"notion"`. A reference is a page URL, a
+    database URL (`?v=` view id), a `*.notion.site` page, or a bare 32-hex /
+    dashed id — a bare id is `auto`, and the provider asks `/v1/pages/<id>` then
+    `/v1/databases/<id>` which one it is. Non-Notion hosts and links without an
+    id are refused before any request. Every call is built from the fixed
+    `https://api.notion.com/v1` base and the parsed id only; the client runs with
+    `follow_redirects=False` and a redirect is a `SourceRefError`, so the
+    `Authorization: Bearer <token>` header only ever reaches `api.notion.com`.
+    The token is a required per-request argument (Google Drive precedent): it is
+    never stored, never put in an error message (errors carry only the status),
+    never logged, and never echoed by the endpoint. A missing token and a
+    401/403 are `SourceAuthError` → HTTP 401; 404 and other statuses are
+    `SourceRefError` → HTTP 400, all **before** `_save_attachment`, so a failed
+    import stores nothing. A page renders depth-first to markdown: its title
+    property becomes the `#` title, block headings shift one level down, and
+    bulleted/numbered/to-do/toggle lists, quotes, callouts, fenced code with its
+    language, dividers, tables (header row + `| --- |` separator), media links
+    and child-page names are supported; unknown block types degrade to their
+    plain rich text, and inline bold/italic/strikethrough/code/href are kept.
+    `NOTION_MAX_BLOCKS` (0 disables, like the other caps) counts fetched blocks
+    across nesting and pagination; when it bites, the document ends with a
+    `_Truncated: only the first N blocks…_` note so the cap is visible in the
+    ingested text rather than silent. A database pages `POST /query` at
+    `page_size=100` until it has enough (or there is no more), then imports one
+    file per page, capped at `NOTION_MAX_PAGES` (0 disables), with `total` the
+    number of pages the query saw and `truncated` true when the cap dropped
+    some. `AcquiredFile.source_ref` is the `https://www.notion.so/<id>` page URL,
+    filenames are slugged titles. `POST /api/uploads/notion` (`NotionUploadIn.url`,
+    `.token`) saves each file through the same `_save_attachment` and returns
+    `{files: [{file_id, filename, file_url, file_size, file_type, source,
+    source_ref}], added, total, truncated}` — same per-file shape as the other
+    imports. `tests/test_sources_notion.py` (new, 21 cases, every HTTP call
+    stubbed with a recording `httpx.MockTransport`) covers the full page render,
+    the block cap, a capped database (3 pages, cap 2 → 2 files / total 3 /
+    truncated), the bare-id page probe and its database fallback, a rejected
+    token (provider `SourceAuthError`, endpoint 401, nothing written, token
+    absent from the error and the response), a log-capture assertion that the
+    token never appears in a record, every request's host being
+    `api.notion.com` with `Bearer` + `Notion-Version`, redirect refusal with no
+    request off-host, non-Notion and id-less refs refused without a request, a
+    missing token refused up front, the markdown round-tripping through
+    `extract_text_from_file`, registration, ref parsing and the endpoint's
+    shared response shape / 400 for a missing page. Suite: **53 modules / 831
+    tests, OK** (10.3 s); both imports pass. The frontend button and docs rows
+    are V4-33's, so no UI change here.
 
 - [ ] **V4-33 · Frontend + docs: the new sources** — `S`, depends: V4-32, migration: —
   - Files: `frontend/src/pages/ExtraDocuments.tsx`, `frontend/src/types/api.ts`,
@@ -1272,10 +1319,10 @@ provider absence.
 | 0 — Foundation | 4 | 4 / 4 | ☑ V4-0G |
 | 1 — Advanced analytics (F1) | 4 | 4 / 4 | ☑ V4-1G |
 | 2 — Cost & freshness (F4) | 4 | 4 / 4 | ☑ V4-2G |
-| 3 — Training sources (F3) | 4 | 2 / 4 | ☐ V4-3G |
+| 3 — Training sources (F3) | 4 | 3 / 4 | ☐ V4-3G |
 | 4 — Conversation insights (F2) | 6 | 0 / 6 | ☐ V4-4G |
 | 5 — Hosted chat page (F5) | 3 | 0 / 3 | ☐ V4-5G |
-| **Total** | **25 tasks + 6 gates** | **14 / 25** | **3 / 6 gates** |
+| **Total** | **25 tasks + 6 gates** | **15 / 25** | **3 / 6 gates** |
 
 ---
 

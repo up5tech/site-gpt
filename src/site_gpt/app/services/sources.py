@@ -18,7 +18,13 @@ from urllib.parse import parse_qs, quote, urljoin, urlparse
 
 import httpx
 
-from site_gpt.app.core.config import MAX_UPLOAD_BYTES, MAX_UPLOAD_MB, YOUTUBE_MAX_VIDEOS
+from site_gpt.app.core.config import (
+    MAX_UPLOAD_BYTES,
+    MAX_UPLOAD_MB,
+    NOTION_MAX_BLOCKS,
+    NOTION_MAX_PAGES,
+    YOUTUBE_MAX_VIDEOS,
+)
 from site_gpt.app.services.net_guard import UnsafeUrl, assert_fetchable_url
 
 # Redirects are followed manually so every hop can be re-validated: a public
@@ -32,6 +38,10 @@ class FileTooLarge(Exception):
 
 class SourceRefError(ValueError):
     """A reference could not be turned into a usable file (a clear 400)."""
+
+
+class SourceAuthError(SourceRefError):
+    """The source rejected the per-request token (a clear 401)."""
 
 
 async def read_limited(response) -> bytes:
@@ -399,12 +409,391 @@ class YoutubeProvider(SourceProvider):
         return text
 
 
+# --- Notion (V4 F3) ----------------------------------------------------------
+
+NOTION_ID = re.compile(r"[0-9a-fA-F]{32}")
+NOTION_HOSTS = {"notion.so", "notion.site"}
+
+
+def parse_notion_ref(ref: str) -> tuple[str, str]:
+    """Classify a Notion reference: `(kind, id)`, kind `page`/`database`/`auto`.
+
+    Only Notion hosts are accepted, and only the id is ever used to build a
+    request — the token is sent to `api.notion.com`, never to a host from the
+    pasted link. A bare id cannot tell a page from a database, so it comes back
+    as `auto` and the provider asks the API which one it is.
+    """
+    raw = (ref or "").strip()
+    if not raw:
+        raise SourceRefError("A Notion page or database link is required.")
+
+    compact = raw.replace("-", "")
+    if NOTION_ID.fullmatch(compact):
+        return "auto", compact.lower()
+    if "://" not in raw:
+        raw = f"https://{raw}"
+
+    parsed = urlparse(raw)
+    host = (parsed.hostname or "").lower()
+    if host.startswith("www."):
+        host = host[4:]
+    if host not in NOTION_HOSTS and not host.endswith(".notion.site"):
+        raise SourceRefError(
+            "That is not a Notion link. Paste a page or database URL."
+        )
+
+    # Search the path as-is first: a title directly before the id ("My-Page-<id>")
+    # must not extend the match into the title once the hyphens are stripped.
+    path = parsed.path or ""
+    match = NOTION_ID.search(path) or NOTION_ID.search(path.replace("-", ""))
+    if not match:
+        raise SourceRefError("That Notion link has no page or database id.")
+    # A database page URL carries its view id as `?v=`.
+    kind = "database" if "v" in parse_qs(parsed.query) else "page"
+    return kind, match.group(0).lower()
+
+
+class NotionProvider(SourceProvider):
+    """A Notion page, or every page of a database, as markdown files.
+
+    The integration token is per request (the Google Drive precedent): it only
+    ever goes into an `Authorization` header on `api.notion.com`, is never
+    stored, echoed or logged, and a redirect off that host is refused instead of
+    followed. Blocks are rendered to markdown under `NOTION_MAX_BLOCKS` and a
+    database to one file per page under `NOTION_MAX_PAGES`, both reporting
+    `truncated` when there was more to fetch.
+    """
+
+    API = "https://api.notion.com/v1"
+    VERSION = "2022-06-28"
+
+    async def acquire(self, ref: str, token: str | None = None) -> AcquiredFile:
+        files, _, _ = await self.acquire_many(ref, token)
+        return files[0]
+
+    async def acquire_many(
+        self, ref: str, token: str | None = None
+    ) -> tuple[list[AcquiredFile], int, bool]:
+        token = (token or "").strip()
+        if not token:
+            raise SourceAuthError("A Notion integration token is required.")
+
+        kind, ref_id = parse_notion_ref(ref)
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Notion-Version": self.VERSION,
+        }
+        async with httpx.AsyncClient(timeout=60, follow_redirects=False) as client:
+            if kind == "auto":
+                kind = await self._kind_of(client, headers, ref_id)
+            if kind == "database":
+                pages, total = await self._database_pages(client, headers, ref_id)
+                files = [
+                    await self._page_file(client, headers, page["id"], page)
+                    for page in pages
+                ]
+            else:
+                files = [await self._page_file(client, headers, ref_id)]
+                total = 1
+        return files, total, total > len(files)
+
+    async def _kind_of(
+        self, client: httpx.AsyncClient, headers: dict[str, str], ref_id: str
+    ) -> str:
+        page = await self._json(
+            client, headers, "GET", f"/pages/{ref_id}", allow_404=True
+        )
+        if page is not None:
+            return "page"
+        database = await self._json(
+            client, headers, "GET", f"/databases/{ref_id}", allow_404=True
+        )
+        if database is not None:
+            return "database"
+        raise SourceRefError(
+            "Notion returned 404 for that id. Check the link and that the page "
+            "or database is shared with your integration."
+        )
+
+    async def _database_pages(
+        self, client: httpx.AsyncClient, headers: dict[str, str], database_id: str
+    ) -> tuple[list[dict], int]:
+        pages: list[dict] = []
+        cursor = None
+        while True:
+            body: dict = {"page_size": 100}
+            if cursor:
+                body["start_cursor"] = cursor
+            data = await self._json(
+                client,
+                headers,
+                "POST",
+                f"/databases/{database_id}/query",
+                json_body=body,
+            )
+            pages.extend(data.get("results") or [])
+            cursor = data.get("next_cursor")
+            if not data.get("has_more") or not cursor:
+                break
+            # The cap is all the import can ever create, so stop paging for more.
+            if NOTION_MAX_PAGES > 0 and len(pages) >= NOTION_MAX_PAGES:
+                break
+
+        if not pages:
+            raise SourceRefError("That Notion database has no pages to import.")
+        total = len(pages)
+        # Same rule as the other caps: 0 disables it.
+        if NOTION_MAX_PAGES > 0:
+            pages = pages[:NOTION_MAX_PAGES]
+        return pages, total
+
+    async def _page_file(
+        self,
+        client: httpx.AsyncClient,
+        headers: dict[str, str],
+        page_id: str,
+        page: dict | None = None,
+    ) -> AcquiredFile:
+        if page is None:
+            page = await self._json(client, headers, "GET", f"/pages/{page_id}")
+        title = self._page_title(page, page_id)
+
+        self._seen = 0
+        self._truncated = False
+        lines = await self._render_page(client, headers, page_id)
+        if self._truncated:
+            lines.extend(
+                [
+                    "",
+                    f"_[Truncated: only the first {self._seen} blocks of this page "
+                    f"were imported (NOTION_MAX_BLOCKS).]_"
+                ]
+            )
+
+        url = f"https://www.notion.so/{page_id.replace('-', '')}"
+        body = f"# {title}\n\nSource: {url}\n\n" + "\n".join(lines).strip() + "\n"
+        content = body.encode("utf-8")
+        if len(content) > MAX_UPLOAD_BYTES:
+            raise FileTooLarge(
+                f"That Notion page is larger than the {MAX_UPLOAD_MB} MB limit."
+            )
+        slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:60]
+        return AcquiredFile(
+            content=content,
+            filename=f"{slug or page_id}.md",
+            content_type="text/markdown",
+            source_ref=url,
+        )
+
+    def _page_title(self, page: dict, page_id: str) -> str:
+        for prop in ((page or {}).get("properties") or {}).values():
+            if prop.get("type") == "title":
+                title = self._rich_text(prop.get("title"))
+                if title.strip():
+                    return title.strip()
+        return f"Notion page {page_id.replace('-', '')}"
+
+    async def _json(
+        self,
+        client: httpx.AsyncClient,
+        headers: dict[str, str],
+        method: str,
+        path: str,
+        *,
+        params: dict | None = None,
+        json_body: dict | None = None,
+        allow_404: bool = False,
+    ):
+        response = await client.request(
+            method,
+            f"{self.API}{path}",
+            headers=headers,
+            params=params,
+            json=json_body,
+        )
+        if allow_404 and response.status_code == 404:
+            return None
+        self._raise_for(response)
+        return response.json()
+
+    def _raise_for(self, response: httpx.Response) -> None:
+        """Turn a Notion error into a clear one, without ever echoing the token.
+
+        A redirect is refused rather than followed: the `Authorization` header
+        is only ever sent to `api.notion.com`.
+        """
+        if response.is_redirect:
+            raise SourceRefError(
+                "Notion answered with a redirect, which is refused. The token is "
+                "only ever sent to api.notion.com."
+            )
+        if response.status_code in (401, 403):
+            raise SourceAuthError(
+                "Notion rejected the integration token. Check the token and "
+                "that the page or database is shared with your integration."
+            )
+        if response.status_code == 404:
+            raise SourceRefError(
+                "Notion returned 404. Check the link and that the page or "
+                "database is shared with your integration."
+            )
+        if response.status_code >= 400:
+            raise SourceRefError(f"Notion returned HTTP {response.status_code}.")
+
+    async def _children(
+        self, client: httpx.AsyncClient, headers: dict[str, str], block_id: str
+    ) -> list[dict]:
+        results: list[dict] = []
+        cursor = None
+        while True:
+            params: dict = {"page_size": 100}
+            if cursor:
+                params["start_cursor"] = cursor
+            data = await self._json(
+                client, headers, "GET", f"/blocks/{block_id}/children", params=params
+            )
+            results.extend(data.get("results") or [])
+            cursor = data.get("next_cursor")
+            if not data.get("has_more") or not cursor:
+                return results
+            # One nesting level can never need more blocks than the whole cap.
+            if NOTION_MAX_BLOCKS > 0 and len(results) >= NOTION_MAX_BLOCKS:
+                return results
+
+    def _claim_block(self) -> bool:
+        """Account for one block against NOTION_MAX_BLOCKS (0 disables it)."""
+        if NOTION_MAX_BLOCKS > 0 and self._seen >= NOTION_MAX_BLOCKS:
+            self._truncated = True
+            return False
+        self._seen += 1
+        return True
+
+    async def _render_page(
+        self, client: httpx.AsyncClient, headers: dict[str, str], page_id: str
+    ) -> list[str]:
+        """Depth-first markdown render of a page's blocks, budgeted by the cap."""
+        lines: list[str] = []
+        stack: list[tuple] = [("children", page_id, 0, None)]
+        while stack:
+            task = stack.pop()
+            if task[0] == "render":
+                lines.extend(task[1])
+                continue
+
+            _, parent_id, depth, parent_type = task
+            children = await self._children(client, headers, parent_id)
+            if parent_type == "table":
+                lines.extend(self._render_table(children))
+                continue
+
+            accepted: list[dict] = []
+            for block in children:
+                if not self._claim_block():
+                    break
+                accepted.append(block)
+            for block in reversed(accepted):
+                block_lines = self._render_block(block, depth)
+                if block.get("has_children"):
+                    stack.append(
+                        ("children", block["id"], depth + 1, block.get("type"))
+                    )
+                stack.append(("render", block_lines))
+        return lines
+
+    def _render_table(self, rows: list[dict]) -> list[str]:
+        lines: list[str] = []
+        for index, row in enumerate(rows):
+            if not self._claim_block():
+                break
+            cells = [
+                self._rich_text(cell)
+                for cell in ((row.get("table_row") or {}).get("cells") or [])
+            ]
+            lines.append("| " + " | ".join(cells) + " |")
+            if index == 0 and cells:
+                lines.append("| " + " | ".join("---" for _ in cells) + " |")
+        return ["", *lines, ""] if lines else []
+
+    def _render_block(self, block: dict, depth: int) -> list[str]:
+        kind = block.get("type") or ""
+        data = block.get(kind) or {}
+        indent = "  " * depth
+        text = self._rich_text(data.get("rich_text"))
+
+        if kind == "paragraph":
+            return [f"{indent}{text}".rstrip()] if text else []
+        if kind in ("heading_1", "heading_2", "heading_3"):
+            # Shift one level down: the page title already is the document's H1.
+            prefix = "#" * (int(kind[-1]) + 1)
+            return [f"{prefix} {text}"] if text else []
+        if kind == "bulleted_list_item":
+            return [f"{indent}- {text}".rstrip()]
+        if kind == "numbered_list_item":
+            return [f"{indent}1. {text}".rstrip()]
+        if kind == "to_do":
+            box = "x" if data.get("checked") else " "
+            return [f"{indent}- [{box}] {text}".rstrip()]
+        if kind == "toggle":
+            return [f"{indent}- {text}".rstrip()]
+        if kind in ("quote", "callout"):
+            return [f"{indent}> {text}".rstrip()]
+        if kind == "code":
+            language = (data.get("language") or "").strip()
+            return [f"```{language}", text, "```"]
+        if kind == "divider":
+            return ["---"]
+        if kind == "child_page":
+            return [f"{indent}- {data.get('title') or ''} (sub-page)".rstrip()]
+        if kind in ("image", "video", "file", "pdf"):
+            url = (
+                (data.get("external") or {}).get("url")
+                or (data.get("file") or {}).get("url")
+                or ""
+            )
+            caption = self._rich_text(data.get("caption")) or kind
+            return [f"![{caption}]({url})"]
+        if kind == "table_row":
+            cells = [
+                self._rich_text(cell) for cell in (data.get("cells") or [])
+            ]
+            return ["| " + " | ".join(cells) + " |"]
+
+        # Unsupported blocks degrade to their plain text, never to an error.
+        fallback = text or (data.get("title") if isinstance(data.get("title"), str) else "")
+        return [f"{indent}{fallback}".rstrip()] if fallback else []
+
+    @staticmethod
+    def _rich_text(items) -> str:
+        """Render Notion rich-text items, keeping the inline formatting."""
+        parts: list[str] = []
+        for item in items or []:
+            plain = item.get("plain_text")
+            if plain is None:
+                plain = (item.get("text") or {}).get("content", "")
+            text = plain or ""
+            annotations = item.get("annotations") or {}
+            if annotations.get("code"):
+                text = f"`{text}`"
+            if annotations.get("bold"):
+                text = f"**{text}**"
+            if annotations.get("italic"):
+                text = f"*{text}*"
+            if annotations.get("strikethrough"):
+                text = f"~~{text}~~"
+            href = item.get("href")
+            if href:
+                text = f"[{text}]({href})"
+            parts.append(text)
+        return "".join(parts)
+
+
 # Registry: source name -> provider class. Extend here for new origins.
 PROVIDERS: dict[str, type[SourceProvider]] = {
     "local": UrlProvider,  # local is handled directly in upload.py, kept for completeness
     "url": UrlProvider,
     "google_drive": GoogleDriveProvider,
     "youtube": YoutubeProvider,
+    "notion": NotionProvider,
 }
 
 

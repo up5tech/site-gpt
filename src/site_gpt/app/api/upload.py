@@ -12,6 +12,7 @@ from site_gpt.app.services.net_guard import UnsafeUrl
 from site_gpt.app.services.sources import (
     AcquiredFile,
     FileTooLarge,
+    SourceAuthError,
     SourceRefError,
     get_provider,
 )
@@ -70,6 +71,13 @@ class UrlUploadIn(BaseModel):
 class YoutubeUploadIn(BaseModel):
     # A video URL or id, a playlist URL or a channel URL.
     url: str
+
+
+class NotionUploadIn(BaseModel):
+    # A page or database URL, or its id.
+    url: str
+    # Notion integration token for this request only: never stored or echoed.
+    token: str
 
 
 class GoogleDriveUploadIn(BaseModel):
@@ -205,6 +213,49 @@ async def upload_from_youtube(
             user,
             acquired,
             source="youtube",
+            source_ref=acquired.source_ref or payload.url,
+        )
+        for acquired in acquired_files
+    ]
+    return {
+        "files": files,
+        "added": len(files),
+        "total": total,
+        "truncated": truncated,
+    }
+
+
+@router.post("/notion")
+async def upload_from_notion(
+    payload: NotionUploadIn,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """Import a Notion page, or every page of a database, as markdown files.
+
+    The integration token is used for this request only (the Google Drive
+    `access_token` precedent): it is not stored, logged or echoed. One file per
+    page, so the rest of the flow is the local-upload one, and the response
+    carries the same per-file shape plus `added`/`total`/`truncated`.
+    """
+    provider = get_provider("notion")
+    try:
+        acquired_files, total, truncated = await provider.acquire_many(
+            payload.url, payload.token
+        )
+    except FileTooLarge:
+        raise _too_large()
+    except SourceAuthError as exc:
+        raise HTTPException(status_code=401, detail=str(exc))
+    except (SourceRefError, UnsafeUrl) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    files = [
+        _save_attachment(
+            db,
+            user,
+            acquired,
+            source="notion",
             source_ref=acquired.source_ref or payload.url,
         )
         for acquired in acquired_files
