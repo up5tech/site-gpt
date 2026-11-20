@@ -3,7 +3,7 @@
 | | | |
 |---|---|---|
 | Version | **V4** — closes the feature gap against sitegpt.ai recorded in the 2026-11-20 comparison (§2): advanced analytics, per-conversation AI insights, new training sources, per-conversation cost caps + sitemap auto-scan, and a hosted chat page |
-| Status | **In progress — Wave 0 and Wave 1 complete (gates V4-0G and V4-1G signed off): V4-10 done (trend, funnel, top questions), V4-11 done (aggregate CSV export), V4-12 done (analytics page: SVG trend, funnel, top questions, export button), V4-13 done (docs: the analytics surface in README/AGENTS/api-v1); gate V4-1G signed off (both suites, widget suite, build/lint, `trail build`, digest byte-comparison, CSV by way of the API, `/api/v1` summary + foreign-id 404). Wave 2 is under way: V4-20 done (per-session message cap), V4-21 done (Settings field + docs), V4-22 done (daily sitemap diff scan). No migration written yet — Alembic head is still `1c5516fa864d`.** D1–D9 confirmed twice against code anchors (§3) |
+| Status | **In progress — Wave 0 and Wave 1 complete (gates V4-0G and V4-1G signed off): V4-10 done (trend, funnel, top questions), V4-11 done (aggregate CSV export), V4-12 done (analytics page: SVG trend, funnel, top questions, export button), V4-13 done (docs: the analytics surface in README/AGENTS/api-v1); gate V4-1G signed off (both suites, widget suite, build/lint, `trail build`, digest byte-comparison, CSV by way of the API, `/api/v1` summary + foreign-id 404). Wave 2 is under way: V4-20 done (per-session message cap), V4-21 done (Settings field + docs), V4-22 done (daily sitemap diff scan), V4-23 done (docs: caps and freshness). No migration written yet — Alembic head is still `1c5516fa864d`.** D1–D9 confirmed twice against code anchors (§3) |
 | Created | 2026-11-20 |
 | Derived from | `plans/PLAN_V3.md` (§2 non-goals, §4 invariants, §8 release-tag policy), `plans/SPEC.md`, `README.md` §V3, `docs/security.md` §5 (K18 stays accepted), and the sitegpt.ai feature/pricing comparison of 2026-11-20 (gap list reproduced in §2 so this plan is self-contained) |
 | Baseline | V3 tag `v3` = `2e5ab734b09b4eb229f927a875e737153c544779` (immutable); `master` HEAD `59e0cc2d13c51dacdb05fb3572715d0e5c40d85f` is docs-only after the tag (8 commits, incl. this plan); `feat/v4` branched from it at V4-01; Alembic head `1c5516fa864d`; suite counts are historical (V3-4G recorded 47 modules / 718 Python tests / 46 node checks; the **V4 baseline is 47 / 720 / 46**, recorded in §3's pre-flight block) and **must be re-run at pre-flight, never copied** |
@@ -686,7 +686,7 @@ V4 adds provider-cost features. Both opt-in, both fail safe. **Entry:** V4-1G.
     (9.4 s); `import site_gpt.app.main` and `import site_gpt.app.worker` pass.
     AGENTS.md's job-type list records `sitemap_scan` and its rules.
 
-- [ ] **V4-23 · Docs: caps and freshness** — `S`, depends: V4-22, migration: —
+- [x] **V4-23 · Docs: caps and freshness** — `S`, depends: V4-22, migration: —
   - Files: `README.md` (Limit composition, env table, worker job types),
     `AGENTS.md`, `docs/security.md` (fail-open note).
   - Do: rewrite "Limit composition" to the three-guard order (IP limiter →
@@ -696,6 +696,26 @@ V4 adds provider-cost features. Both opt-in, both fail safe. **Entry:** V4-1G.
   - Done when: no doc describes the daily cap as the only per-visitor ceiling,
     and the scan's "never wipe on a bad fetch" rule is written where an
     operator will read it.
+  - Done: README's "Limit composition" now lists the three guards in order —
+    per-IP limiter → **per-session cap** (`session_message_limit`, Redis
+    `quota:session:<website>:<session>`, TTL refreshed per message) → **daily
+    per-website quota** — keeps the `/api/v1` note, and states plainly that
+    **both Redis guards fail open**, so an outage admits messages past the
+    session cap and past the daily ceiling. "V4 (in progress)" is retitled to
+    Waves 0–2 landed (`V4-0G`, `V4-1G`) with `V4-2G` next, and gains
+    "Per-session message cap (F4)" and "Daily sitemap auto-scan (F4)": the
+    opt-in, the **best-effort** `sitemap:scan:<website_id>` key (a Redis outage
+    costs one extra scan, never a missed one), the add cap shared with the admin
+    **Sync Sitemap** button, deletion of **every** document row of a retired URL,
+    the **never wipe on a bad fetch** rule, and the full job-type list
+    (`ingest`, `digest`, `retention`, `topic_clusters`, `sitemap_scan`).
+    `docs/security.md` §2 gains a "Session cap" row and a "Sitemap scan (V4 F4)"
+    row, its "Spend ceiling" row now says the session cap is checked first, and a
+    "The Redis guards fail open" paragraph replaces the implicit behaviour (both
+    caps admit on an outage; with both at `0` neither counter is written, so a
+    default deployment adds no Redis writes). AGENTS.md's services list names
+    `services/sitemap.py` and the reason the worker must not import `api/`.
+    Docs only: no code, test or build impact.
 
 #### Gate V4-2G
 
@@ -1147,11 +1167,11 @@ provider absence.
 |---|---|---|---|
 | 0 — Foundation | 4 | 4 / 4 | ☑ V4-0G |
 | 1 — Advanced analytics (F1) | 4 | 4 / 4 | ☑ V4-1G |
-| 2 — Cost & freshness (F4) | 4 | 3 / 4 | ☐ V4-2G |
+| 2 — Cost & freshness (F4) | 4 | 4 / 4 | ☐ V4-2G |
 | 3 — Training sources (F3) | 4 | 0 / 4 | ☐ V4-3G |
 | 4 — Conversation insights (F2) | 6 | 0 / 6 | ☐ V4-4G |
 | 5 — Hosted chat page (F5) | 3 | 0 / 3 | ☐ V4-5G |
-| **Total** | **25 tasks + 6 gates** | **11 / 25** | **2 / 6 gates** |
+| **Total** | **25 tasks + 6 gates** | **12 / 25** | **2 / 6 gates** |
 
 ---
 

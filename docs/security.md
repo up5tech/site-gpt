@@ -46,15 +46,25 @@ processes.
 | Delivery retention | Delivery rows keep the event payload (visitor contact details) for retries, but no API returns it: `/integrations/deliveries` exposes type, status, attempts and the scrubbed error only | `api/integration.py` |
 | Webhooks | HMAC-SHA256 over `<timestamp>.<body>`, header `X-SiteGPT-Signature`; receivers can reject replays by checking the timestamp | `services/integrations.py` |
 | Rate limits | Sliding window per client IP on public endpoints (`memory` per-process by default; shared via Redis with `RATE_LIMIT_BACKEND=redis`, see mitigated K5) | `services/ratelimit.py` |
-| Spend ceiling | Daily message cap per website, counted in Redis, reset at UTC midnight | `api/routes.py` |
+| Session cap | Optional per-`(website_id, session_id)` visitor-message cap (`session_message_limit`, default `0` = off) in Redis with a TTL refreshed on every accepted message. A refusal is a friendly reply with no LLM call, no daily-budget spend and no session reset; checked after the per-IP limiter and **before** the daily cap | `services/quota.py`, `api/routes.py`, `api/v1.py` |
+| Spend ceiling | Daily message cap per website, counted in Redis, reset at UTC midnight. The per-session cap is checked before it, so a capped session cannot spend the day's allowance | `api/routes.py`, `api/v1.py` |
 | Uploads | Size capped while streaming (`MAX_UPLOAD_MB`, 413 without buffering the body) | `api/upload.py` |
 | Consent | When `require_consent` is on, `POST /api/contacts` refuses without `consent: true` and stamps `contacts.consent_at` | `api/routes.py` |
 | Session reads (K4) | The widget mints a per-session token and sends it as `X-Session-Token` to read its history or contact. Only `sha256(token)` is stored; a token value expires after `SESSION_TOKEN_TTL_SECONDS`, the whole chain dies after `SESSION_TOKEN_MAX_LIFETIME_SECONDS`, and rotation requires holding the current value | `services/session_tokens.py`, `POST /api/session-token` |
 | Embed token (K18) | Optional per-website `X-Embed-Token`. Only `sha256(token)` is stored, the 12-character prefix is the only readable part, one token is active per website (partial unique index) and rotation is a single transaction. `compat` accepts a missing token but refuses an invalid one; `enforce` requires it; a refusal is `403 {detail, reason}` with `invalid_embed_token` / `embed_token_required`. The value is public in the page and replayable, so this is a revocation and compatibility control — not origin authentication | `services/embed_tokens.py`, `services/embed_guard.py`, `api/website.py` |
 | Export / erasure | Admin-only JSON export per website and hard deletes for a conversation or a contact, both company-scoped | `api/privacy.py` |
 | Retention | `retention_days` per company: the worker's daily job hard-deletes `chat_messages`, `chat_feedback`, `handoff_requests`, `contacts`, `digest_log`, `topic_clusters` and `topic_cluster_runs` rows older than the policy, scoped to that company. `POST /api/privacy/retention` previews it (`dry_run`) or runs it on demand | `services/retention.py`, `api/privacy.py`, `worker.py` |
+| Sitemap scan (V4 F4) | Opt-in per company (`sitemap_scan_enabled`, off by default) and limited to that company's `active` websites. The sitemap is fetched through the SSRF-guarded crawler (`net_guard` rejects non-public hosts on every hop), and the diff — new pages, plus retiring vanished pages and deleting their documents — is applied **only after a fully successful, non-empty fetch**; a failed or empty fetch changes no row | `services/sitemap.py`, `services/crawler.py`, `worker.py` |
 | Topic clustering (V3 F2) | Opt-in per company and off by default. One run sends at most `TOPIC_CLUSTER_MAX_MESSAGES` (500) visitor questions (1000 characters each) to the configured embedding provider in one call, and one naming request covering at most 8 clusters × 5 quoted questions to the configured chat LLM; derived rows store a label, a summary, a centroid and window counts, never question text. Erasing a conversation drops the weeks it appears in locally, without calling a provider | `services/topics.py`, `worker.py`, `api/privacy.py` |
 | Logs | No raw API key, integration token or password is written to a log line; webhook bodies are not logged | `services/*` |
+
+**The Redis guards fail open.** The session cap and the daily message cap are
+both Redis counters, and both admit the message when Redis is unreachable (the
+error is logged). That keeps chat available, but an outage can exceed both
+ceilings — the trade-off the daily cap has always made, now shared by the
+session cap. On a fresh deployment with both caps at `0` neither counter is
+written at all. The per-IP limiter is different: it falls back to its
+per-process window (K5), and `/health` reports Redis as `degraded`.
 
 What the code deliberately does **not** do: encrypt values at the application
 layer. Encryption at rest is a property of the database and the disk (§3).

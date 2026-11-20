@@ -66,7 +66,7 @@ src/site_gpt/app/
   core/                # config.py (env), auth.py (hash/JWT)
   db/                  # session.py, base.py
   scripts/widget.js    # embeddable chat widget (window.ChatWidgetConfig)
-  worker.py            # Redis queue consumer (ingest jobs)
+  worker.py            # Redis queue consumer (ingest and scheduled jobs)
 frontend/src/
   pages/ (Dashboard, Websites, WebsiteDetail, ExtraDocuments, Playground, Contacts, Handoffs, Inbox, Users, Settings, Login, Register)
   components/ (Layout, Chat, WidgetPreview, ProtectedRoute, WebsiteTable, CompanyTable, UserTable)
@@ -495,7 +495,9 @@ tag `v2.1`, JSON and HTML, with cluster rows present or not.
 
 ### V4 (in progress)
 
-Only Wave 1 — advanced analytics (F1) — has landed; the rest of
+Waves 0–2 have landed: the settings/env scaffolding (gate `V4-0G`), advanced
+analytics (F1, gate `V4-1G`) and the cost & freshness pair (F4: a per-session
+message cap and the daily sitemap diff scan) — gate `V4-2G` is next. The rest of
 [`plans/PLAN_V4.md`](plans/PLAN_V4.md)'s waves are still pending.
 
 #### Advanced analytics (F1)
@@ -540,6 +542,40 @@ same window, so the digest payload and HTML stay byte-identical (invariant 15 �
 gate `V4-1G` re-checks it against the module loaded from tag `v3`). That is also
 why `/api/v1/analytics/summary` can gain the fields without breaking a V3 client,
 and it is the rule the later per-conversation insights (F2) must follow too.
+
+#### Per-session message cap (F4)
+
+`session_message_limit` (internal key, default `0` = off, seeded from
+`SESSION_MESSAGE_LIMIT`) caps how many messages one visitor session may send. It
+is a Redis counter per `(website_id, session_id)` (`quota:session:<website>:<session>`,
+TTL `SESSION_CAP_TTL_SECONDS` refreshed on every accepted message — an idle
+window, not a lifetime ban) checked **after** the per-IP limiter and **before**
+the daily quota, so a capped session never spends the daily budget. The refusal
+is a friendly reply — a normal `answer`, or the usual SSE `chunk`/`done` pair —
+with no LLM call and no session reset; `POST /api/chat`, `POST /api/chat/stream`
+and `POST /api/v1/chat` all honour it. Admins set it in **Settings → Privacy →
+Message limits**. `0` turns it off; a Redis outage fails open, exactly like the
+daily cap (see "Limit composition" above).
+
+#### Daily sitemap auto-scan (F4)
+
+`sitemap_scan_enabled` (internal key, default `false`) opts a company in. The
+worker's `sitemap_loop` looks every `SITEMAP_SCAN_INTERVAL_SECONDS` and queues a
+`sitemap_scan` job for each of that company's `active` websites that has a
+sitemap URL. The last queue is remembered in the **best-effort** Redis key
+`sitemap:scan:<website_id>` (TTL = the interval): a Redis outage therefore costs
+one extra scan, never a missed one, and the key is not authoritative for
+anything else.
+
+The job adds new pages up to `SITEMAP_SYNC_MAX_URLS` — the same helper the
+admin's **Sync Sitemap** button uses — and marks vanished pages inactive,
+deleting **every** `Document` row for that URL (its embeddings cascade), so a
+removed page stops being answered. **The diff is applied only after a fully
+successful, non-empty fetch**: a failed, timed-out or empty sitemap changes no
+row at all, so a transient error can never wipe a knowledge base. When something
+did change it queues **one** ingest through `claim_ingest`, so a website already
+crawling is skipped instead of double-crawled. Worker job types are therefore
+`ingest`, `digest`, `retention`, `topic_clusters` and `sitemap_scan`.
 
 ## Dev commands
 
@@ -783,12 +819,21 @@ so `EMBEDDING_DIMENSIONS` must equal that model's native size.
   (combined outage traffic may exceed one shared budget, up to N × the per-process
   allowance).
 - **Limit composition.** Three independent guards, in this order: (1) the per-IP
-  rate limiter is a burst guard — it runs as a FastAPI dependency before the
-  handler; (2) the daily per-website quota (`services/quota.py`, Redis counter)
-  is the spend ceiling, checked inside the chat handlers after the limiter;
-  (3) `/api/v1` is API-key authenticated (`X-API-Key` + scope) and has **no**
-  per-IP or per-key rate limiter — per-key abuse protection is deferred, not
-  implemented. The daily quota still applies to `/api/v1/chat`.
+  rate limiter is a burst guard — a FastAPI dependency that runs before the
+  handler on the public widget endpoints; (2) the per-session cap
+  (`session_message_limit`, Redis `quota:session:<website_id>:<session_id>`,
+  `0` = off) refuses the next message once one visitor session has spent its
+  allowance, refreshed on every accepted message — a friendly refusal that calls
+  no LLM, spends no daily budget and never resets the session; (3) the daily
+  per-website quota (`services/quota.py`, Redis counter) is the spend ceiling,
+  checked last, so a capped session never consumes the day's allowance.
+  `/api/v1` is API-key authenticated (`X-API-Key` + scope) and has **no** per-IP
+  or per-key rate limiter — per-key abuse protection is deferred, not
+  implemented — but both the session cap and the daily quota apply to
+  `/api/v1/chat`. **Both Redis guards fail open**: if Redis is unreachable the
+  chat keeps answering and the error is logged, so an outage admits messages
+  past the session cap and past the daily ceiling — the availability trade-off
+  the daily cap has always made, now shared by the session cap.
 - **Periodic re-crawl.** The worker now runs a `scheduler_loop` that, every
   `CRAWL_REFRESH_HOURS` (default 24, set `0` to disable), re-enqueues ingest for websites
   whose `ingest_status == 'completed'` and last update is older than the interval — keeping
@@ -812,14 +857,15 @@ so `EMBEDDING_DIMENSIONS` must equal that model's native size.
   published by `GET /api/widget-config`. `POST /api/chat` and `/api/chat/stream` read the company's
   value and fall back to the env default whenever the row is absent (companies created earlier) or its
   value is empty/garbage/negative — a typo can never silently remove the ceiling. `0` still disables it.
-- **Daily per-website message cap.** Per-IP rate limiting caps a single visitor and nothing else, so one
-  viral embed could spend a customer's whole LLM budget in a day. `POST /api/chat` and
+- **Daily per-website message cap.** Per-IP rate limiting caps a single visitor's burst and nothing else,
+  so one viral embed could spend a customer's whole LLM budget in a day. `POST /api/chat` and
   `POST /api/chat/stream` now count each message in Redis (`quota:messages:<website_id>:<UTC date>`,
   expiring at the next UTC midnight) and, once `DAILY_MESSAGE_LIMIT` is reached, answer with a
   friendly "daily limit" reply — as a normal `answer` or as the usual SSE `chunk`/`done` pair — without
   calling the LLM or embedding the question. `0` disables the cap, and a Redis outage fails open
   (chat keeps working, the error is logged) rather than taking the widget down. The counter is spent
-  before the LLM call and never refunded, and flushing Redis resets today's counts.
+  before the LLM call and never refunded, and flushing Redis resets today's counts. V4 puts a
+  per-session cap in front of this daily one — see "Limit composition" and "Per-session message cap (F4)".
 - **The widget explains a disabled website.** A disabled site answers `403` on every public endpoint; the
   widget used to show its generic `Error!` bubble (or ask for contact details first). It now recognises
   the `403` from `widget-config`, `/api/chat/stream` and `/api/contacts`, shows
