@@ -16,7 +16,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from site_gpt.app import models, worker
-from site_gpt.app.api import website as website_api
+from site_gpt.app.services import sitemap as sitemap_service
 from site_gpt.app.db.base import Base
 
 
@@ -316,7 +316,7 @@ class SitemapScanDiffTests(ScanFixture):
     def test_the_cap_limits_only_the_pages_a_scan_creates(self):
         self.add_page("https://example.com/a")
 
-        with patch.object(website_api, "SITEMAP_SYNC_MAX_URLS", 1):
+        with patch.object(sitemap_service, "SITEMAP_SYNC_MAX_URLS", 1):
             enqueue, claim = self.run_scan(
                 [
                     "https://example.com/a",

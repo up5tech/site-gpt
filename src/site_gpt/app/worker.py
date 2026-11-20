@@ -6,10 +6,10 @@ import traceback
 from datetime import datetime, timedelta, UTC
 from uuid import UUID
 
-from site_gpt.app.api.website import add_missing_pages
 from site_gpt.app.services.crawler import crawl_website, extract_urls_from_sitemap
 from site_gpt.app.services.ingest import ingest_document, ingest_extra_document
 from site_gpt.app.services.ingest_claim import STUCK_INGEST_AFTER, claim_ingest
+from site_gpt.app.services.sitemap import add_missing_pages
 from site_gpt.app.services.parse import extract_text_from_file
 from site_gpt.app.services.redis import redis_client, enqueue_job
 from site_gpt.app.core.config import (

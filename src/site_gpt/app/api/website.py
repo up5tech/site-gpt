@@ -6,7 +6,6 @@ from sqlalchemy.orm import Session
 
 from site_gpt.app import models
 from site_gpt.app.core.auth import get_admin_user, get_current_user, get_manager_user
-from site_gpt.app.core.config import SITEMAP_SYNC_MAX_URLS
 from site_gpt.app.db.session import get_db
 from site_gpt.app.models import Website
 from site_gpt.app.schemas.app import DashboardStats, PaginatedResponse
@@ -24,6 +23,7 @@ from site_gpt.app.schemas.website_page import (
     WebsitePageUpdate,
 )
 from site_gpt.app.services import embed_tokens
+from site_gpt.app.services import sitemap as sitemap_service
 from site_gpt.app.services.crawler import extract_urls_from_sitemap
 from site_gpt.app.services.net_guard import UnsafeUrl
 from site_gpt.app.services.quota import usage as quota_usage
@@ -432,52 +432,6 @@ def delete_website_page(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-def add_missing_pages(
-    db: Session, website_id: UUID, urls: list[str]
-) -> tuple[int, bool]:
-    """Create the sitemap URLs this website does not have yet.
-
-    Shared by the admin sync endpoint and the V4 daily scan (`sitemap_scan`), so
-    the cap rule exists once. Additions only: retiring a vanished page and
-    deleting its document is the scan's own step, deliberately not here, because
-    the manual endpoint has never removed anything.
-
-    The cap counts only the pages this call creates; existing pages do not
-    consume the budget, so repeated syncs keep making progress instead of
-    re-scanning the same first N URLs. Returns `(added, truncated)`; the caller
-    commits.
-    """
-    added = 0
-    truncated = False
-    for url in urls:
-        # Stop creating pages once this sync hits the cap: a sitemap can list
-        # tens of thousands of URLs, and the next ingest crawls them all.
-        if SITEMAP_SYNC_MAX_URLS > 0 and added >= SITEMAP_SYNC_MAX_URLS:
-            truncated = True
-            break
-        # Scoped to this website: pages of another tenant that happen to share a
-        # URL must not make this sync skip them.
-        if (
-            db.query(models.WebsitePage)
-            .filter(
-                models.WebsitePage.website_id == website_id,
-                models.WebsitePage.url == url,
-            )
-            .first()
-        ):
-            continue
-        db.add(
-            models.WebsitePage(
-                url=url,
-                name=url,
-                description="",
-                website_id=website_id,
-            )
-        )
-        added += 1
-    return added, truncated
-
-
 @router.post("/{website_id}/load-site-map")
 def load_website_site_map(
     website_id: UUID,
@@ -517,7 +471,7 @@ def load_website_site_map(
         )
 
     try:
-        added, truncated = add_missing_pages(db, website_id, urls)
+        added, truncated = sitemap_service.add_missing_pages(db, website_id, urls)
         db.commit()
     except HTTPException:
         raise
@@ -536,7 +490,7 @@ def load_website_site_map(
         # True when the sitemap had more new URLs than this sync was allowed to
         # create; syncing again continues with the rest.
         "truncated": truncated,
-        "limit": SITEMAP_SYNC_MAX_URLS,
+        "limit": sitemap_service.SITEMAP_SYNC_MAX_URLS,
     }
 
 

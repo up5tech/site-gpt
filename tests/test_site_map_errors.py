@@ -23,6 +23,7 @@ from site_gpt.app.core.auth import get_current_user
 from site_gpt.app.db.base import Base
 from site_gpt.app.db.session import get_db
 from site_gpt.app.services import crawler
+from site_gpt.app.services import sitemap as sitemap_service
 from site_gpt.app.services.net_guard import UnsafeUrl
 
 SITEMAP_URLS = [
@@ -209,7 +210,7 @@ class SitemapSyncCapTests(unittest.TestCase):
     def sync(self, urls, limit):
         with patch.object(
             website_api, "extract_urls_from_sitemap", return_value=list(urls)
-        ), patch.object(website_api, "SITEMAP_SYNC_MAX_URLS", limit):
+        ), patch.object(sitemap_service, "SITEMAP_SYNC_MAX_URLS", limit):
             return self.client.post(f"/api/websites/{self.site.id}/load-site-map")
 
     def page_count(self):
@@ -289,7 +290,7 @@ class SitemapSyncCapTests(unittest.TestCase):
                 f"/api/websites/{self.site.id}/load-site-map"
             ).json()
 
-        self.assertEqual(body["limit"], website_api.SITEMAP_SYNC_MAX_URLS)
+        self.assertEqual(body["limit"], sitemap_service.SITEMAP_SYNC_MAX_URLS)
         self.assertGreater(body["limit"], 0)
         self.assertEqual(body["added"], 3)
 

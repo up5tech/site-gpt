@@ -665,9 +665,12 @@ V4 adds provider-cost features. Both opt-in, both fail safe. **Entry:** V4-1G.
     `extract_urls_from_sitemap` and returns **before touching a row** when the
     set is empty — a failed fetch and a genuinely empty sitemap take the same
     path, so neither can retire pages. On a successful non-empty fetch it adds
-    missing pages through `api/website.py::add_missing_pages` (the manual
-    `/load-site-map` endpoint now calls that same helper, so the cap rule exists
-    once and existing pages cost nothing), marks vanished `active` pages
+    missing pages through `services/sitemap.py::add_missing_pages` (the manual
+    `/load-site-map` endpoint calls the same helper, and the cap is read from
+    that module by both, so the rule exists once and existing pages cost
+    nothing; the helper lives in `services/` rather than `api/website.py` because
+    the worker must not import the router layer — `import site_gpt.app.worker`
+    pulls in no `site_gpt.app.api` module), marks vanished `active` pages
     `inactive` and deletes **every** document row for that URL (embeddings
     cascade), commits, and
     only when `added or removed` claims through `claim_ingest` and queues
