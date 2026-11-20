@@ -172,6 +172,19 @@ def company_daily_message_limit(db: Session, company_id) -> int:
     )
 
 
+def company_session_message_limit(db: Session, company_id) -> int:
+    """This company's per-session message ceiling (V4 F4, D6).
+
+    A missing row falls back to `SESSION_MESSAGE_LIMIT`, `0` disables the cap,
+    and a typo or negative value falls back to the default through `parse_limit`
+    — the `company_daily_message_limit` rules, deliberately identical.
+    """
+    return parse_limit(
+        company_setting(db, company_id, "session_message_limit"),
+        default=SESSION_MESSAGE_LIMIT,
+    )
+
+
 @router.get("/")
 def get_settings(
     db: Session = Depends(get_db),

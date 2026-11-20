@@ -15,6 +15,7 @@ from site_gpt.app.api.setting import (
     WIDGET_PUBLIC_KEYS,
     _default_setting_rows,
     company_daily_message_limit,
+    company_session_message_limit,
 )
 from site_gpt.app.core.auth import (
     create_access_token,
@@ -61,7 +62,9 @@ from site_gpt.app.services.embed_guard import ensure_embed_allowed
 from site_gpt.app.services.ingest_claim import claim_ingest
 from site_gpt.app.services.quota import (
     QUOTA_MESSAGE,
+    SESSION_CAP_MESSAGE,
     consume_message,
+    consume_session_message,
     quota_sse_events,
 )
 from site_gpt.app.services.rag import ask, ask_stream
@@ -133,6 +136,15 @@ async def chat(
         return await asyncio.to_thread(
             rag.queue_visitor_message, db, website.id, body.session_id, body.question
         )
+    # Per-session ceiling (V4 F4, D6): the daily cap bounds a website's spend, this
+    # one bounds one visitor's conversation. It runs first so a refused message
+    # spends no daily budget, and it stores nothing.
+    if not await consume_session_message(
+        website.id,
+        body.session_id,
+        limit=company_session_message_limit(db, website.company_id),
+    ):
+        return {"answer": SESSION_CAP_MESSAGE, "sources": []}
     # Daily per-website ceiling: per-IP limits do not bound a viral embed. The
     # company's own setting wins; without one the env default applies.
     if not await consume_message(
@@ -530,6 +542,17 @@ async def chat_stream(
     if await asyncio.to_thread(human_handling, db, website.id, body.session_id):
         return StreamingResponse(
             rag.queued_stream(db, website.id, body.session_id, body.question),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+    # Same order as the sync handler (D6): session cap, then the daily ceiling.
+    if not await consume_session_message(
+        website.id,
+        body.session_id,
+        limit=company_session_message_limit(db, website.company_id),
+    ):
+        return StreamingResponse(
+            quota_sse_events(SESSION_CAP_MESSAGE),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )

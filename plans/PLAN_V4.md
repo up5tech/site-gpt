@@ -3,7 +3,7 @@
 | | | |
 |---|---|---|
 | Version | **V4** — closes the feature gap against sitegpt.ai recorded in the 2026-11-20 comparison (§2): advanced analytics, per-conversation AI insights, new training sources, per-conversation cost caps + sitemap auto-scan, and a hosted chat page |
-| Status | **In progress — Wave 0 and Wave 1 complete (gates V4-0G and V4-1G signed off): V4-10 done (trend, funnel, top questions), V4-11 done (aggregate CSV export), V4-12 done (analytics page: SVG trend, funnel, top questions, export button), V4-13 done (docs: the analytics surface in README/AGENTS/api-v1); gate V4-1G signed off (both suites, widget suite, build/lint, `trail build`, digest byte-comparison, CSV by way of the API, `/api/v1` summary + foreign-id 404). No migration written yet — Alembic head is still `1c5516fa864d`. No migration written yet — Alembic head is still `1c5516fa864d`.** D1–D9 confirmed twice against code anchors (§3) |
+| Status | **In progress — Wave 0 and Wave 1 complete (gates V4-0G and V4-1G signed off): V4-10 done (trend, funnel, top questions), V4-11 done (aggregate CSV export), V4-12 done (analytics page: SVG trend, funnel, top questions, export button), V4-13 done (docs: the analytics surface in README/AGENTS/api-v1); gate V4-1G signed off (both suites, widget suite, build/lint, `trail build`, digest byte-comparison, CSV by way of the API, `/api/v1` summary + foreign-id 404). Wave 2 is under way: V4-20 done (per-session message cap). No migration written yet — Alembic head is still `1c5516fa864d`.** D1–D9 confirmed twice against code anchors (§3) |
 | Created | 2026-11-20 |
 | Derived from | `plans/PLAN_V3.md` (§2 non-goals, §4 invariants, §8 release-tag policy), `plans/SPEC.md`, `README.md` §V3, `docs/security.md` §5 (K18 stays accepted), and the sitegpt.ai feature/pricing comparison of 2026-11-20 (gap list reproduced in §2 so this plan is self-contained) |
 | Baseline | V3 tag `v3` = `2e5ab734b09b4eb229f927a875e737153c544779` (immutable); `master` HEAD `59e0cc2d13c51dacdb05fb3572715d0e5c40d85f` is docs-only after the tag (8 commits, incl. this plan); `feat/v4` branched from it at V4-01; Alembic head `1c5516fa864d`; suite counts are historical (V3-4G recorded 47 modules / 718 Python tests / 46 node checks; the **V4 baseline is 47 / 720 / 46**, recorded in §3's pre-flight block) and **must be re-run at pre-flight, never copied** |
@@ -564,7 +564,7 @@ definitions, no new index and no chart library. **Entry:** V4-0G.
 **Goal:** the per-conversation ceiling and the daily sitemap scan exist **before**
 V4 adds provider-cost features. Both opt-in, both fail safe. **Entry:** V4-1G.
 
-- [ ] **V4-20 · Per-session message cap** — `M`, depends: V4-1G, migration: —
+- [x] **V4-20 · Per-session message cap** — `M`, depends: V4-1G, migration: —
   - Files: `services/quota.py`, `api/routes.py`, `api/v1.py`,
     `tests/test_session_cap.py` (new).
   - Do: extend `quota.py` with `consume_session_message(website_id, session_id,
@@ -580,6 +580,29 @@ V4 adds provider-cost features. Both opt-in, both fail safe. **Entry:** V4-1G.
     counter untouched), the TTL refresh, the `0`/garbage fallbacks, fail-open,
     and that two sessions of one website have independent counters; the
     limit-ordering test from V3-12 is extended, not duplicated.
+  - Done: `services/quota.py` gains `SESSION_CAP_MESSAGE`, `session_cap_key`
+    and `consume_session_message` (`INCR` on
+    `quota:session:<website>:<session>` plus `EXPIRE SESSION_CAP_TTL_SECONDS`,
+    refreshed on every message; `0`/negative disables the cap; a Redis failure
+    fails open with a logged error that names the website, never the session
+    id), and `quota_sse_events` takes the notice to send (default
+    `QUOTA_MESSAGE`, so the daily path is unchanged). `api/setting.py` gains
+    `company_session_message_limit` with the `company_daily_message_limit`
+    fallback rules (`SESSION_MESSAGE_LIMIT` as the missing-row default).
+    `POST /api/chat`, `/api/chat/stream` and `/api/v1/chat` check it **after** the
+    IP limiter / website resolution and **before** `consume_message`; a refusal
+    is `{"answer": SESSION_CAP_MESSAGE, "sources": []}` (200), the SSE
+    `chunk`+`done` pair, or the same friendly 200 for a key caller — no LLM call,
+    no daily spend, no session reset. `tests/test_session_cap.py` (new, 18 cases)
+    covers the boundary, per-session and per-website isolation, the TTL refresh
+    on every message, `0`, garbage/negative/empty fallbacks, fail-open, the
+    setting helper, and all three handlers (capped → friendly answer + daily
+    quota untouched; allowed → session cap then daily quota, in that order).
+    `tests/test_limit_ordering.py` extends its V3-12 ordering test to all three
+    handlers instead of duplicating it, and `tests/test_daily_limit_setting.py`
+    pins the session cap off in the stream test whose coarse db mock would
+    otherwise answer the settings read with the website row. Suite: **50
+    modules / 770 tests, OK** (9.1 s).
 
 - [ ] **V4-21 · Session cap in Settings + dashboard visibility** — `S`, depends: V4-20, migration: —
   - Files: `frontend/src/pages/Settings.tsx`, `frontend/src/pages/Dashboard.tsx`,
@@ -1075,11 +1098,11 @@ provider absence.
 |---|---|---|---|
 | 0 — Foundation | 4 | 4 / 4 | ☑ V4-0G |
 | 1 — Advanced analytics (F1) | 4 | 4 / 4 | ☑ V4-1G |
-| 2 — Cost & freshness (F4) | 4 | 0 / 4 | ☐ V4-2G |
+| 2 — Cost & freshness (F4) | 4 | 1 / 4 | ☐ V4-2G |
 | 3 — Training sources (F3) | 4 | 0 / 4 | ☐ V4-3G |
 | 4 — Conversation insights (F2) | 6 | 0 / 6 | ☐ V4-4G |
 | 5 — Hosted chat page (F5) | 3 | 0 / 3 | ☐ V4-5G |
-| **Total** | **25 tasks + 6 gates** | **8 / 25** | **2 / 6 gates** |
+| **Total** | **25 tasks + 6 gates** | **9 / 25** | **2 / 6 gates** |
 
 ---
 

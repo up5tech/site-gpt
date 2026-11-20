@@ -20,7 +20,10 @@ from sqlalchemy.orm import Session
 
 from site_gpt.app import models
 from site_gpt.app.api.setting import WIDGET_PUBLIC_KEYS, apply_settings
-from site_gpt.app.api.setting import company_daily_message_limit
+from site_gpt.app.api.setting import (
+    company_daily_message_limit,
+    company_session_message_limit,
+)
 from site_gpt.app.core.auth import get_api_key, require_scope
 from site_gpt.app.db.session import get_db
 from site_gpt.app.schemas.chat import (
@@ -36,7 +39,11 @@ from site_gpt.app.services.conversations import list_conversations
 from site_gpt.app.services.digest import build_digest
 from site_gpt.app.services.embed_guard import ensure_embed_allowed
 from site_gpt.app.services.ingest_claim import claim_ingest
-from site_gpt.app.services.quota import consume_message
+from site_gpt.app.services.quota import (
+    SESSION_CAP_MESSAGE,
+    consume_message,
+    consume_session_message,
+)
 from site_gpt.app.services.rag import ask
 from site_gpt.app.services.redis import enqueue_job
 from site_gpt.app.services.website_state import ensure_website_active
@@ -201,6 +208,17 @@ async def chat_v1(
     require_scope(api_key, "chat:write")
     website = _scoped_website(db, api_key, body.website_id)
     ensure_website_active(website)
+
+    # Same order as the widget (V4 F4, D6): the session cap is checked before the
+    # daily ceiling, so a capped conversation spends no daily budget. A key
+    # caller gets the friendly answer (200) rather than a 429 — the session is
+    # capped, not the website.
+    if not await consume_session_message(
+        website.id,
+        body.session_id,
+        limit=company_session_message_limit(db, website.company_id),
+    ):
+        return {"answer": SESSION_CAP_MESSAGE, "sources": [], "message_id": None}
 
     # The company's daily ceiling still applies: a key must not be a way to spend
     # past the limit the owner set for their websites.

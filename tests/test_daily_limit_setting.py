@@ -295,6 +295,13 @@ class StreamUsesTheCompanyLimitTests(unittest.TestCase):
     def test_stream_also_reads_the_company_limit(self):
         resolved = MagicMock(return_value=1)
         with patch.object(routes, "company_daily_message_limit", resolved), patch.object(
+            # The session cap (V4-20) has its own suite; this handler's coarse db
+            # mock answers every query with the website row, so pin it off here
+            # and keep this test about the daily ceiling.
+            routes,
+            "company_session_message_limit",
+            return_value=0,
+        ), patch.object(
             quota, "redis_client", FakeRedis()
         ), patch.object(
             routes, "ask_stream", return_value=iter([])

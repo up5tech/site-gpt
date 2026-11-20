@@ -8,13 +8,21 @@ it and no schema change is needed.
 
 The counter is consumed **before** the LLM call and is never refunded: a message
 that reached the provider costs money whether or not the answer was used.
+
+V4 F4 adds the per-session cap (`consume_session_message`): the same Redis-INCR
+pattern keyed by `(website, session)`, with a sliding TTL, checked **before** the
+daily counter so a capped session never spends the website's daily budget.
 """
 
 import json
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from site_gpt.app.core.config import DAILY_MESSAGE_LIMIT
+from site_gpt.app.core.config import (
+    DAILY_MESSAGE_LIMIT,
+    SESSION_CAP_TTL_SECONDS,
+    SESSION_MESSAGE_LIMIT,
+)
 from site_gpt.app.services.redis import redis_client
 
 # Shown verbatim to the visitor when the cap is hit. It goes through the normal
@@ -24,6 +32,15 @@ QUOTA_MESSAGE = (
     "Thanks for your interest! This assistant has reached its daily message "
     "limit, so I can't answer new questions today. Please try again tomorrow, "
     "or contact the team directly and they'll help you right away."
+)
+
+# Shown when one session hits its own cap (V4 F4, D6). The daily notice above is
+# about the website's spend; this one is about a single conversation, so it asks
+# the visitor to start a new chat rather than to come back tomorrow.
+SESSION_CAP_MESSAGE = (
+    "Thanks for the conversation! This chat has reached its message limit, so I "
+    "can't take more questions in this session. Please start a new chat, or "
+    "contact the team directly and they'll help you right away."
 )
 
 
@@ -113,7 +130,48 @@ async def consume_message(
     return int(used) <= limit
 
 
-async def quota_sse_events():
-    """SSE body for a capped streaming request, in the widget's normal shape."""
-    yield f"data: {json.dumps({'chunk': QUOTA_MESSAGE})}\n\n"
+def session_cap_key(website_id: UUID | str, session_id: str) -> str:
+    """One counter per visitor session inside one website (D6)."""
+    return f"quota:session:{website_id}:{session_id}"
+
+
+async def consume_session_message(
+    website_id: UUID | str,
+    session_id: str,
+    *,
+    limit: int | None = None,
+) -> bool:
+    """Count one visitor message against its session's cap (V4 F4, D6).
+
+    `limit=0` (or negative) disables the cap. The TTL is refreshed on every
+    message instead of being set once: the cap is an idle window, so a visitor
+    who returns after `SESSION_CAP_TTL_SECONDS` starts clean, while one who
+    keeps trying never drifts out of the window. A Redis failure fails open with
+    a logged error, exactly like the daily cap — chat staying available matters
+    more than a temporarily missing ceiling.
+    """
+    if limit is None:
+        limit = SESSION_MESSAGE_LIMIT
+    if limit <= 0:
+        return True
+
+    key = session_cap_key(website_id, session_id)
+    try:
+        used = await redis_client.incr(key)  # type: ignore[attr-defined]
+        await redis_client.expire(key, SESSION_CAP_TTL_SECONDS)  # type: ignore[attr-defined]
+    except Exception as e:  # noqa: BLE001 - any Redis problem must not break chat
+        # The session id stays out of the log: it is the visitor's identity here.
+        print(f"[quota] could not count session message for website {website_id}: {e}")
+        return True
+
+    return int(used) <= limit
+
+
+async def quota_sse_events(message: str = QUOTA_MESSAGE):
+    """SSE body for a capped streaming request, in the widget's normal shape.
+
+    Both caps share it: the caller passes the notice that fits (the daily quota
+    or the per-session cap), so the widget always renders a normal answer.
+    """
+    yield f"data: {json.dumps({'chunk': message})}\n\n"
     yield f"data: {json.dumps({'done': True, 'sources': []})}\n\n"

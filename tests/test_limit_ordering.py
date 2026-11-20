@@ -3,9 +3,10 @@
 Ordering (verified against the route definitions, not assumed):
 
 - Public widget chat: the per-IP limiter is a FastAPI dependency, so it
-  runs *before* the handler body — which is where the daily quota
-  (`consume_message`) is checked. The limiter is the burst guard; the
-  quota is the spend ceiling.
+  runs *before* the handler body — which is where the per-session cap
+  (`consume_session_message`, V4-20) and then the daily quota
+  (`consume_message`) are checked. The limiter is the burst guard, the
+  session cap bounds one visitor, and the quota is the spend ceiling.
 - `/api/v1`: API-key authentication (`get_api_key`) is the only gate
   before the handler; there is deliberately no per-IP or per-key rate
   limiter on `/api/v1` (per-key limiting is deferred — see PLAN_V3
@@ -64,6 +65,24 @@ class LimitOrderingTests(unittest.TestCase):
 
     def test_v1_policy_row_is_reserved_not_wired(self):
         self.assertIn("v1", RATE_LIMIT_POLICIES)  # reserved for a follow-up
+
+    def test_session_cap_runs_before_the_daily_quota_in_every_chat_handler(self):
+        # V4-20 extends this file rather than duplicating it: every handler that
+        # spends the daily budget must check the session cap first.
+        for router, path in (
+            (widget_routes.router, "/api/chat"),
+            (widget_routes.router, "/api/chat/stream"),
+            (v1_routes.router, "/chat"),
+        ):
+            source = inspect.getsource(
+                _find_route(router, "POST", path).endpoint
+            )
+            self.assertIn("consume_session_message", source, path)
+            self.assertLess(
+                source.index("consume_session_message"),
+                source.index("consume_message"),
+                f"{path} must check the session cap before the daily quota",
+            )
 
 
 if __name__ == "__main__":
