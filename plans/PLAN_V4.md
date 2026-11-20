@@ -3,7 +3,7 @@
 | | | |
 |---|---|---|
 | Version | **V4** — closes the feature gap against sitegpt.ai recorded in the 2026-11-20 comparison (§2): advanced analytics, per-conversation AI insights, new training sources, per-conversation cost caps + sitemap auto-scan, and a hosted chat page |
-| Status | **In progress — Wave 0: V4-01 done (2026-11-20), environment pre-flight fully recorded in §3; V4-02…V4-04 and gate V4-0G pending. No gate run yet, no migration written.** D1–D9 confirmed twice against code anchors (§3) |
+| Status | **In progress — Wave 0 complete: V4-01…V4-04 done and gate V4-0G signed off (2026-11-20); Wave 1 (F1 analytics) is next. No migration written yet — Alembic head is still `1c5516fa864d`.** D1–D9 confirmed twice against code anchors (§3) |
 | Created | 2026-11-20 |
 | Derived from | `plans/PLAN_V3.md` (§2 non-goals, §4 invariants, §8 release-tag policy), `plans/SPEC.md`, `README.md` §V3, `docs/security.md` §5 (K18 stays accepted), and the sitegpt.ai feature/pricing comparison of 2026-11-20 (gap list reproduced in §2 so this plan is self-contained) |
 | Baseline | V3 tag `v3` = `2e5ab734b09b4eb229f927a875e737153c544779` (immutable); `master` HEAD `59e0cc2d13c51dacdb05fb3572715d0e5c40d85f` is docs-only after the tag (8 commits, incl. this plan); `feat/v4` branched from it at V4-01; Alembic head `1c5516fa864d`; suite counts are historical (V3-4G recorded 47 modules / 718 Python tests / 46 node checks) and **must be re-run at pre-flight, never copied** |
@@ -259,7 +259,17 @@ version. **Entry:** environment pre-flight above.
   - Done when: every D-row is confirmed or rewritten here first, and no task
     below depends on an unconfirmed decision.
 
-- [ ] **V4-02 · Env + settings scaffolding** — `S`, depends: V4-01, migration: —
+- [x] **V4-02 · Env + settings scaffolding** — `S`, depends: V4-01, migration: —
+  - Done (V4-02): all 11 env vars in `core/config.py` (V4 block after the inbox
+    values) with the plan's defaults and a comment on each; `.env.example`
+    documents every one under `--- V4 scaffolding`; README gains the env-table
+    rows and three settings rows; `INTERNAL_SETTINGS` gains
+    `session_message_limit` (seeded from `SESSION_MESSAGE_LIMIT`, the
+    `daily_message_limit` precedent), `sitemap_scan_enabled`=`"false"` and
+    `conversation_insights_enabled`=`"false"`. `tests/test_settings.py` adds the
+    three keys to `INTERNAL_KEYS` and two cases (`test_v4_internal_defaults_are_off`,
+    `test_no_v4_key_reaches_the_widget`); 14 settings tests OK, pinned literal
+    still exactly 14 keys. Nothing is wired yet — no route reads the keys.
   - Files: `core/config.py`, `.env.example`, `README.md`, `api/setting.py`,
     `tests/test_settings.py`.
   - Do: add (all defaulted to the V3 behaviour) `SESSION_MESSAGE_LIMIT=0`,
@@ -275,7 +285,18 @@ version. **Entry:** environment pre-flight above.
     still publishes exactly the 14 allowlisted keys, and `.env.example`
     documents every variable with its default.
 
-- [ ] **V4-03 · The two approved dependencies** — `S`, depends: V4-02, migration: —
+- [x] **V4-03 · The two approved dependencies** — `S`, depends: V4-02, migration: —
+  - Done (V4-03): `python-pptx (>=1.0.2,<2.0.0)` and
+    `youtube-transcript-api (>=1.2.2,<2.0.0)` in `pyproject.toml`; `uv lock`
+    resolved 134 packages → `python-pptx 1.0.2` / `youtube-transcript-api 1.2.5`
+    plus their transitive deps only (`pillow`, `xlsxwriter`, `defusedxml`);
+    `uv sync` clean. `services/parse.py` is unchanged on purpose (its `pptx`
+    branch is V4-30) — the probe asked for here is that neither package is
+    imported at module load: with both blocked from `sys.modules`,
+    `import site_gpt.app.main` and `site_gpt.app.worker` still succeed and the
+    unimplemented path raises its clear error (`FileNotFoundError` for a missing
+    file, `ImportError` for a missing optional dep — the `pypdf` pattern, never
+    a silent empty document).
   - Files: `pyproject.toml`, `uv.lock`, `services/parse.py` (import probe only).
   - Do: add `python-pptx` and `youtube-transcript-api`, pinned, with a one-line
     justification each in the commit body (D2). Verify `uv sync` resolves and
@@ -286,7 +307,13 @@ version. **Entry:** environment pre-flight above.
     transitive deps, and a missing-package path raises a clear error rather
     than failing silently.
 
-- [ ] **V4-04 · Test + graph baseline** — `S`, depends: V4-03, migration: —
+- [x] **V4-04 · Test + graph baseline** — `S`, depends: V4-03, migration: —
+  - Done (V4-04): `AGENTS.md` gains the V4 paragraph (same two suites, no new
+    runner; `PLAN_V4.md` §9 is the runbook; the two branch-local deps) and
+    `trail build` ran clean — 2563 nodes / 5718 edges / 198 cards. Baseline from
+    the actual run: **720 Python tests / 47 modules, OK** (8.7 s) and **46 node
+    checks, 46 pass / 0 fail**; `trail ask`/`trail grep` resolve the three new
+    keys to `api/setting.py`.
   - Files: `AGENTS.md`, `tests/`, `.trail/`.
   - Do: state in `AGENTS.md` which suites V4 extends (no new runner), point at
     this plan's §9 runbook, run `trail build`. Record the real baseline counts
@@ -296,11 +323,21 @@ version. **Entry:** environment pre-flight above.
 
 #### Gate V4-0G
 
-- [ ] `uv run python -c "import site_gpt.app.main"` and `import site_gpt.app.worker` pass.
-- [ ] `alembic current` is still `1c5516fa864d` (Wave 0 adds no revision).
-- [ ] Both suites, `npm run build && npm run lint`, `trail build` pass; counts recorded.
-- [ ] `GET /api/widget-config` unchanged (14 keys); `/health` unchanged.
-- [ ] commit `chore(v4): V4-0G gate — foundation`.
+- [x] `uv run python -c "import site_gpt.app.main"` and `import site_gpt.app.worker` pass.
+      Done (V4-0G): both exit 0, including with `pptx`/`youtube_transcript_api`
+      blocked from `sys.modules` (branch-local imports, D2).
+- [x] `alembic current` is still `1c5516fa864d` (Wave 0 adds no revision).
+      Done (V4-0G): `1c5516fa864d (head)`, single head; no revision file added.
+- [x] Both suites, `npm run build && npm run lint`, `trail build` pass; counts recorded.
+      Done (V4-0G): **720 Python tests / 47 modules, OK**; **46 node checks, 46
+      pass / 0 fail**; `npm run build` and `npm run lint` exit 0; `trail build`
+      exit 0. Run with the sanitized `NO_PROXY` from §3.
+- [x] `GET /api/widget-config` unchanged (14 keys); `/health` unchanged.
+      Done (V4-0G): `tests.test_settings` pins `WIDGET_PUBLIC_KEYS` to the
+      literal 14-key tuple (order included) and `tests.test_widget_config_cache`
+      exercises the route itself; `tests.test_health` covers `/health` and was
+      green in the full run. No route's response shape changed in Wave 0.
+- [x] commit `chore(v4): V4-0G gate — foundation`.
 
 ---
 
@@ -891,13 +928,13 @@ provider absence.
 
 | Wave | Tasks | Done | Gate |
 |---|---|---|---|
-| 0 — Foundation | 4 | 1 / 4 | ☐ V4-0G |
+| 0 — Foundation | 4 | 4 / 4 | ☑ V4-0G |
 | 1 — Advanced analytics (F1) | 4 | 0 / 4 | ☐ V4-1G |
 | 2 — Cost & freshness (F4) | 4 | 0 / 4 | ☐ V4-2G |
 | 3 — Training sources (F3) | 4 | 0 / 4 | ☐ V4-3G |
 | 4 — Conversation insights (F2) | 6 | 0 / 6 | ☐ V4-4G |
 | 5 — Hosted chat page (F5) | 3 | 0 / 3 | ☐ V4-5G |
-| **Total** | **25 tasks + 6 gates** | **1 / 25** | **0 / 6 gates** |
+| **Total** | **25 tasks + 6 gates** | **4 / 25** | **1 / 6 gates** |
 
 ---
 
