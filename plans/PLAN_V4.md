@@ -863,11 +863,13 @@ pipeline: every source normalizes into a local file under `uploads/`, then
     `tests/test_sources_youtube.py` (new, 14 cases, every HTTP call and the
     transcript library stubbed) covers a single video and a bare id,
     manual-over-generated captions, a capped playlist (cap 2 → 2 files, total 3,
-    truncated), channel expansion, the no-caption error naming the video and its
+    truncated), channel expansion, `YOUTUBE_MAX_VIDEOS=0` meaning **no cap**
+    (matching `SITEMAP_SYNC_MAX_URLS=0`; slicing by 0 used to import nothing), the
+    no-caption error naming the video and its
     400, oversized `FileTooLarge` and its 413 with nothing written, the
     non-YouTube 400, the shared response shape, registration, and that the
     produced markdown round-trips through `extract_text_from_file`. Suite:
-    **52 modules / 809 tests, OK** (9.5 s); both imports pass. The frontend
+    **52 modules / 810 tests, OK** (9.5 s); both imports pass. The frontend
     button and the docs rows are V4-33's, so no UI change here.
 
 - [ ] **V4-32 · Notion provider** — `M`, depends: V4-31, migration: —

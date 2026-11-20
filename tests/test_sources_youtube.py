@@ -177,6 +177,25 @@ class YoutubeProviderTests(unittest.TestCase):
             [f.source_ref.rsplit("=", 1)[-1] for f in files], [VIDEO_A, VIDEO_B]
         )
 
+    def test_zero_disables_the_cap(self):
+        # SITEMAP_SYNC_MAX_URLS=0 means "no cap"; the YouTube cap follows it
+        # instead of slicing every playlist down to nothing.
+        files, total, truncated = self._acquire(
+            "https://www.youtube.com/playlist?list=PL123",
+            routes={
+                "https://www.youtube.com/playlist": html_page(
+                    [VIDEO_A, VIDEO_B, VIDEO_C]
+                ),
+                "https://www.youtube.com/oembed": oembed("Episode"),
+            },
+            api=FakeTranscriptApi([FakeTranscript("caption")]),
+            max_videos=0,
+        )
+
+        self.assertEqual(len(files), 3)
+        self.assertEqual(total, 3)
+        self.assertFalse(truncated)
+
     def test_a_channel_url_expands_its_videos_tab(self):
         files, total, truncated = self._acquire(
             "https://www.youtube.com/@somechannel",

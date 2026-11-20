@@ -325,7 +325,12 @@ class YoutubeProvider(SourceProvider):
                 "No videos were found on that playlist or channel page. Check "
                 "that the link is public and try again."
             )
-        return found[:YOUTUBE_MAX_VIDEOS], len(found)
+        total = len(found)
+        # Same rule as SITEMAP_SYNC_MAX_URLS: 0 disables the cap. Slicing by 0
+        # would otherwise import nothing at all and look like a silent success.
+        if YOUTUBE_MAX_VIDEOS > 0:
+            found = found[:YOUTUBE_MAX_VIDEOS]
+        return found, total
 
     async def _video_file(self, video_id: str) -> AcquiredFile:
         url = YOUTUBE_WATCH.format(video_id)
