@@ -751,10 +751,28 @@ V4 adds provider-cost features. Both opt-in, both fail safe. **Entry:** V4-1G.
     `ingest_status=processing` and left exactly **one** `ingest` job in
     `queue:jobs` next to the `sitemap_scan` one. Re-pointing the website at the
     500 sitemap left every page, document and `ingest_status` exactly as before.
-  - Deviation: the checks called the worker's own `enqueue_due_sitemap_scans` /
-    `handle_sitemap_scan` in-process against the real DB, Redis and HTTP fixture
-    rather than starting the worker **process**; the loop's sleep/dispatch
-    wiring is covered by `tests/test_sitemap_scan.py`, not by this hand check.
+  - Deviation at the gate: the checks called the worker's own
+    `enqueue_due_sitemap_scans` / `handle_sitemap_scan` in-process against the
+    real DB, Redis and HTTP fixture rather than starting the worker **process**,
+    so the loop's sleep/dispatch wiring rested on `tests/test_sitemap_scan.py`.
+  - **Deviation closed** (after the gate commit): the same scenario was re-run as
+    the **real worker process** — `site_gpt.app.worker.worker()`, the same entry
+    as `python -m site_gpt.app.worker` — against a fresh throwaway DB
+    (`v4_gate_2g_w` at `1c5516fa864d`, dropped afterwards), Redis DB index 15 and
+    the fixture on `:8124`, with `SITEMAP_SCAN_INTERVAL_SECONDS=5` so the loop
+    fires within the run. Log, in order: `Worker started, waiting for jobs...` →
+    `[sitemap] queued scan for website …` / `queued 1 website scan(s)` →
+    `Processing: {'type': 'sitemap_scan', …}` →
+    `[sitemap] website …: added=1 removed=1 truncated=False queued=True` →
+    `Processing: {'type': 'ingest', …}` → `Ingest completed for website …`.
+    Final DB: `keep`/`new` **active**, `old` **inactive**, documents `keep`+`new`
+    (the retired URL's gone), `ingest_status=completed`, job queue empty. The
+    following ticks re-scanned (the harness's 5 s TTL equals its 5 s tick) and
+    logged `added=0 removed=0 queued=False`, so a re-scan of the same sitemap is
+    a no-op and the best-effort key only gates how often the loop queues. Only
+    harness-level adjustments: the throwaway DB and Redis index, the short
+    interval, and the SSRF guard allowing exactly the `127.0.0.1:8124` fixture —
+    no production code changed for the run.
 - [x] All V4 flags off → chat, ingest and worker behaviour identical to `v3`
       (no scan jobs queued, no session counter written).
   - A company without `sitemap_scan_enabled` was absent from
