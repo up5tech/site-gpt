@@ -914,24 +914,31 @@ pipeline: every source normalizes into a local file under `uploads/`, then
     across nesting and pagination; when it bites, the document ends with a
     `_Truncated: only the first N blocks…_` note so the cap is visible in the
     ingested text rather than silent. A database pages `POST /query` at
-    `page_size=100` to the **last** query page, then imports one file per page,
-    capped at `NOTION_MAX_PAGES` (0 disables), with `total` the database's real
-    page count and `truncated` true when the cap dropped some. Paging does not
-    stop at the cap: a total taken from the first 100-page window reported a
-    500-page database as "25 of 100". Only the rows up to the cap are kept and
-    no blocks are fetched for the rest, so an honest count costs query calls,
-    not imports. `AcquiredFile.source_ref` is the `https://www.notion.so/<id>` page URL,
+    `page_size=100`, imports one file per page (capped at `NOTION_MAX_PAGES`, 0
+    disables) and reports `total`/`truncated`/`total_exact`. Counting does not
+    stop at the first window — that reported a capped 500-page database as "25
+    of 100" — but it is **bounded**: at most `NOTION_MAX_COUNT_PAGES` (10) query
+    pages are read for it, so a database up to 1,000 rows gets its real page
+    count (and the endpoint treats counting as part of the same list envelope
+    for YouTube, which is always exact because its page is read in full) while a
+    larger one gets a lower bound and `total_exact: false` instead of minutes of
+    API calls inside one request (`0` never counts past what the cap needs).
+    Only the rows under the cap are kept and no blocks are fetched for the rest,
+    so the count costs query calls, not imports. `AcquiredFile.source_ref` is the `https://www.notion.so/<id>` page URL,
     filenames are slugged titles. `POST /api/uploads/notion` (`NotionUploadIn.url`,
     `.token`) saves each file through the same `_save_attachment` and returns
     `{files: [{file_id, filename, file_url, file_size, file_type, source,
     source_ref}], added, total, truncated}` — same per-file shape as the other
-    imports. `tests/test_sources_notion.py` (new, 23 cases, every HTTP call
+    imports.     `tests/test_sources_notion.py` (new, 24 cases, every HTTP call
     stubbed with a recording `httpx.MockTransport`) covers the full page render,
     the block cap, a capped database (3 pages, cap 2 → 2 files / total 3 /
     truncated), a database spanning two query windows under the cap (7 pages →
     7 files, two query calls) and one past it (150 pages over two windows, cap
-    25 → 25 files / total 150, the second window read for the count only and its
-    blocks never fetched), the bare-id page probe and its database fallback, a rejected
+    25 → 25 files / total 150 with `total_exact` true, the second window read
+    for the count only and its blocks never fetched), a three-window database
+    whose count budget (2 windows) runs out first (cap 5 → 5 files / total 6 /
+    `total_exact` false, the third window never requested), the bare-id page
+    probe and its database fallback, a rejected
     token (provider `SourceAuthError`, endpoint 401, nothing written, token
     absent from the error and the response), a log-capture assertion that the
     token never appears in a record, every request's host being
@@ -939,8 +946,8 @@ pipeline: every source normalizes into a local file under `uploads/`, then
     request off-host, non-Notion and id-less refs refused without a request, a
     missing token refused up front, the markdown round-tripping through
     `extract_text_from_file`, registration, ref parsing and the endpoint's
-    shared response shape / 400 for a missing page. Suite: **53 modules / 833
-    tests, OK** (10.1 s); both imports pass. The frontend button and docs rows
+    shared response shape / 400 for a missing page. Suite: **53 modules / 834
+    tests, OK** (10.6 s); both imports pass. The frontend button and docs rows
     are V4-33's, so no UI change here.
 
 - [x] **V4-33 · Frontend + docs: the new sources** — `S`, depends: V4-32, migration: —
@@ -961,7 +968,8 @@ pipeline: every source normalizes into a local file under `uploads/`, then
     database lands as N entries in the file list and flows into the existing
     `file_ids` → `POST /api/extra_documents` flow; the success message reports
     the honest counts ("Added 3 videos of 25 found on YouTube (the rest exceed
-    the import cap)"). The Notion dialog has a link field and an
+    the import cap)"), and a lower-bound Notion total reads "of at least N".
+    The Notion dialog has a link field and an
     `Input.Password` token that lives in React state only — cleared on success
     and on cancel, never written to `localStorage` — and the backend never
     stores or logs it either. Failures show the server's `detail` through the

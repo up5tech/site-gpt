@@ -165,13 +165,14 @@ class NotionProviderTests(unittest.TestCase):
             ),
         )
 
-        files, total, truncated = asyncio.run(
+        files, total, truncated, total_exact = asyncio.run(
             sources.NotionProvider().acquire_many(
                 f"https://www.notion.so/My-Page-{PAGE_ID}", TOKEN
             )
         )
 
         self.assertEqual((total, truncated), (1, False))
+        self.assertTrue(total_exact)
         self.assertEqual(files[0].filename, "my-page.md")
         self.assertEqual(files[0].source_ref, f"https://www.notion.so/{PAGE_ID}")
         body = files[0].content.decode("utf-8")
@@ -206,7 +207,7 @@ class NotionProviderTests(unittest.TestCase):
         )
 
         with patch.object(sources, "NOTION_MAX_BLOCKS", 3):
-            files, total, truncated = asyncio.run(
+            files, total, truncated, total_exact = asyncio.run(
                 sources.NotionProvider().acquire_many(PAGE_ID, TOKEN)
             )
 
@@ -217,6 +218,7 @@ class NotionProviderTests(unittest.TestCase):
         self.assertIn("Truncated", body)
         self.assertIn("first 3 blocks", body)
         self.assertEqual((total, truncated), (1, False))
+        self.assertTrue(total_exact)
 
     def test_a_database_becomes_one_file_per_page_capped(self):
         pages = [
@@ -240,7 +242,7 @@ class NotionProviderTests(unittest.TestCase):
             )
 
         with patch.object(sources, "NOTION_MAX_PAGES", 2):
-            files, total, truncated = asyncio.run(
+            files, total, truncated, total_exact = asyncio.run(
                 sources.NotionProvider().acquire_many(
                     f"https://www.notion.so/{DB_ID}?v={DB_VIEW_ID}", TOKEN
                 )
@@ -248,6 +250,7 @@ class NotionProviderTests(unittest.TestCase):
 
         self.assertEqual([f.filename for f in files], ["alpha.md", "beta.md"])
         self.assertEqual((total, truncated), (3, True))
+        self.assertTrue(total_exact)
         self.assertIn("Alpha body", files[0].content.decode("utf-8"))
 
     def _windows(self, *windows):
@@ -299,7 +302,7 @@ class NotionProviderTests(unittest.TestCase):
             )
 
         with patch.object(sources, "NOTION_MAX_PAGES", 25):
-            files, total, truncated = asyncio.run(
+            files, total, truncated, total_exact = asyncio.run(
                 sources.NotionProvider().acquire_many(
                     f"https://www.notion.so/{DB_ID}?v={DB_VIEW_ID}", TOKEN
                 )
@@ -308,6 +311,7 @@ class NotionProviderTests(unittest.TestCase):
         # 150 pages really exist, so "25 of 150" — not "25 of 100".
         self.assertEqual(len(files), 25)
         self.assertEqual((total, truncated), (150, True))
+        self.assertTrue(total_exact)  # two windows is inside the count budget
         queries = self._query_requests()
         self.assertEqual(len(queries), 2)
         self.assertEqual(json.loads(queries[1].content)["start_cursor"], "cursor-2")
@@ -337,7 +341,7 @@ class NotionProviderTests(unittest.TestCase):
             )
 
         with patch.object(sources, "NOTION_MAX_PAGES", 25):
-            files, total, truncated = asyncio.run(
+            files, total, truncated, total_exact = asyncio.run(
                 sources.NotionProvider().acquire_many(
                     f"https://www.notion.so/{DB_ID}?v={DB_VIEW_ID}", TOKEN
                 )
@@ -346,11 +350,59 @@ class NotionProviderTests(unittest.TestCase):
         self.assertEqual(len(files), 7)
         self.assertEqual([f.filename for f in files[:2]], ["row-1.md", "row-2.md"])
         self.assertEqual((total, truncated), (7, False))
+        self.assertTrue(total_exact)
         self.assertEqual(len(self._query_requests()), 2)
         # Both windows' blocks were fetched, so the count and the import agree.
         fetched = {request.url.path for request in self.stub.requests}
         for item in first + second:
             self.assertIn(f"/v1/blocks/{item['id']}/children", fetched)
+
+    def test_the_count_stops_at_the_budget_and_reports_a_lower_bound(self):
+        # Three query windows; cap 5, counting budget 2 windows. Counting must
+        # stop there instead of reading a huge database to its end, and say so.
+        windows = [
+            [page(f"{n:032x}", f"Row {n}") for n in range(1, 4)],
+            [page(f"{n:032x}", f"Row {n}") for n in range(4, 7)],
+            [page(f"{n:032x}", f"Row {n}") for n in range(7, 10)],
+        ]
+        self._windows(
+            *[
+                httpx.Response(
+                    200,
+                    json={
+                        "results": rows,
+                        "has_more": index < len(windows) - 1,
+                        "next_cursor": (
+                            None if index == len(windows) - 1 else "next"
+                        ),
+                    },
+                )
+                for index, rows in enumerate(windows)
+            ]
+        )
+        for n in range(1, 6):
+            self.stub.route(
+                "GET",
+                f"/v1/blocks/{n:032x}/children",
+                children_page(para(f"body {n}")),
+            )
+
+        with patch.object(sources, "NOTION_MAX_PAGES", 5), patch.object(
+            sources, "NOTION_MAX_COUNT_PAGES", 2
+        ):
+            files, total, truncated, total_exact = asyncio.run(
+                sources.NotionProvider().acquire_many(
+                    f"https://www.notion.so/{DB_ID}?v={DB_VIEW_ID}", TOKEN
+                )
+            )
+
+        self.assertEqual(len(files), 5)
+        # Two windows of three rows were read, so 6 is a lower bound, not 9.
+        self.assertEqual((total, truncated, total_exact), (6, True, False))
+        self.assertEqual(len(self._query_requests()), 2)
+        # The pages beyond the import cap are never rendered or fetched.
+        fetched = {request.url.path for request in self.stub.requests}
+        self.assertNotIn(f"/v1/blocks/{7:032x}/children", fetched)
 
     def test_a_bare_id_asks_the_api_whether_it_is_a_page(self):
         self.stub.route(
@@ -361,7 +413,9 @@ class NotionProviderTests(unittest.TestCase):
             children_page(para("bare body")),
         )
 
-        files, _, _ = asyncio.run(sources.NotionProvider().acquire_many(PAGE_ID, TOKEN))
+        files, _, _, _ = asyncio.run(
+            sources.NotionProvider().acquire_many(PAGE_ID, TOKEN)
+        )
 
         self.assertEqual(files[0].filename, "bare.md")
 
@@ -387,12 +441,13 @@ class NotionProviderTests(unittest.TestCase):
             children_page(para("row body")),
         )
 
-        files, total, truncated = asyncio.run(
+        files, total, truncated, total_exact = asyncio.run(
             sources.NotionProvider().acquire_many(DB_ID, TOKEN)
         )
 
         self.assertEqual([f.filename for f in files], ["row.md"])
         self.assertEqual((total, truncated), (1, False))
+        self.assertTrue(total_exact)
 
     def test_a_rejected_token_is_a_clear_auth_error_without_the_token(self):
         self.stub.route("GET", f"/v1/pages/{PAGE_ID}", lambda: httpx.Response(401))
@@ -475,7 +530,7 @@ class NotionProviderTests(unittest.TestCase):
             "GET", f"/v1/blocks/{PAGE_ID}/children", children_page(para("the body"))
         )
 
-        files, _, _ = asyncio.run(
+        files, _, _, _ = asyncio.run(
             sources.NotionProvider().acquire_many(PAGE_ID, TOKEN)
         )
 
@@ -568,7 +623,10 @@ class NotionEndpointTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         body = response.json()
-        self.assertEqual((body["added"], body["total"], body["truncated"]), (1, 1, False))
+        self.assertEqual(
+            (body["added"], body["total"], body["truncated"], body["total_exact"]),
+            (1, 1, False, True),
+        )
         item = body["files"][0]
         self.assertEqual(
             set(item),

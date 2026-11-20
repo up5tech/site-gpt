@@ -137,6 +137,11 @@ INSIGHT_SETTLE_MINUTES = int(os.getenv("INSIGHT_SETTLE_MINUTES", "60"))
 YOUTUBE_MAX_VIDEOS = int(os.getenv("YOUTUBE_MAX_VIDEOS", "25"))
 NOTION_MAX_BLOCKS = int(os.getenv("NOTION_MAX_BLOCKS", "1000"))
 NOTION_MAX_PAGES = int(os.getenv("NOTION_MAX_PAGES", "25"))
+# Counting a database costs one `POST /query` per 100 pages, so a huge one must
+# not be paged to the end inside a single import: `total` is exact only while it
+# took at most this many query pages to find out, and a lower bound (flagged as
+# `total_exact: false`) otherwise. 0 never counts past what the import cap needs.
+NOTION_MAX_COUNT_PAGES = int(os.getenv("NOTION_MAX_COUNT_PAGES", "10"))
 
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*")

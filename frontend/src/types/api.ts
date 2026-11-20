@@ -67,13 +67,15 @@ export interface UploadedFile {
 
 /** Body of `POST /uploads/youtube` and `POST /uploads/notion`: one reference
  * can expand into many files (a playlist, a database), so the files are a
- * list. `total` is how many the source really has and `truncated` whether a
- * cap dropped some of them. */
+ * list. `total` is how many the source has, `truncated` whether a cap dropped
+ * some of them, and `total_exact` false when `total` is only a lower bound
+ * (a database too large to count cheaply). */
 export interface UploadedFiles {
   files: UploadedFile[];
   added: number;
   total: number;
   truncated: boolean;
+  total_exact: boolean;
 }
 
 export interface ChatResponse {

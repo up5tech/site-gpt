@@ -389,8 +389,11 @@ export function ExtraDocuments() {
   ) => {
     const added = data.added ?? data.files?.length ?? 0;
     const files = `${added} ${noun}${added === 1 ? '' : 's'}`;
+    // An inexact total is a lower bound, so the message must not present it
+    // as the source's whole size.
+    const total = data.total_exact === false ? `at least ${data.total}` : data.total;
     return data.truncated
-      ? `Added ${files} of ${data.total} found on ${source} (the rest exceed the import cap)`
+      ? `Added ${files} of ${total} found on ${source} (the rest exceed the import cap)`
       : `Added ${files} from ${source}`;
   };
 

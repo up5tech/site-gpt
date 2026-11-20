@@ -197,11 +197,14 @@ async def upload_from_youtube(
     Every video is saved as its own file, so the rest of the flow (`file_ids` →
     `POST /api/extra_documents` → worker ingest) is exactly the local-upload one.
     The response carries the same per-file shape as `/url` and `/google-drive`,
-    plus the sitemap-sync-style `added`/`total`/`truncated` counts.
+    plus the sitemap-sync-style `added`/`total`/`truncated` counts and
+    `total_exact` (always true here: the playlist/channel page is read in full).
     """
     provider = get_provider("youtube")
     try:
-        acquired_files, total, truncated = await provider.acquire_many(payload.url)
+        acquired_files, total, truncated, total_exact = await provider.acquire_many(
+            payload.url
+        )
     except FileTooLarge:
         raise _too_large()
     except (SourceRefError, UnsafeUrl) as exc:
@@ -222,6 +225,7 @@ async def upload_from_youtube(
         "added": len(files),
         "total": total,
         "truncated": truncated,
+        "total_exact": total_exact,
     }
 
 
@@ -236,14 +240,15 @@ async def upload_from_notion(
     The integration token is used for this request only (the Google Drive
     `access_token` precedent): it is not stored, logged or echoed. One file per
     page, so the rest of the flow is the local-upload one, and the response
-    carries the same per-file shape plus `added`/`total`/`truncated`, where
-    `total` is the database's real page count — the query is read to its last
-    page even after `NOTION_MAX_PAGES` cut the import short, so a capped
-    500-page database reports "25 of 500", never "25 of 100".
+    carries the same per-file shape plus `added`/`total`/`truncated`/
+    `total_exact`. `total` is the database's real page count while counting it
+    stayed within `NOTION_MAX_COUNT_PAGES` (so a capped 500-page database says
+    "25 of 500", never "25 of 100"); a database too large to count that cheaply
+    reports a lower bound and `total_exact: false` instead.
     """
     provider = get_provider("notion")
     try:
-        acquired_files, total, truncated = await provider.acquire_many(
+        acquired_files, total, truncated, total_exact = await provider.acquire_many(
             payload.url, payload.token
         )
     except FileTooLarge:
@@ -268,6 +273,7 @@ async def upload_from_notion(
         "added": len(files),
         "total": total,
         "truncated": truncated,
+        "total_exact": total_exact,
     }
 
 

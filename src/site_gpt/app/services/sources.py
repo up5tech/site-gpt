@@ -22,6 +22,7 @@ from site_gpt.app.core.config import (
     MAX_UPLOAD_BYTES,
     MAX_UPLOAD_MB,
     NOTION_MAX_BLOCKS,
+    NOTION_MAX_COUNT_PAGES,
     NOTION_MAX_PAGES,
     YOUTUBE_MAX_VIDEOS,
 )
@@ -125,13 +126,15 @@ class SourceProvider:
 
     async def acquire_many(
         self, ref: str, token: str | None = None
-    ) -> tuple[list[AcquiredFile], int, bool]:
-        """Every file one reference resolves to, with `(total, truncated)`.
+    ) -> tuple[list[AcquiredFile], int, bool, bool]:
+        """Every file one reference resolves to: `(files, total, truncated, exact)`.
 
-        Most sources are one file. A playlist or channel expands to many, so the
-        endpoint saves each one and reports the sitemap-sync-style counts.
+        Most sources are one file. A playlist, channel or database expands to
+        many, so the endpoint saves each one and reports the sitemap-sync-style
+        counts. `exact` is False when `total` is only a lower bound, because a
+        source too large to count in reasonable time was not read to its end.
         """
-        return [await self.acquire(ref, token)], 1, False
+        return [await self.acquire(ref, token)], 1, False, True
 
 
 class UrlProvider(SourceProvider):
@@ -302,12 +305,12 @@ class YoutubeProvider(SourceProvider):
     """
 
     async def acquire(self, ref: str, token: str | None = None) -> AcquiredFile:
-        files, _, _ = await self.acquire_many(ref, token)
+        files, _, _, _ = await self.acquire_many(ref, token)
         return files[0]
 
     async def acquire_many(
         self, ref: str, token: str | None = None
-    ) -> tuple[list[AcquiredFile], int, bool]:
+    ) -> tuple[list[AcquiredFile], int, bool, bool]:
         kind, value = parse_youtube_ref(ref)
         if kind == "video":
             video_ids, total = [value], 1
@@ -315,7 +318,8 @@ class YoutubeProvider(SourceProvider):
             video_ids, total = await self._expand(value)
         truncated = total > len(video_ids)
         files = [await self._video_file(video_id) for video_id in video_ids]
-        return files, total, truncated
+        # The playlist/channel page was read in full, so its total is final.
+        return files, total, truncated, True
 
     async def _expand(self, url: str) -> tuple[list[str], int]:
         """Video ids listed on a playlist/channel page, capped, and the total."""
@@ -459,21 +463,23 @@ class NotionProvider(SourceProvider):
     The integration token is per request (the Google Drive precedent): it only
     ever goes into an `Authorization` header on `api.notion.com`, is never
     stored, echoed or logged, and a redirect off that host is refused instead of
-    followed. Blocks are rendered to markdown under `NOTION_MAX_BLOCKS` and a
+    followed.     Blocks are rendered to markdown under `NOTION_MAX_BLOCKS` and a
     database to one file per page under `NOTION_MAX_PAGES`, both reporting
-    `truncated` when there was more to fetch.
+    `truncated` when there was more to fetch. A database's `total` is its real
+    page count only while counting it stayed within `NOTION_MAX_COUNT_PAGES`;
+    past that it is a lower bound and `total_exact` is False.
     """
 
     API = "https://api.notion.com/v1"
     VERSION = "2022-06-28"
 
     async def acquire(self, ref: str, token: str | None = None) -> AcquiredFile:
-        files, _, _ = await self.acquire_many(ref, token)
+        files, _, _, _ = await self.acquire_many(ref, token)
         return files[0]
 
     async def acquire_many(
         self, ref: str, token: str | None = None
-    ) -> tuple[list[AcquiredFile], int, bool]:
+    ) -> tuple[list[AcquiredFile], int, bool, bool]:
         token = (token or "").strip()
         if not token:
             raise SourceAuthError("A Notion integration token is required.")
@@ -487,15 +493,17 @@ class NotionProvider(SourceProvider):
             if kind == "auto":
                 kind = await self._kind_of(client, headers, ref_id)
             if kind == "database":
-                pages, total = await self._database_pages(client, headers, ref_id)
+                pages, total, total_exact = await self._database_pages(
+                    client, headers, ref_id
+                )
                 files = [
                     await self._page_file(client, headers, page["id"], page)
                     for page in pages
                 ]
             else:
                 files = [await self._page_file(client, headers, ref_id)]
-                total = 1
-        return files, total, total > len(files)
+                total, total_exact = 1, True
+        return files, total, total > len(files), total_exact
 
     async def _kind_of(
         self, client: httpx.AsyncClient, headers: dict[str, str], ref_id: str
@@ -517,16 +525,22 @@ class NotionProvider(SourceProvider):
 
     async def _database_pages(
         self, client: httpx.AsyncClient, headers: dict[str, str], database_id: str
-    ) -> tuple[list[dict], int]:
-        """The pages to import (capped) and the database's real page count.
+    ) -> tuple[list[dict], int, bool]:
+        """The pages to import (capped), how many were seen, and whether that is final.
 
-        Every query page is read even past `NOTION_MAX_PAGES`: a `total` taken
-        from the first 100-page window would report a 500-page database as
-        "25 of 100". Only the rows up to the cap are kept and no blocks are
-        fetched for the rest, so counting costs query calls, not imports.
+        Counting past the cap is what keeps a `total` from being the first
+        window's size (a 500-page database used to report "25 of 100"), but it
+        costs one query per 100 pages, so it is bounded by
+        `NOTION_MAX_COUNT_PAGES`: inside that budget `total` is the database's
+        real page count and `exact` is True; past it the import stops counting
+        and `total` is a lower bound with `exact` False, instead of turning one
+        request into minutes of calls on a huge database. Only the rows up to
+        the cap are kept and no blocks are fetched for the rest.
         """
         pages: list[dict] = []
         total = 0
+        windows = 0
+        exact = True
         cursor = None
         while True:
             body: dict = {"page_size": 100}
@@ -541,6 +555,7 @@ class NotionProvider(SourceProvider):
             )
             results = data.get("results") or []
             total += len(results)
+            windows += 1
             # Same rule as the other caps: 0 disables it.
             if NOTION_MAX_PAGES > 0:
                 pages.extend(results[: max(NOTION_MAX_PAGES - len(pages), 0)])
@@ -549,10 +564,16 @@ class NotionProvider(SourceProvider):
             cursor = data.get("next_cursor")
             if not data.get("has_more") or not cursor:
                 break
+            # The import is full: keep paying for a count only while it is
+            # cheap. Without a cap every page is needed anyway, so read on.
+            if NOTION_MAX_PAGES > 0 and len(pages) >= NOTION_MAX_PAGES:
+                if windows >= NOTION_MAX_COUNT_PAGES:
+                    exact = False
+                    break
 
         if not total:
             raise SourceRefError("That Notion database has no pages to import.")
-        return pages, total
+        return pages, total, exact
 
     async def _page_file(
         self,

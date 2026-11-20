@@ -143,7 +143,8 @@ npm install && npm run dev   # :5173
 | `INSIGHT_SETTLE_MINUTES` | `60` | V4 (F2): how long after its last message a conversation counts as settled before it is classified, so a live chat is not labelled mid-conversation |
 | `YOUTUBE_MAX_VIDEOS` | `25` | V4 (F3): most videos one YouTube playlist/channel import expands to; the response reports `added`/`total`/`truncated`, and `0` disables the cap (same rule as `SITEMAP_SYNC_MAX_URLS`) |
 | `NOTION_MAX_BLOCKS` | `1000` | V4 (F3): most blocks one Notion page render fetches before the document is marked truncated; `0` disables the cap |
-| `NOTION_MAX_PAGES` | `25` | V4 (F3): most pages one Notion database import creates (one file per page); the response reports `added`/`total`/`truncated`, `total` being the database's real page count (every query page is read for the count, none are imported past the cap), and `0` disables the cap |
+| `NOTION_MAX_PAGES` | `25` | V4 (F3): most pages one Notion database import creates (one file per page); the response reports `added`/`total`/`truncated`/`total_exact`, and `0` disables the cap |
+| `NOTION_MAX_COUNT_PAGES` | `10` | V4 (F3): most database query pages read to make `total` exact (100 rows each); a larger database reports a lower bound with `total_exact: false` instead of paging to its end, and `0` never counts past what the import cap needs |
 | `CORS_ORIGINS` | `*` | comma-separated allowed origins; `allow_credentials` is disabled while it is `*` |
 | `TRUSTED_PROXY_IPS` | *(empty)* | comma-separated IPs/CIDRs of reverse proxies / load balancers whose `X-Forwarded-For` is trusted; loopback and private peers are trusted automatically |
 | `FRONTEND_URL` | `http://localhost:5173` | public admin URL, used in password-reset links |
@@ -979,9 +980,10 @@ unchanged — only *how the bytes are fetched* differs. A `.pptx` deck is read b
   `{file_id, filename, file_url, file_size, file_type, source, source_ref}`.
   `POST /api/uploads/youtube` (`{url}`) and `POST /api/uploads/notion`
   (`{url, token}`) can turn one reference into many files, so they return
-  `{files: [<that same per-file shape>], added, total, truncated}`: `added` is
-  how many were stored, `total` how many the source really has (a playlist's
-  videos, a database's pages) and `truncated` whether a cap dropped some.
+  `{files: [<that same per-file shape>], added, total, truncated, total_exact}`:
+  `added` is how many were stored, `total` how many the source has (a
+  playlist's videos, a database's pages), `truncated` whether a cap dropped
+  some, and `total_exact` false when `total` is only a lower bound.
 - **YouTube** — a video URL/id, a playlist URL or a channel URL. The captions
   (a manual transcript over an auto-generated one) become one markdown document
   per video, headed by its title and watch URL. A playlist or channel imports at
@@ -993,9 +995,13 @@ unchanged — only *how the bytes are fetched* differs. A `.pptx` deck is read b
   inline formatting kept, unknown blocks degraded to their text — and a database
   becomes one document per page. `NOTION_MAX_BLOCKS` (1000) caps a page's blocks
   (a truncated page says so in its text) and `NOTION_MAX_PAGES` (25) caps a
-  database's pages; `0` disables either. The count is honest: the database query
-  is read to its last page so `total` is the real page count, while only the
-  capped pages are imported (no blocks are fetched for the rest).
+  database's pages; `0` disables either. The count is bounded, not naive: the
+  query is read past the cap so `total` is the real page count (a capped
+  500-page database says "25 of 500", not "25 of 100"), but only up to
+  `NOTION_MAX_COUNT_PAGES` (10) query pages — a database too large to count that
+  cheaply reports a lower bound with `total_exact: false` instead of turning one
+  import into minutes of API calls. Only the capped pages are imported, and no
+  blocks are fetched for the rest.
 - **The Notion token is per request** — `POST /api/uploads/notion` takes the
   integration token in its body and nowhere else: never stored, never logged,
   never echoed, absent from every error, and only ever sent to `api.notion.com`

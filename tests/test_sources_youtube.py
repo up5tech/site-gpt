@@ -114,13 +114,14 @@ class YoutubeProviderTests(unittest.TestCase):
         return asyncio.run(sources.YoutubeProvider().acquire_many(ref))
 
     def test_a_single_video_becomes_one_markdown_file(self):
-        files, total, truncated = self._acquire(
+        files, total, truncated, total_exact = self._acquire(
             f"https://youtu.be/{VIDEO_A}",
             routes={"https://www.youtube.com/oembed": oembed()},
             api=FakeTranscriptApi([FakeTranscript("hello caption")]),
         )
 
         self.assertEqual((total, truncated), (1, False))
+        self.assertTrue(total_exact)
         self.assertEqual(len(files), 1)
         self.assertEqual(files[0].filename, "intro-to-rag.md")
         self.assertEqual(
@@ -132,7 +133,7 @@ class YoutubeProviderTests(unittest.TestCase):
         self.assertIn("hello caption", body)
 
     def test_a_bare_video_id_is_accepted(self):
-        files, total, _ = self._acquire(
+        files, total, _, _ = self._acquire(
             VIDEO_A,
             routes={"https://www.youtube.com/oembed": oembed()},
             api=FakeTranscriptApi([FakeTranscript("caption")]),
@@ -142,7 +143,7 @@ class YoutubeProviderTests(unittest.TestCase):
         self.assertEqual(len(files), 1)
 
     def test_manual_captions_win_over_generated_ones(self):
-        files, _, _ = self._acquire(
+        files, _, _, _ = self._acquire(
             f"https://www.youtube.com/watch?v={VIDEO_A}",
             routes={"https://www.youtube.com/oembed": oembed()},
             api=FakeTranscriptApi(
@@ -158,7 +159,7 @@ class YoutubeProviderTests(unittest.TestCase):
         self.assertNotIn("auto generated words", body)
 
     def test_a_playlist_is_capped_and_reports_total_and_truncated(self):
-        files, total, truncated = self._acquire(
+        files, total, truncated, total_exact = self._acquire(
             "https://www.youtube.com/playlist?list=PL123",
             routes={
                 "https://www.youtube.com/playlist": html_page(
@@ -173,6 +174,7 @@ class YoutubeProviderTests(unittest.TestCase):
         self.assertEqual(len(files), 2)
         self.assertEqual(total, 3)
         self.assertTrue(truncated)
+        self.assertTrue(total_exact)  # the playlist page was read in full
         self.assertEqual(
             [f.source_ref.rsplit("=", 1)[-1] for f in files], [VIDEO_A, VIDEO_B]
         )
@@ -180,7 +182,7 @@ class YoutubeProviderTests(unittest.TestCase):
     def test_zero_disables_the_cap(self):
         # SITEMAP_SYNC_MAX_URLS=0 means "no cap"; the YouTube cap follows it
         # instead of slicing every playlist down to nothing.
-        files, total, truncated = self._acquire(
+        files, total, truncated, total_exact = self._acquire(
             "https://www.youtube.com/playlist?list=PL123",
             routes={
                 "https://www.youtube.com/playlist": html_page(
@@ -195,9 +197,10 @@ class YoutubeProviderTests(unittest.TestCase):
         self.assertEqual(len(files), 3)
         self.assertEqual(total, 3)
         self.assertFalse(truncated)
+        self.assertTrue(total_exact)
 
     def test_a_channel_url_expands_its_videos_tab(self):
-        files, total, truncated = self._acquire(
+        files, total, truncated, total_exact = self._acquire(
             "https://www.youtube.com/@somechannel",
             routes={
                 "https://www.youtube.com/@somechannel/videos": html_page([VIDEO_A]),
@@ -206,7 +209,9 @@ class YoutubeProviderTests(unittest.TestCase):
             api=FakeTranscriptApi([FakeTranscript("caption")]),
         )
 
-        self.assertEqual((len(files), total, truncated), (1, 1, False))
+        self.assertEqual(
+            (len(files), total, truncated, total_exact), (1, 1, False, True)
+        )
 
     def test_a_video_without_captions_names_the_video(self):
         with self.assertRaises(sources.SourceRefError) as caught:
@@ -235,7 +240,7 @@ class YoutubeProviderTests(unittest.TestCase):
             )
 
     def test_the_markdown_flows_through_extract_text_from_file(self):
-        files, _, _ = self._acquire(
+        files, _, _, _ = self._acquire(
             f"https://youtu.be/{VIDEO_A}",
             routes={"https://www.youtube.com/oembed": oembed()},
             api=FakeTranscriptApi([FakeTranscript("the transcript body")]),
@@ -295,7 +300,10 @@ class YoutubeEndpointTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         body = response.json()
-        self.assertEqual((body["added"], body["total"], body["truncated"]), (1, 1, False))
+        self.assertEqual(
+            (body["added"], body["total"], body["truncated"], body["total_exact"]),
+            (1, 1, False, True),
+        )
         item = body["files"][0]
         self.assertEqual(
             set(item),
