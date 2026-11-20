@@ -62,7 +62,51 @@ class DigestSendResult(BaseModel):
     period_start: str | None = None
 
 
+class TrendPoint(BaseModel):
+    """One UTC day of the rolling window (V4 F1).
+
+    `conversations` is that day's distinct sessions, so the daily rows do not sum
+    to `conversation_volume`; `unanswered` counts answers tagged `answered=False`.
+    """
+
+    date: str
+    conversations: int
+    messages: int
+    visitor_messages: int
+    new_contacts: int
+    feedback_up: int
+    feedback_down: int
+    unanswered: int
+
+
+class FunnelStage(BaseModel):
+    """One engagement stage: `started` | `answered` | `lead` | `handoff` | `human`.
+
+    Stages are counts of distinct sessions that overlap, not a strict subset
+    chain (D4): a lead without a handoff still counts, and so does a handoff that
+    never reached a human.
+    """
+
+    stage: str
+    sessions: int
+
+
+class TopQuestion(BaseModel):
+    """A normalized visitor question and how often it was asked (D4)."""
+
+    question: str
+    count: int
+
+
 class AnalyticsSummary(DigestData):
-    """The same aggregation as the digest, over a rolling window."""
+    """The same aggregation as the digest, over a rolling window.
+
+    `trend`, `funnel` and `top_questions` are additive (V4 F1): every V3 key keeps
+    its exact meaning and value, so `/api/v1/analytics/summary` gains the fields
+    without breaking an existing client.
+    """
 
     days: int
+    trend: list[TrendPoint] = []
+    funnel: list[FunnelStage] = []
+    top_questions: list[TopQuestion] = []

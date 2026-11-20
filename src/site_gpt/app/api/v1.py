@@ -31,6 +31,7 @@ from site_gpt.app.schemas.chat import (
 from site_gpt.app.schemas.contact import ContactListResponse, ContactRes
 from site_gpt.app.schemas.digest import AnalyticsSummary
 from site_gpt.app.schemas.setting import SettingRes
+from site_gpt.app.services import analytics
 from site_gpt.app.services.conversations import list_conversations
 from site_gpt.app.services.digest import build_digest
 from site_gpt.app.services.embed_guard import ensure_embed_allowed
@@ -223,9 +224,18 @@ def get_analytics_v1(
     db: Session = Depends(get_db),
     api_key: models.ApiKey = Depends(get_api_key),
 ):
-    """Counts, topics and unanswered questions. Requires the `read` scope."""
+    """Counts, topics, trend, funnel and top questions. Requires the `read` scope."""
     require_scope(api_key, "read")
     days = max(1, min(days, 90))
     end = datetime.now(UTC)
-    data = build_digest(db, api_key.company_id, end - timedelta(days=days), end)
-    return {**data, "days": days}
+    start = end - timedelta(days=days)
+    data = build_digest(db, api_key.company_id, start, end)
+    return {
+        **data,
+        "days": days,
+        "trend": analytics.daily_trend(db, api_key.company_id, start, end),
+        "funnel": analytics.engagement_funnel(db, api_key.company_id, start, end),
+        "top_questions": analytics.top_questions(
+            db, api_key.company_id, start, end
+        ),
+    }

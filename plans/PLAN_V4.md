@@ -3,7 +3,7 @@
 | | | |
 |---|---|---|
 | Version | **V4** — closes the feature gap against sitegpt.ai recorded in the 2026-11-20 comparison (§2): advanced analytics, per-conversation AI insights, new training sources, per-conversation cost caps + sitemap auto-scan, and a hosted chat page |
-| Status | **In progress — Wave 0 complete: V4-01…V4-04 done and gate V4-0G signed off (2026-11-20); Wave 1 (F1 analytics) is next. No migration written yet — Alembic head is still `1c5516fa864d`.** D1–D9 confirmed twice against code anchors (§3) |
+| Status | **In progress — Wave 0 complete (gate V4-0G signed off) and Wave 1 started: V4-10 done (trend, funnel, top questions); V4-11…V4-13 and gate V4-1G pending. No migration written yet — Alembic head is still `1c5516fa864d`.** D1–D9 confirmed twice against code anchors (§3) |
 | Created | 2026-11-20 |
 | Derived from | `plans/PLAN_V3.md` (§2 non-goals, §4 invariants, §8 release-tag policy), `plans/SPEC.md`, `README.md` §V3, `docs/security.md` §5 (K18 stays accepted), and the sitegpt.ai feature/pricing comparison of 2026-11-20 (gap list reproduced in §2 so this plan is self-contained) |
 | Baseline | V3 tag `v3` = `2e5ab734b09b4eb229f927a875e737153c544779` (immutable); `master` HEAD `59e0cc2d13c51dacdb05fb3572715d0e5c40d85f` is docs-only after the tag (8 commits, incl. this plan); `feat/v4` branched from it at V4-01; Alembic head `1c5516fa864d`; suite counts are historical (V3-4G recorded 47 modules / 718 Python tests / 46 node checks; the **V4 baseline is 47 / 720 / 46**, recorded in §3's pre-flight block) and **must be re-run at pre-flight, never copied** |
@@ -357,7 +357,30 @@ version. **Entry:** environment pre-flight above.
 aggregate CSV export — from the data already stored, with the digest's
 definitions, no new index and no chart library. **Entry:** V4-0G.
 
-- [ ] **V4-10 · Trend, funnel and top questions, one definition** — `M`, depends: V4-0G, migration: —
+- [x] **V4-10 · Trend, funnel and top questions, one definition** — `M`, depends: V4-0G, migration: —
+  - Done (V4-10): new `services/analytics.py` with the three definitions —
+    `daily_trend` (one zero-filled row per UTC day: conversations, messages,
+    visitor messages, new contacts, 👍/👎, unanswered), `engagement_funnel` (the
+    five D4 stages as distinct-session counts) and `top_questions` (normalized
+    exact-match grouping, top 10) — plus `normalize_question` and
+    `is_unanswered`. Shared, not forked: the window's messages come from
+    `digest._period_messages`, a conversation is one `session_id` exactly as
+    `conversation_volume` counts it (pinned by test to equal the funnel's
+    `started`), and `is_unanswered` is pinned to the same messages
+    `digest._unanswered` reports. `AnalyticsSummary` gains `trend`/`funnel`/
+    `top_questions` **additively**; both `/api/analytics/summary` and
+    `/api/v1/analytics/summary` return them; **`build_digest` is not edited** and
+    its payload is pinned key for key. Two decisions recorded here: `answered`
+    means "has an assistant **or** agent reply" (D4 literal — an ungrounded answer
+    still counts; its quality is the trend's `unanswered`), and `human` means the
+    inbox row is `human` now or was closed after being claimed, because `release`
+    clears the claim and leaves no marker. `tests/test_analytics.py` (19 cases,
+    real in-memory SQLite fixture): multi-website company, agent-answered session,
+    an unanswered question, a lead without a handoff, released vs closed, a
+    foreign company reading nothing (even with a reused session id), the half-open
+    window, a blank question, and the digest payload unchanged after the new
+    reads run. Suite: **48 modules / 739 Python tests, OK** (8.9 s); imports
+    and `trail build` green.
   - Files: `services/analytics.py` (new), `services/digest.py` (read-only reuse),
     `schemas/digest.py`, `api/analytics.py`, `api/v1.py`,
     `tests/test_analytics.py` (new).
@@ -939,12 +962,12 @@ provider absence.
 | Wave | Tasks | Done | Gate |
 |---|---|---|---|
 | 0 — Foundation | 4 | 4 / 4 | ☑ V4-0G |
-| 1 — Advanced analytics (F1) | 4 | 0 / 4 | ☐ V4-1G |
+| 1 — Advanced analytics (F1) | 4 | 1 / 4 | ☐ V4-1G |
 | 2 — Cost & freshness (F4) | 4 | 0 / 4 | ☐ V4-2G |
 | 3 — Training sources (F3) | 4 | 0 / 4 | ☐ V4-3G |
 | 4 — Conversation insights (F2) | 6 | 0 / 6 | ☐ V4-4G |
 | 5 — Hosted chat page (F5) | 3 | 0 / 3 | ☐ V4-5G |
-| **Total** | **25 tasks + 6 gates** | **4 / 25** | **1 / 6 gates** |
+| **Total** | **25 tasks + 6 gates** | **5 / 25** | **1 / 6 gates** |
 
 ---
 
