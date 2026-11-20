@@ -152,6 +152,36 @@ class UploadEndpointTests(unittest.TestCase):
         after = set(os.listdir("uploads")) if os.path.isdir("uploads") else set()
         self.assertEqual(after - before, set())
 
+    def test_an_ooxml_mime_type_fits_the_attachment_column(self):
+        # `attachments.file_type` is VARCHAR(50) while the OOXML types are 71
+        # characters; storing one verbatim was a DataError on Postgres (the
+        # V4-3G gate's .pptx import), so the value is clamped to the column.
+        db = MagicMock()
+        app = FastAPI()
+        app.include_router(upload_api.router, prefix="/api/uploads")
+        app.dependency_overrides[get_db] = lambda: db
+        app.dependency_overrides[get_current_user] = lambda: MagicMock(id=uuid4())
+        client = TestClient(app)
+        before = set(os.listdir("uploads")) if os.path.isdir("uploads") else set()
+        mime = (
+            "application/vnd.openxmlformats-officedocument."
+            "presentationml.presentation"
+        )
+        try:
+            response = client.post(
+                "/api/uploads/", files={"file": ("deck.pptx", b"PK\x03\x04", mime)}
+            )
+        finally:
+            after = set(os.listdir("uploads")) if os.path.isdir("uploads") else set()
+            for name in after - before:
+                os.remove(os.path.join("uploads", name))
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertGreater(len(mime), upload_api.FILE_TYPE_MAX)
+        stored = db.add.call_args.args[0]
+        self.assertEqual(stored.file_type, mime[: upload_api.FILE_TYPE_MAX])
+        self.assertEqual(response.json()["file_type"], mime[: upload_api.FILE_TYPE_MAX])
+
     def test_remote_import_over_limit_returns_413(self):
         class OversizedProvider:
             async def acquire(self, ref, token=None):

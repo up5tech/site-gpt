@@ -3,7 +3,7 @@
 | | | |
 |---|---|---|
 | Version | **V4** — closes the feature gap against sitegpt.ai recorded in the 2026-11-20 comparison (§2): advanced analytics, per-conversation AI insights, new training sources, per-conversation cost caps + sitemap auto-scan, and a hosted chat page |
-| Status | **In progress — Wave 0 and Wave 1 complete (gates V4-0G and V4-1G signed off): V4-10 done (trend, funnel, top questions), V4-11 done (aggregate CSV export), V4-12 done (analytics page: SVG trend, funnel, top questions, export button), V4-13 done (docs: the analytics surface in README/AGENTS/api-v1); gate V4-1G signed off (both suites, widget suite, build/lint, `trail build`, digest byte-comparison, CSV by way of the API, `/api/v1` summary + foreign-id 404). Wave 2 is under way: V4-20 done (per-session message cap), V4-21 done (Settings field + docs), V4-22 done (daily sitemap diff scan), V4-23 done (docs: caps and freshness); gate V4-2G signed off (both suites, widget suite, build/lint, `trail build`, `alembic current`, the session-cap refusal on the API, and the scan + 500-sitemap hand checks). Wave 3 is under way: V4-30 done (PPTX extraction), V4-31 done (YouTube source provider), V4-32 done (Notion source provider), V4-33 done (frontend buttons + docs for the new sources). No migration written yet — Alembic head is still `1c5516fa864d`.** D1–D9 confirmed twice against code anchors (§3) |
+| Status | **In progress — Wave 0 and Wave 1 complete (gates V4-0G and V4-1G signed off): V4-10 done (trend, funnel, top questions), V4-11 done (aggregate CSV export), V4-12 done (analytics page: SVG trend, funnel, top questions, export button), V4-13 done (docs: the analytics surface in README/AGENTS/api-v1); gate V4-1G signed off (both suites, widget suite, build/lint, `trail build`, digest byte-comparison, CSV by way of the API, `/api/v1` summary + foreign-id 404). Wave 2 is under way: V4-20 done (per-session message cap), V4-21 done (Settings field + docs), V4-22 done (daily sitemap diff scan), V4-23 done (docs: caps and freshness); gate V4-2G signed off (both suites, widget suite, build/lint, `trail build`, `alembic current`, the session-cap refusal on the API, and the scan + 500-sitemap hand checks). Wave 3 is under way: V4-30 done (PPTX extraction), V4-31 done (YouTube source provider), V4-32 done (Notion source provider), V4-33 done (frontend buttons + docs for the new sources); gate V4-3G signed off (both suites, widget suite, build/lint, `trail build`, `alembic current`, and the `.pptx` + YouTube end-to-end imports with cited answers plus the three negatives — a successful Notion import stayed **blocked** for lack of an integration token, and the gate found and fixed the `attachments.file_type` length defect that broke `.pptx`/`.docx` uploads). No migration written yet — Alembic head is still `1c5516fa864d`.** D1–D9 confirmed twice against code anchors (§3) |
 | Created | 2026-11-20 |
 | Derived from | `plans/PLAN_V3.md` (§2 non-goals, §4 invariants, §8 release-tag policy), `plans/SPEC.md`, `README.md` §V3, `docs/security.md` §5 (K18 stays accepted), and the sitegpt.ai feature/pricing comparison of 2026-11-20 (gap list reproduced in §2 so this plan is self-contained) |
 | Baseline | V3 tag `v3` = `2e5ab734b09b4eb229f927a875e737153c544779` (immutable); `master` HEAD `59e0cc2d13c51dacdb05fb3572715d0e5c40d85f` is docs-only after the tag (8 commits, incl. this plan); `feat/v4` branched from it at V4-01; Alembic head `1c5516fa864d`; suite counts are historical (V3-4G recorded 47 modules / 718 Python tests / 46 node checks; the **V4 baseline is 47 / 720 / 46**, recorded in §3's pre-flight block) and **must be re-run at pre-flight, never copied** |
@@ -992,16 +992,58 @@ pipeline: every source normalizes into a local file under `uploads/`, then
 
 #### Gate V4-3G
 
-- [ ] Both suites + widget suite + build + lint + `trail build` pass; `alembic current` unchanged.
-- [ ] One end-to-end import per source (YouTube video, Notion page, `.pptx`)
+- [x] Both suites + widget suite + build + lint + `trail build` pass; `alembic current` unchanged.
+  - Done: **53 modules / 835 Python tests, OK** (10.4 s), **46 / 46** node checks,
+    `npm run build` and `npm run lint` exit 0, `trail build` exit 0,
+    `alembic current` = `1c5516fa864d` (head) — Wave 3 wrote no migration.
+- [x] One end-to-end import per source (YouTube video, Notion page, `.pptx`)
       → ingest → a chat question answered **from that source** with a citation.
       Provider/network-bound steps follow the blocked-item rule.
-- [ ] Negative: a video without captions → 400 and no attachment row; a wrong
+  - Done: `scripts/gate_v4_3g/e2e_sources.py` drives the real API through
+    `TestClient` on a throwaway `v4_gate_3g` database (created, migrated to
+    head, **dropped** at the end; it was confirmed absent afterwards) with the
+    configured embedding/LLM provider, the real `uploads/` directory and the
+    worker's own `handle_ingest`, so the path is production's apart from the
+    socket. **`.pptx` → answer:** a two-slide deck with speaker notes uploaded
+    through `POST /api/uploads/`, attached via `POST /api/extra_documents/`,
+    ingested by `handle_ingest` (`ingest_status=completed`, 1 embedding chunk);
+    the chat answered "project lighthouse ships to customers in **may 2027**"
+    and cited *Project Lighthouse deck*. **YouTube → answer:**
+    `https://www.youtube.com/watch?v=dQw4w9WgXcQ` imported (1 file, `total` 1,
+    `total_exact` true), ingested, and answered from the captions ("never gonna
+    give you up…") with 1 citation. **Notion → answer: blocked** — a successful
+    import needs a real integration token, which this environment does not have
+    (the rejected-token path needs none and is exercised below); no token was
+    invented or requested in chat.
+- [x] Negative: a video without captions → 400 and no attachment row; a wrong
       Notion token → 401/400 and no file left under `uploads/`; an oversize
       synthesized file → 413-equivalent refusal, nothing stored.
-- [ ] `MAX_UPLOAD_MB`, `read_limited` and the credential-host rule are reused,
+  - Done: `aqz-KE-bpKQ` → **400** "No captions are available for video …", no
+    attachment row and no new file under `uploads/`; a bogus Notion token on a
+    page URL → **401** "Notion rejected the integration token…" with the token
+    absent from the body and nothing stored; a synthesized **21 MB** upload
+    against `MAX_UPLOAD_MB=20` → **413**, no row and no partial file.
+- [x] `MAX_UPLOAD_MB`, `read_limited` and the credential-host rule are reused,
       not re-implemented (review checklist).
-- [ ] commit `chore(v4): V4-3G gate — training sources`.
+  - Done: reviewed — every path goes through `read_limited`/`_download` (URL,
+    Drive, YouTube markdown, Notion pages) or `_stream_to_disk` (local and
+    `.pptx`), `MAX_UPLOAD_MB` is read from config in one place, and the
+    credential-host rule is the existing one (`UrlProvider.headers_for` sends a
+    token only to the pasted host; Notion runs `follow_redirects=False` and
+    refuses a redirect). No source re-implements either.
+  - Defect found and fixed by this gate: `attachments.file_type` is
+    `VARCHAR(50)` while the OOXML MIME types are 73 characters, so the first
+    real `.pptx` upload raised a Postgres `DataError` (500) — `.docx` uploads
+    had the same latent failure. `api/upload.py` now clamps the informational
+    type through `FILE_TYPE_MAX`/`_file_type` in one place, with
+    `tests/test_upload_limits.py::test_an_ooxml_mime_type_fits_the_attachment_column`
+    covering it; widening the column would be a schema change this wave does
+    not make, so it is recorded here as a follow-up.
+  - Note: `handle_ingest` logs one `[quota] could not count message … Event loop
+    is closed` line when called via `asyncio.run` inside the gate script; it is
+    the Redis counter failing open as designed and does not affect the import,
+    ingest or answer checks.
+- [x] commit `chore(v4): V4-3G gate — training sources`.
 
 ---
 
@@ -1359,10 +1401,10 @@ provider absence.
 | 0 — Foundation | 4 | 4 / 4 | ☑ V4-0G |
 | 1 — Advanced analytics (F1) | 4 | 4 / 4 | ☑ V4-1G |
 | 2 — Cost & freshness (F4) | 4 | 4 / 4 | ☑ V4-2G |
-| 3 — Training sources (F3) | 4 | 4 / 4 | ☐ V4-3G |
+| 3 — Training sources (F3) | 4 | 4 / 4 | ☑ V4-3G |
 | 4 — Conversation insights (F2) | 6 | 0 / 6 | ☐ V4-4G |
 | 5 — Hosted chat page (F5) | 3 | 0 / 3 | ☐ V4-5G |
-| **Total** | **25 tasks + 6 gates** | **16 / 25** | **3 / 6 gates** |
+| **Total** | **25 tasks + 6 gates** | **16 / 25** | **4 / 6 gates** |
 
 ---
 

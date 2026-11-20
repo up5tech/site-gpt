@@ -24,6 +24,21 @@ router = APIRouter()
 UPLOAD_CHUNK_SIZE = 64 * 1024
 
 
+# `attachments.file_type` is VARCHAR(50) and the OOXML MIME types are 71
+# characters (`application/vnd.openxmlformats-officedocument...`), so storing one
+# verbatim raised a DataError on Postgres — the V4-3G gate's `.pptx` import. The
+# value is informational (parsing goes by the filename extension), so it is
+# clamped to the column; widening the column is a schema change this wave does
+# not make.
+FILE_TYPE_MAX = 50
+
+
+def _file_type(content_type: str | None) -> str | None:
+    if not content_type:
+        return None
+    return content_type[:FILE_TYPE_MAX]
+
+
 def _too_large() -> HTTPException:
     return HTTPException(
         status_code=413,
@@ -110,7 +125,7 @@ def _save_attachment(
         file_url=safe_name,
         status="tmp",
         file_size=len(acquired.content),
-        file_type=acquired.content_type,
+        file_type=_file_type(acquired.content_type),
         user_id=user.id,
         source=source,
         source_ref=source_ref,
@@ -123,7 +138,7 @@ def _save_attachment(
         "filename": original_name,
         "file_url": safe_name,
         "file_size": len(acquired.content),
-        "file_type": acquired.content_type,
+        "file_type": _file_type(acquired.content_type),
         "source": source,
         "source_ref": source_ref,
     }
@@ -149,7 +164,7 @@ async def upload_file(
         file_url=safe_name,
         status="tmp",
         file_size=file_size,
-        file_type=file.content_type,
+        file_type=_file_type(file.content_type),
         user_id=user.id,
         source="local",
     )
@@ -161,7 +176,7 @@ async def upload_file(
         "filename": original_name,
         "file_url": safe_name,
         "file_size": file_size,
-        "file_type": file.content_type,
+        "file_type": _file_type(file.content_type),
         "source": "local",
         "source_ref": None,
     }
