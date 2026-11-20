@@ -54,7 +54,7 @@ processes.
 | Embed token (K18) | Optional per-website `X-Embed-Token`. Only `sha256(token)` is stored, the 12-character prefix is the only readable part, one token is active per website (partial unique index) and rotation is a single transaction. `compat` accepts a missing token but refuses an invalid one; `enforce` requires it; a refusal is `403 {detail, reason}` with `invalid_embed_token` / `embed_token_required`. The value is public in the page and replayable, so this is a revocation and compatibility control — not origin authentication | `services/embed_tokens.py`, `services/embed_guard.py`, `api/website.py` |
 | Export / erasure | Admin-only JSON export per website and hard deletes for a conversation or a contact, both company-scoped | `api/privacy.py` |
 | Retention | `retention_days` per company: the worker's daily job hard-deletes `chat_messages`, `chat_feedback`, `handoff_requests`, `contacts`, `digest_log`, `topic_clusters` and `topic_cluster_runs` rows older than the policy, scoped to that company. `POST /api/privacy/retention` previews it (`dry_run`) or runs it on demand | `services/retention.py`, `api/privacy.py`, `worker.py` |
-| Sitemap scan (V4 F4) | Opt-in per company (`sitemap_scan_enabled`, off by default) and limited to that company's `active` websites. The sitemap is fetched through the SSRF-guarded crawler (`net_guard` rejects non-public hosts on every hop), and the diff — new pages, plus retiring vanished pages and deleting their documents — is applied **only after a fully successful, non-empty fetch**; a failed or empty fetch changes no row | `services/sitemap.py`, `services/crawler.py`, `worker.py` |
+| Sitemap scan (V4 F4) | Opt-in per company (`sitemap_scan_enabled`, off by default) and limited to that company's `active` websites. The sitemap is fetched through the SSRF-guarded crawler (`net_guard` rejects non-public hosts on every hop), and the diff — new pages, plus retiring vanished pages and deleting **every** document row for their URL — is applied **only after a fully successful, non-empty fetch**; a failed or empty fetch changes no row | `services/sitemap.py`, `services/crawler.py`, `worker.py` |
 | Topic clustering (V3 F2) | Opt-in per company and off by default. One run sends at most `TOPIC_CLUSTER_MAX_MESSAGES` (500) visitor questions (1000 characters each) to the configured embedding provider in one call, and one naming request covering at most 8 clusters × 5 quoted questions to the configured chat LLM; derived rows store a label, a summary, a centroid and window counts, never question text. Erasing a conversation drops the weeks it appears in locally, without calling a provider | `services/topics.py`, `worker.py`, `api/privacy.py` |
 | Logs | No raw API key, integration token or password is written to a log line; webhook bodies are not logged | `services/*` |
 
@@ -412,8 +412,9 @@ These are known, documented and deliberately deferred. They are not oversights.
   this as `rate_limiter: {backend, degraded: true}` and the status becomes
   `degraded`. During an outage, combined traffic may exceed one shared budget
   (up to N × the per-process allowance); Redis is therefore an availability
-  dependency for the enforced path. The Redis daily message cap remains the
-  hard spend ceiling today.
+  dependency for the enforced path. Spend is bounded by the Redis message caps,
+  not by the limiter: the V4 per-session cap is checked before the daily
+  per-website cap, and both fail open when Redis is unreachable (§2).
 - **K6 — development defaults.** `JWT_SECRET_KEY` has a known fallback and
   `CORS_ORIGINS` defaults to `*` if unset. The app does not refuse to boot with
   them. Treat §3 as the deployment checklist; a production boot that logs no
