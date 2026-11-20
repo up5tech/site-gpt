@@ -959,31 +959,62 @@ After these fixes, chat streams real tokens end-to-end. **Note:** because embedd
 failing before, no vectors exist yet — ingest/crawl a website (settings → pages →
 `POST /api/ingest`) so the bot actually has knowledge to answer from.
 
-## Multi-source extra documents (Google Drive, URL, …)
+## Multi-source extra documents (Google Drive, URL, YouTube, Notion, …)
 
 Extra documents no longer have to come from a local file picker. The `Attachment`
-table gained a `source` (`local` | `url` | `google_drive` | …) + `source_ref`
-column, and every source is normalized into a local file under `uploads/` so the
-rest of the RAG pipeline (`services/parse.py`, `worker.py`) is unchanged — only
-*how the bytes are fetched* differs.
+table gained a `source` (`local` | `url` | `google_drive` | `youtube` | `notion`)
++ `source_ref` column, and every source is normalized into a local file under
+`uploads/` so the rest of the RAG pipeline (`services/parse.py`, `worker.py`) is
+unchanged — only *how the bytes are fetched* differs. A `.pptx` deck is read by
+`parse.py` (every slide's text plus speaker notes) like a PDF or DOCX.
 
 - **Providers** — `services/sources.py` is a small provider registry
-  (`UrlProvider`, `GoogleDriveProvider`). Add Dropbox/OneDrive/S3 by writing one
-  class and registering it in `PROVIDERS`; nothing else needs to change.
-- **Endpoints** — `POST /api/uploads/url` (`{url, token?}`) and
-  `POST /api/uploads/google-drive` (`{file_id, access_token}`), alongside the
-  existing `POST /api/uploads/` (local). All three return the same
-  `{file_id, filename, file_url, file_size, file_type, source, source_ref}` shape.
+  (`UrlProvider`, `GoogleDriveProvider`, `YoutubeProvider`, `NotionProvider`).
+  Add Dropbox/OneDrive/S3 by writing one class and registering it in
+  `PROVIDERS`; nothing else needs to change. A source that can return many files
+  implements `acquire_many` (the default is one file).
+- **Endpoints** — `POST /api/uploads/url` (`{url, token?}`),
+  `POST /api/uploads/google-drive` (`{file_id, access_token}`) and the existing
+  `POST /api/uploads/` (local) return one
+  `{file_id, filename, file_url, file_size, file_type, source, source_ref}`.
+  `POST /api/uploads/youtube` (`{url}`) and `POST /api/uploads/notion`
+  (`{url, token}`) can turn one reference into many files, so they return
+  `{files: [<that same per-file shape>], added, total, truncated}`: `added` is
+  how many were stored, `total` how many the source really has (a playlist's
+  videos, a database's pages) and `truncated` whether a cap dropped some.
+- **YouTube** — a video URL/id, a playlist URL or a channel URL. The captions
+  (a manual transcript over an auto-generated one) become one markdown document
+  per video, headed by its title and watch URL. A playlist or channel imports at
+  most `YOUTUBE_MAX_VIDEOS` (25) videos; `0` disables the cap. A video without
+  captions is a 400 naming it, never an empty document.
+- **Notion** — a page URL, a database URL (a `?v=` view link) or a bare id.
+  A page renders to markdown — its title as the `#` heading, block headings one
+  level down, lists/to-dos/toggles/quotes/callouts/code/tables/media links and
+  inline formatting kept, unknown blocks degraded to their text — and a database
+  becomes one document per page. `NOTION_MAX_BLOCKS` (1000) caps a page's blocks
+  (a truncated page says so in its text) and `NOTION_MAX_PAGES` (25) caps a
+  database's pages; `0` disables either. The count is honest: the database query
+  is read to its last page so `total` is the real page count, while only the
+  capped pages are imported (no blocks are fetched for the rest).
+- **The Notion token is per request** — `POST /api/uploads/notion` takes the
+  integration token in its body and nowhere else: never stored, never logged,
+  never echoed, absent from every error, and only ever sent to `api.notion.com`
+  (a redirect off that host is refused). Share the page or database with the
+  integration first; a rejected token is a 401. The frontend keeps it in
+  component state only — never `localStorage`.
 - **Google Drive without OAuth setup** — paste a share link for a file shared
   with *Anyone with the link*; the backend downloads it via the public endpoint
   (no token required). For private files, send an `access_token` (e.g. from the
   Google Picker) or set `VITE_GOOGLE_DRIVE_CLIENT_ID` to surface the native
   picker (`frontend/src/utils/googleDrive.ts` loads Google Identity Services +
   the Picker API on demand).
-- **Frontend** — `frontend/src/pages/ExtraDocuments.tsx` adds "From URL" and
-  "From Google Drive" buttons next to the upload control; imported files appear
-  in the same file list with a `URL` / `Drive` badge and flow into the existing
-  `file_ids` → `POST /api/extra_documents` flow.
+- **Frontend** — `frontend/src/pages/ExtraDocuments.tsx` adds "From URL",
+  "From Google Drive", "From YouTube" and "From Notion" buttons next to the
+  upload control (the Notion dialog asks for the token in a password field);
+  imported files appear in the same file list with a `URL` / `Drive` / `YouTube`
+  / `Notion` badge and flow into the existing `file_ids` →
+  `POST /api/extra_documents` flow. The upload control accepts
+  PDF/TXT/DOC/DOCX/PPTX.
 - **Migration** — `a1b2c3d4e5f6` adds the two columns and also merges the two
   pre-existing migration heads (`09cf9d60fd13` + `fb0c17ed1234`) into one, so
   `alembic upgrade head` runs cleanly.

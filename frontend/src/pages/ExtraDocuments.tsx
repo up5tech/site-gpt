@@ -1,10 +1,12 @@
-import { Website } from '@/types/api';
+import type { UploadedFile, UploadedFiles, Website } from '@/types/api';
 import {
+  BookOutlined,
   CloudOutlined,
   DeleteOutlined,
   FileTextOutlined,
   GlobalOutlined,
   UploadOutlined,
+  YoutubeFilled,
 } from '@ant-design/icons';
 import {
   Button,
@@ -27,7 +29,7 @@ import type { UploadFile, UploadProps } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
-import api from '../utils/api';
+import api, { getApiErrorMessage } from '../utils/api';
 import {
   extractDriveFileId,
   pickGoogleDriveFiles,
@@ -58,16 +60,8 @@ interface ExtraDocument {
   attachments?: Attachment[];
 }
 
-/** Body returned by POST /uploads, /uploads/url and /uploads/google-drive. */
-interface UploadedFileResponse {
-  filename?: string;
-  file_id?: string;
-  file_size?: number;
-  source?: string;
-}
-
 /** An antd upload row plus the attachment id/source the API assigns. */
-type UploadItem = UploadFile<UploadedFileResponse> & {
+type UploadItem = UploadFile<UploadedFile> & {
   file_id?: string;
   source?: string;
 };
@@ -98,6 +92,15 @@ export function ExtraDocuments() {
   const [driveLink, setDriveLink] = useState('');
   const [driveToken, setDriveToken] = useState('');
   const [driveLoading, setDriveLoading] = useState(false);
+
+  const [youtubeModalOpen, setYoutubeModalOpen] = useState(false);
+  const [youtubeLink, setYoutubeLink] = useState('');
+  const [youtubeLoading, setYoutubeLoading] = useState(false);
+  const [notionModalOpen, setNotionModalOpen] = useState(false);
+  const [notionLink, setNotionLink] = useState('');
+  // The integration token lives in component state only: never localStorage.
+  const [notionToken, setNotionToken] = useState('');
+  const [notionLoading, setNotionLoading] = useState(false);
 
   // State for websites
   const [websites, setWebsites] = useState<Website[]>([]);
@@ -194,6 +197,20 @@ export function ExtraDocuments() {
       return (
         <Tag color='purple' style={{ marginLeft: 6 }}>
           Drive
+        </Tag>
+      );
+    }
+    if (source === 'youtube') {
+      return (
+        <Tag color='red' style={{ marginLeft: 6 }}>
+          YouTube
+        </Tag>
+      );
+    }
+    if (source === 'notion') {
+      return (
+        <Tag color='default' style={{ marginLeft: 6 }}>
+          Notion
         </Tag>
       );
     }
@@ -344,7 +361,7 @@ export function ExtraDocuments() {
 
   // --- Source-agnostic import helpers -------------------------------------
 
-  const addFetchedFile = (resp: UploadedFileResponse, source: string) => {
+  const addFetchedFile = (resp: UploadedFile, source: string) => {
     setFileList((prev) => [
       ...prev,
       {
@@ -359,6 +376,24 @@ export function ExtraDocuments() {
     ]);
   };
 
+  /** Add every file a multi-file import returned (a playlist, a database). */
+  const addFetchedFiles = (data: UploadedFiles, source: string) => {
+    (data.files ?? []).forEach((resp) => addFetchedFile(resp, source));
+  };
+
+  /** Say how many files landed, and how many the source cap left behind. */
+  const importSummary = (
+    data: UploadedFiles,
+    noun: string,
+    source: string,
+  ) => {
+    const added = data.added ?? data.files?.length ?? 0;
+    const files = `${added} ${noun}${added === 1 ? '' : 's'}`;
+    return data.truncated
+      ? `Added ${files} of ${data.total} found on ${source} (the rest exceed the import cap)`
+      : `Added ${files} from ${source}`;
+  };
+
   const handleBeforeUpload: UploadProps['beforeUpload'] = async (file) => {
     // Validate file type
     const allowedTypes = [
@@ -366,9 +401,10 @@ export function ExtraDocuments() {
       'text/plain',
       'application/msword',
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'application/vnd.openxmlformats-officedocument.presentationml.presentation',
     ];
     if (!allowedTypes.includes(file.type)) {
-      message.error('Only PDF, TXT, DOC, and DOCX files are allowed');
+      message.error('Only PDF, TXT, DOC, DOCX, and PPTX files are allowed');
       return Upload.LIST_IGNORE;
     }
 
@@ -477,6 +513,57 @@ export function ExtraDocuments() {
     }
   };
 
+  const handleYoutubeSubmit = async () => {
+    if (!youtubeLink.trim()) {
+      message.error('Please enter a YouTube link');
+      return;
+    }
+    setYoutubeLoading(true);
+    try {
+      const { data } = await api.post<UploadedFiles>('/uploads/youtube', {
+        url: youtubeLink.trim(),
+      });
+      addFetchedFiles(data, 'youtube');
+      message.success(importSummary(data, 'video', 'YouTube'));
+      setYoutubeLink('');
+      setYoutubeModalOpen(false);
+    } catch (error) {
+      console.error('YouTube import error', error);
+      message.error(getApiErrorMessage(error, 'Failed to import from YouTube'));
+    } finally {
+      setYoutubeLoading(false);
+    }
+  };
+
+  const handleNotionSubmit = async () => {
+    if (!notionLink.trim()) {
+      message.error('Please enter a Notion page or database link');
+      return;
+    }
+    if (!notionToken.trim()) {
+      message.error('Please enter a Notion integration token');
+      return;
+    }
+    setNotionLoading(true);
+    try {
+      const { data } = await api.post<UploadedFiles>('/uploads/notion', {
+        url: notionLink.trim(),
+        // Sent for this request only (the server keeps nothing either).
+        token: notionToken.trim(),
+      });
+      addFetchedFiles(data, 'notion');
+      message.success(importSummary(data, 'page', 'Notion'));
+      setNotionLink('');
+      setNotionToken('');
+      setNotionModalOpen(false);
+    } catch (error) {
+      console.error('Notion import error', error);
+      message.error(getApiErrorMessage(error, 'Failed to import from Notion'));
+    } finally {
+      setNotionLoading(false);
+    }
+  };
+
   return (
     <>
       <div style={{ marginBottom: 16 }}>
@@ -574,6 +661,7 @@ export function ExtraDocuments() {
           <Form.Item label='Attachments'>
             <Space wrap style={{ marginBottom: 8 }}>
               <Upload
+                accept='.pdf,.txt,.doc,.docx,.pptx'
                 beforeUpload={handleBeforeUpload}
                 onRemove={onRemove}
                 fileList={fileList.filter((f) => f.source === 'local')}
@@ -595,8 +683,21 @@ export function ExtraDocuments() {
               >
                 From Google Drive
               </Button>
+              <Button
+                icon={<YoutubeFilled />}
+                onClick={() => setYoutubeModalOpen(true)}
+              >
+                From YouTube
+              </Button>
+              <Button
+                icon={<BookOutlined />}
+                onClick={() => setNotionModalOpen(true)}
+              >
+                From Notion
+              </Button>
             </Space>
-            {/* Render ALL files (local + url + drive) here, with source badges */}
+            {/* Render ALL files (local + url + drive + youtube + notion) here,
+                with source badges */}
             <div style={{ marginTop: 8 }}>
               {fileList.length === 0 && (
                 <Text type='secondary' style={{ fontSize: '12px' }}>
@@ -620,7 +721,7 @@ export function ExtraDocuments() {
               </Space>
             </div>
             <div style={{ marginTop: 8, fontSize: '12px', color: '#999' }}>
-              Supported formats: PDF, TXT, DOC, DOCX
+              Supported formats: PDF, TXT, DOC, DOCX, PPTX
             </div>
           </Form.Item>
         </Form>
@@ -683,6 +784,58 @@ export function ExtraDocuments() {
           />
           <div style={{ fontSize: '12px', color: '#999' }}>
             Publicly shared links work without a token.
+          </div>
+        </Space>
+      </Modal>
+
+      {/* YouTube import modal */}
+      <Modal
+        title='Add from YouTube'
+        open={youtubeModalOpen}
+        onOk={handleYoutubeSubmit}
+        onCancel={() => setYoutubeModalOpen(false)}
+        okText='Import'
+        confirmLoading={youtubeLoading}
+      >
+        <Input
+          placeholder='A video, playlist or channel link'
+          value={youtubeLink}
+          onChange={(e) => setYoutubeLink(e.target.value)}
+          onPressEnter={handleYoutubeSubmit}
+        />
+        <div style={{ marginTop: 8, fontSize: '12px', color: '#999' }}>
+          Each video&apos;s captions become one document. A playlist or channel
+          imports up to the configured number of videos.
+        </div>
+      </Modal>
+
+      {/* Notion import modal */}
+      <Modal
+        title='Add from Notion'
+        open={notionModalOpen}
+        onOk={handleNotionSubmit}
+        onCancel={() => {
+          setNotionModalOpen(false);
+          setNotionToken('');
+        }}
+        okText='Import'
+        confirmLoading={notionLoading}
+      >
+        <Space direction='vertical' style={{ width: '100%' }}>
+          <Input
+            placeholder='A Notion page or database link'
+            value={notionLink}
+            onChange={(e) => setNotionLink(e.target.value)}
+          />
+          <Input.Password
+            placeholder='Notion integration token'
+            value={notionToken}
+            onChange={(e) => setNotionToken(e.target.value)}
+            autoComplete='off'
+          />
+          <div style={{ fontSize: '12px', color: '#999' }}>
+            Share the page or database with your integration first. The token is
+            used for this import only and is never stored.
           </div>
         </Space>
       </Modal>

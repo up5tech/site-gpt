@@ -54,6 +54,28 @@ export interface WebsitePagePaginated {
   items: WebsitePage[];
 }
 
+/** One stored file: the per-file shape every upload endpoint returns. */
+export interface UploadedFile {
+  file_id?: string;
+  filename?: string;
+  file_url?: string;
+  file_size?: number;
+  file_type?: string | null;
+  source?: string;
+  source_ref?: string | null;
+}
+
+/** Body of `POST /uploads/youtube` and `POST /uploads/notion`: one reference
+ * can expand into many files (a playlist, a database), so the files are a
+ * list. `total` is how many the source really has and `truncated` whether a
+ * cap dropped some of them. */
+export interface UploadedFiles {
+  files: UploadedFile[];
+  added: number;
+  total: number;
+  truncated: boolean;
+}
+
 export interface ChatResponse {
   answer: string;
   sources?: ChatSource[];
