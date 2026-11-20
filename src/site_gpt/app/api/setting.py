@@ -3,7 +3,11 @@ from sqlalchemy.orm import Session
 
 from site_gpt.app import models
 from site_gpt.app.core.auth import get_admin_user
-from site_gpt.app.core.config import DAILY_MESSAGE_LIMIT, DEFAULT_WIDGET_LANGUAGE
+from site_gpt.app.core.config import (
+    DAILY_MESSAGE_LIMIT,
+    DEFAULT_WIDGET_LANGUAGE,
+    SESSION_MESSAGE_LIMIT,
+)
 from site_gpt.app.db.session import get_db
 from site_gpt.app.schemas.setting import SettingRes
 from site_gpt.app.services.quota import parse_limit
@@ -68,6 +72,11 @@ INTERNAL_SETTINGS: dict[str, str] = {
     "topic_clustering_enabled": "false",  # F2: LLM topic clustering
     "topic_cluster_count": "5",  # F2: max named clusters per window
     "live_inbox_enabled": "false",  # F3: live-agent inbox
+    # V4-02 scaffolding (registry only; each feature is wired in its own wave).
+    # Off by default, so an untouched company behaves exactly like tag `v3`.
+    "session_message_limit": str(SESSION_MESSAGE_LIMIT),  # F4: per-session cap
+    "sitemap_scan_enabled": "false",  # F4: daily sitemap diff scan
+    "conversation_insights_enabled": "false",  # F2: per-conversation insights
 }
 
 # Every setting a company can have: seeded on register, accepted by

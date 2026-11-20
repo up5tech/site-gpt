@@ -102,6 +102,42 @@ INBOX_STREAM_HEARTBEAT_SECONDS = int(
     os.getenv("INBOX_STREAM_HEARTBEAT_SECONDS", "15")
 )
 
+# V4-02 scaffolding (registry only; wired in the waves that use them). Every
+# value defaults to the V3 behaviour, so a deployment that sets none of them
+# behaves exactly like tag `v3`.
+#
+# Per-session message cap (F4, D6): visitor messages one session may send inside
+# one idle window. 0 disables it; the per-company `session_message_limit`
+# setting wins when a row exists. `parse_limit` turns a typo into this default.
+SESSION_MESSAGE_LIMIT = int(os.getenv("SESSION_MESSAGE_LIMIT", "0"))
+# TTL of one session's counter, refreshed on every accepted message: the cap is
+# an idle window, not a lifetime ban, so a returning visitor is not punished.
+SESSION_CAP_TTL_SECONDS = int(os.getenv("SESSION_CAP_TTL_SECONDS", "86400"))
+
+# Daily sitemap diff scan (F4, D7): how often the worker looks for opted-in
+# websites. Only a company with `sitemap_scan_enabled=true` is queued.
+SITEMAP_SCAN_INTERVAL_SECONDS = int(
+    os.getenv("SITEMAP_SCAN_INTERVAL_SECONDS", "86400")
+)
+
+# Per-conversation AI insights (F2, D3). The caps are the whole cost control:
+# at most this many settled conversations per company per run, this many per
+# temperature-0 LLM call, this many transcript characters per conversation, and
+# this long after the last message before a conversation counts as settled.
+INSIGHT_INTERVAL_SECONDS = int(os.getenv("INSIGHT_INTERVAL_SECONDS", "86400"))
+INSIGHT_MAX_CONVERSATIONS = int(os.getenv("INSIGHT_MAX_CONVERSATIONS", "50"))
+INSIGHT_BATCH_SIZE = int(os.getenv("INSIGHT_BATCH_SIZE", "10"))
+INSIGHT_TRANSCRIPT_CHARS = int(os.getenv("INSIGHT_TRANSCRIPT_CHARS", "4000"))
+INSIGHT_SETTLE_MINUTES = int(os.getenv("INSIGHT_SETTLE_MINUTES", "60"))
+
+# New training sources (F3, D2). A YouTube playlist/channel expands to at most
+# this many videos, a Notion page render to at most this many blocks, and a
+# Notion database to at most this many pages, so one import can never crawl a
+# whole workspace.
+YOUTUBE_MAX_VIDEOS = int(os.getenv("YOUTUBE_MAX_VIDEOS", "25"))
+NOTION_MAX_BLOCKS = int(os.getenv("NOTION_MAX_BLOCKS", "1000"))
+NOTION_MAX_PAGES = int(os.getenv("NOTION_MAX_PAGES", "25"))
+
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*")
 

@@ -12,7 +12,7 @@ from site_gpt.app.api.setting import (
     _default_setting_rows,
     create_settings,
 )
-from site_gpt.app.core.config import DEFAULT_WIDGET_LANGUAGE
+from site_gpt.app.core.config import DEFAULT_WIDGET_LANGUAGE, SESSION_MESSAGE_LIMIT
 
 APPEARANCE_KEYS = {
     "assistant_name",
@@ -73,6 +73,10 @@ INTERNAL_KEYS = {
     "topic_clustering_enabled",
     "topic_cluster_count",
     "live_inbox_enabled",
+    # V4-02: F4/F2 switches and the per-session cap (off by default).
+    "session_message_limit",
+    "sitemap_scan_enabled",
+    "conversation_insights_enabled",
 }
 
 
@@ -113,6 +117,31 @@ class SettingsRegistryTests(unittest.TestCase):
         self.assertEqual(INTERNAL_SETTINGS["live_inbox_enabled"], "false")
         self.assertNotIn("live_inbox_enabled", WIDGET_PUBLIC_KEYS)
         self.assertNotIn("live_inbox_enabled", DEFAULT_SETTINGS)
+
+    def test_v4_internal_defaults_are_off(self):
+        # V4-02: every new switch defaults to the V3 behaviour, and the session
+        # cap is seeded from the env default exactly like `daily_message_limit`
+        # so the two can never drift.
+        self.assertEqual(
+            INTERNAL_SETTINGS["session_message_limit"], str(SESSION_MESSAGE_LIMIT)
+        )
+        self.assertEqual(SESSION_MESSAGE_LIMIT, 0)
+        self.assertEqual(INTERNAL_SETTINGS["sitemap_scan_enabled"], "false")
+        self.assertEqual(
+            INTERNAL_SETTINGS["conversation_insights_enabled"], "false"
+        )
+
+    def test_no_v4_key_reaches_the_widget(self):
+        # Invariant 8: `WIDGET_PUBLIC_KEYS` stays exactly 14 — no V4 key is
+        # widget-facing, so a V3 snippet sees the same response.
+        for key in (
+            "session_message_limit",
+            "sitemap_scan_enabled",
+            "conversation_insights_enabled",
+        ):
+            self.assertIn(key, INTERNAL_SETTINGS)
+            self.assertNotIn(key, DEFAULT_SETTINGS)
+            self.assertNotIn(key, WIDGET_PUBLIC_KEYS)
 
     def test_widget_public_keys_are_the_pinned_literal(self):
         # An explicit tuple, not derived from a dict: order is part of the
