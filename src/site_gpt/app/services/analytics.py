@@ -23,6 +23,8 @@ plain company-scoped reads returning dicts, so the digest payload is untouched
 and stays byte-identical (invariant 15).
 """
 
+import csv
+import io
 import re
 from collections import Counter
 from datetime import UTC, date, datetime, timedelta
@@ -255,3 +257,79 @@ def top_questions(
         {"question": question, "count": count}
         for question, count in counter.most_common(max(0, int(limit)))
     ]
+
+
+# D5: the trend's columns, in the order the header and every row use them.
+TREND_COLUMNS = (
+    "date",
+    "conversations",
+    "messages",
+    "visitor_messages",
+    "new_contacts",
+    "feedback_up",
+    "feedback_down",
+    "unanswered",
+)
+
+# D5: what a spreadsheet would evaluate, plus the two control characters that
+# shift a row. A cell starting with one of these is exported as literal text.
+CSV_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def csv_cell(value: object) -> str:
+    """One cell, neutralized so a spreadsheet cannot execute it (D5).
+
+    `=HYPERLINK(...)`, `+1`, `-2+3`, `@SUM(...)`, a leading TAB or CR are all
+    data here, never formulas: the cell is prefixed with `'` exactly as the plan
+    specifies. Everything else is written unchanged.
+    """
+    text = "" if value is None else str(value)
+    return f"'{text}" if text.startswith(CSV_FORMULA_PREFIXES) else text
+
+
+def export_filename(start: datetime, end: datetime) -> str:
+    """`analytics-<first UTC day>_<last UTC day>.csv` for `[start, end)`."""
+    last_day = _utc_day(end - timedelta(microseconds=1))
+    return f"analytics-{_utc_day(start).isoformat()}_{last_day.isoformat()}.csv"
+
+
+def export_csv(
+    db: Session,
+    company_id: UUID,
+    start: datetime,
+    end: datetime,
+    limit: int = TOP_QUESTION_LIMIT,
+) -> str:
+    """The window's aggregates as one CSV document (V4-11, D5).
+
+    Three sections in the order the analytics page draws them — daily trend,
+    engagement funnel, top questions — each with its own header row and separated
+    by a blank line. Every value comes from the V4-10 helpers above; there is no
+    second aggregation, so the file, the page and the email cannot disagree.
+
+    Aggregate rows only: no session id, no contact field, no transcript text.
+    That export already exists at `/api/privacy/export`. Every cell goes through
+    `csv_cell`, so a question that looks like a formula is exported as text.
+    """
+    rows: list[list[object]] = [list(TREND_COLUMNS)]
+    rows.extend(
+        [point[column] for column in TREND_COLUMNS]
+        for point in daily_trend(db, company_id, start, end)
+    )
+    rows.append([])
+    rows.append(["stage", "sessions"])
+    rows.extend(
+        [item["stage"], item["sessions"]]
+        for item in engagement_funnel(db, company_id, start, end)
+    )
+    rows.append([])
+    rows.append(["question", "count"])
+    rows.extend(
+        [item["question"], item["count"]]
+        for item in top_questions(db, company_id, start, end, limit=limit)
+    )
+
+    buffer = io.StringIO()
+    writer = csv.writer(buffer, lineterminator="\n")
+    writer.writerows([[csv_cell(cell) for cell in row] for row in rows])
+    return buffer.getvalue()

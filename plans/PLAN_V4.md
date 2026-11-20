@@ -3,7 +3,7 @@
 | | | |
 |---|---|---|
 | Version | **V4** — closes the feature gap against sitegpt.ai recorded in the 2026-11-20 comparison (§2): advanced analytics, per-conversation AI insights, new training sources, per-conversation cost caps + sitemap auto-scan, and a hosted chat page |
-| Status | **In progress — Wave 0 complete (gate V4-0G signed off) and Wave 1 started: V4-10 done (trend, funnel, top questions); V4-11…V4-13 and gate V4-1G pending. No migration written yet — Alembic head is still `1c5516fa864d`.** D1–D9 confirmed twice against code anchors (§3) |
+| Status | **In progress — Wave 0 complete (gate V4-0G signed off) and Wave 1 under way: V4-10 done (trend, funnel, top questions), V4-11 done (aggregate CSV export); V4-12, V4-13 and gate V4-1G pending. No migration written yet — Alembic head is still `1c5516fa864d`.** D1–D9 confirmed twice against code anchors (§3) |
 | Created | 2026-11-20 |
 | Derived from | `plans/PLAN_V3.md` (§2 non-goals, §4 invariants, §8 release-tag policy), `plans/SPEC.md`, `README.md` §V3, `docs/security.md` §5 (K18 stays accepted), and the sitegpt.ai feature/pricing comparison of 2026-11-20 (gap list reproduced in §2 so this plan is self-contained) |
 | Baseline | V3 tag `v3` = `2e5ab734b09b4eb229f927a875e737153c544779` (immutable); `master` HEAD `59e0cc2d13c51dacdb05fb3572715d0e5c40d85f` is docs-only after the tag (8 commits, incl. this plan); `feat/v4` branched from it at V4-01; Alembic head `1c5516fa864d`; suite counts are historical (V3-4G recorded 47 modules / 718 Python tests / 46 node checks; the **V4 baseline is 47 / 720 / 46**, recorded in §3's pre-flight block) and **must be re-run at pre-flight, never copied** |
@@ -399,7 +399,31 @@ definitions, no new index and no chart library. **Entry:** V4-0G.
     a handoff); a foreign company id reads nothing; the digest output for the
     same fixture is byte-identical to the pre-change module.
 
-- [ ] **V4-11 · Aggregate CSV export** — `S`, depends: V4-10, migration: —
+- [x] **V4-11 · Aggregate CSV export** — `S`, depends: V4-10, migration: —
+  - Done (V4-11): `GET /api/analytics/export.csv?days=` in `api/analytics.py`
+    (manager+ through `get_manager_user`, company-scoped by `user.company_id`,
+    window clamped to 1…90 days exactly like the summary) returns a `text/csv`
+    attachment named `analytics-<first UTC day>_<last UTC day>.csv`
+    (`export_filename`). The body comes from `services.analytics.export_csv`,
+    which renders the V4-10 helpers — `daily_trend`, `engagement_funnel`,
+    `top_questions` — with **no second aggregation**, as three sections each with
+    its own header and a blank line between them: trend (`date,conversations,
+    messages,visitor_messages,new_contacts,feedback_up,feedback_down,
+    unanswered`), funnel (`stage,sessions`) and top questions (`question,count`,
+    top 10). `csv_cell` neutralizes every cell starting with `=`, `+`, `-`, `@`,
+    TAB or CR by prefixing `'` (D5), so a question asked as
+    `=HYPERLINK("http://x.test","click")` is exported as text. Aggregate rows
+    only: no session id, contact field or transcript text — `/api/privacy/export`
+    keeps owning that surface. `tests/test_analytics_export.py` (13 cases, real
+    in-memory SQLite fixture placed relative to "now" because the window is
+    rolling): content type and `Content-Disposition` filename, the three headers
+    and row shape, trend counts per day, the five funnel stages, the ranked
+    questions, formula neutralization (no cell left executable), the PII canary
+    and the absent column names, a Globex manager seeing only its own three
+    sessions and question, a signed-out caller refused, `export_filename`, and the
+    export matching the summary aggregates row for row. Suite: **49 modules / 752
+    Python tests, OK** (9.3 s); `trail build` green. No `schemas/` change — a CSV
+    has no response model.
   - Files: `api/analytics.py`, `services/analytics.py`, `schemas/`,
     `tests/test_analytics_export.py` (new).
   - Do: `GET /api/analytics/export.csv?days=` — manager+, company-scoped,
@@ -962,12 +986,12 @@ provider absence.
 | Wave | Tasks | Done | Gate |
 |---|---|---|---|
 | 0 — Foundation | 4 | 4 / 4 | ☑ V4-0G |
-| 1 — Advanced analytics (F1) | 4 | 1 / 4 | ☐ V4-1G |
+| 1 — Advanced analytics (F1) | 4 | 2 / 4 | ☐ V4-1G |
 | 2 — Cost & freshness (F4) | 4 | 0 / 4 | ☐ V4-2G |
 | 3 — Training sources (F3) | 4 | 0 / 4 | ☐ V4-3G |
 | 4 — Conversation insights (F2) | 6 | 0 / 6 | ☐ V4-4G |
 | 5 — Hosted chat page (F5) | 3 | 0 / 3 | ☐ V4-5G |
-| **Total** | **25 tasks + 6 gates** | **5 / 25** | **1 / 6 gates** |
+| **Total** | **25 tasks + 6 gates** | **6 / 25** | **1 / 6 gates** |
 
 ---
 
