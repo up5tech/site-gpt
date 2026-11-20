@@ -3,7 +3,7 @@
 | | | |
 |---|---|---|
 | Version | **V4** — closes the feature gap against sitegpt.ai recorded in the 2026-11-20 comparison (§2): advanced analytics, per-conversation AI insights, new training sources, per-conversation cost caps + sitemap auto-scan, and a hosted chat page |
-| Status | **In progress — Wave 0 complete (gate V4-0G signed off) and Wave 1 under way: V4-10 done (trend, funnel, top questions), V4-11 done (aggregate CSV export), V4-12 done (analytics page: SVG trend, funnel, top questions, export button); V4-13 and gate V4-1G pending. No migration written yet — Alembic head is still `1c5516fa864d`.** D1–D9 confirmed twice against code anchors (§3) |
+| Status | **In progress — Wave 0 complete (gate V4-0G signed off) and Wave 1 under way: V4-10 done (trend, funnel, top questions), V4-11 done (aggregate CSV export), V4-12 done (analytics page: SVG trend, funnel, top questions, export button), V4-13 done (docs: the analytics surface in README/AGENTS/api-v1); gate V4-1G pending. No migration written yet — Alembic head is still `1c5516fa864d`.** D1–D9 confirmed twice against code anchors (§3) |
 | Created | 2026-11-20 |
 | Derived from | `plans/PLAN_V3.md` (§2 non-goals, §4 invariants, §8 release-tag policy), `plans/SPEC.md`, `README.md` §V3, `docs/security.md` §5 (K18 stays accepted), and the sitegpt.ai feature/pricing comparison of 2026-11-20 (gap list reproduced in §2 so this plan is self-contained) |
 | Baseline | V3 tag `v3` = `2e5ab734b09b4eb229f927a875e737153c544779` (immutable); `master` HEAD `59e0cc2d13c51dacdb05fb3572715d0e5c40d85f` is docs-only after the tag (8 commits, incl. this plan); `feat/v4` branched from it at V4-01; Alembic head `1c5516fa864d`; suite counts are historical (V3-4G recorded 47 modules / 718 Python tests / 46 node checks; the **V4 baseline is 47 / 720 / 46**, recorded in §3's pre-flight block) and **must be re-run at pre-flight, never copied** |
@@ -477,13 +477,29 @@ definitions, no new index and no chart library. **Entry:** V4-0G.
     the component is exercised with a fixture); the 1-day and 90-day windows
     both render without overflow at desktop and mobile widths.
 
-- [ ] **V4-13 · Docs: analytics surface** — `S`, depends: V4-12, migration: —
+- [x] **V4-13 · Docs: analytics surface** — `S`, depends: V4-12, migration: —
   - Files: `README.md`, `AGENTS.md`, `docs/api-v1.md`.
   - Do: document the new summary fields, the CSV endpoint and its
     aggregate-only/PII boundary, and the funnel definition (overlapping counts,
     not a strict chain). Note the additive `/api/v1` change in `docs/api-v1.md`.
   - Done when: no doc still describes analytics as "counts + topics only", and
     the digest-unchanged guarantee is stated where F2 will later be tempted.
+  - Done: `README.md` lists `GET /api/analytics/export.csv?days=` in the endpoint
+    list and gains a **Advanced analytics (F1)** section — the three panels and
+    the definitions they borrow from the digest, the funnel's overlapping stages
+    (with the `agent` reply and `closed_at` rules), the CSV's three sections,
+    filename, aggregate-only boundary and `'` neutralization, and the **digest is
+    untouched** guarantee (invariant 15, re-checked at `V4-1G`); the weekly-digest
+    bullet links to it and says neither the fields nor the CSV touch
+    `build_digest`. `AGENTS.md` records `services/analytics.py` and
+    `api/analytics.py` (summary + `export.csv`, deliberately no `/api/v1` twin) in
+    the layout notes and adds the Do/don't line that `build_digest` and
+    `render_digest_html` are never edited to add a report field. `docs/api-v1.md`
+    documents the additive `trend`/`funnel`/`top_questions` shapes, the funnel
+    overlap, the normalized top questions and that the CSV is console-only.
+    `grep -iE "counts.{0,20}topics|topics only|counts \+ topics"` over `README.md`,
+    `AGENTS.md` and `docs/*.md` returns 0 matches. Docs only — no code, schema or
+    migration touched.
 
 #### Gate V4-1G
 
@@ -1013,12 +1029,12 @@ provider absence.
 | Wave | Tasks | Done | Gate |
 |---|---|---|---|
 | 0 — Foundation | 4 | 4 / 4 | ☑ V4-0G |
-| 1 — Advanced analytics (F1) | 4 | 3 / 4 | ☐ V4-1G |
+| 1 — Advanced analytics (F1) | 4 | 4 / 4 | ☐ V4-1G |
 | 2 — Cost & freshness (F4) | 4 | 0 / 4 | ☐ V4-2G |
 | 3 — Training sources (F3) | 4 | 0 / 4 | ☐ V4-3G |
 | 4 — Conversation insights (F2) | 6 | 0 / 6 | ☐ V4-4G |
 | 5 — Hosted chat page (F5) | 3 | 0 / 3 | ☐ V4-5G |
-| **Total** | **25 tasks + 6 gates** | **7 / 25** | **1 / 6 gates** |
+| **Total** | **25 tasks + 6 gates** | **8 / 25** | **1 / 6 gates** |
 
 ---
 

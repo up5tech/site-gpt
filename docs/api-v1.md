@@ -31,7 +31,7 @@ Changing `API_KEY_PEPPER` invalidates every key in every deployment.
 
 | Scope | Grants |
 |---|---|
-| `read` | `GET /settings`, `/conversations`, `/contacts`, `/analytics/summary` |
+| `read` | `GET /settings`, `/conversations`, `/contacts`, `/analytics/summary` (V4 fields included) |
 | `ingest:write` | `POST /ingest` — queue a re-crawl |
 | `settings:write` | `PUT /settings` |
 | `chat:write` | `POST /chat` |
@@ -108,10 +108,46 @@ instead of spending more model credits.
 
 ### `GET /analytics/summary` — `read`
 
-Query param `days` (1–90, default 7). Returns `conversation_volume`,
-`message_count`, `new_contacts`, `feedback_up`, `feedback_down`, `top_topics`
-and `unanswered_questions` (each with a deep link into the admin transcript) —
-the same aggregation the weekly digest emails.
+Query param `days` (1–90, default 7; clamped, and the clamped value is echoed
+back as `days`). Returns `conversation_volume`, `message_count`, `new_contacts`,
+`feedback_up`, `feedback_down`, `top_topics` and `unanswered_questions` (each
+with a deep link into the admin transcript) — the same aggregation the weekly
+digest emails — plus the three V4 fields below.
+
+**The V4 fields are additive.** Every key above keeps its exact V3 meaning and
+value, so a V3 client needs no change; `build_digest`, which produces them, is
+not modified.
+
+| Field | Shape | Meaning |
+|---|---|---|
+| `trend` | `[{date, conversations, messages, visitor_messages, new_contacts, feedback_up, feedback_down, unanswered}]` | one row per UTC day in the window, zeros included, oldest first; `date` is `YYYY-MM-DD` |
+| `funnel` | `[{stage, sessions}]` | the five stages in order: `started`, `answered`, `lead`, `handoff`, `human` |
+| `top_questions` | `[{question, count}]` | at most 10 visitor questions, most asked first |
+
+`trend.conversations` is that day's **distinct sessions**, so the daily rows do
+not sum to `conversation_volume` — a session that spans midnight counts on both
+days — and the last day is partial because the window ends at the request time.
+`trend.unanswered` counts answers tagged `answered = False`, the same rule as
+`unanswered_questions`.
+
+`funnel` stages are counts of **distinct sessions that overlap**, not a strict
+subset chain: a session counts as `answered` with at least one bot **or** human
+reply, as `lead` when a contact was captured, as `handoff` when a handoff was
+requested, and as `human` when the conversation reached the inbox's `human`
+state or was closed after being claimed. A lead without a handoff still counts,
+and so does a handoff that never reached a human; a released session drops back
+out of `human`.
+
+`top_questions` is an exact-match grouping on the normalized question —
+lowercased, whitespace collapsed, trailing punctuation stripped — so "How much
+does it cost?" and "how much does it cost" are one row. It uses no embedding and
+no model call, so the same rows always produce the same list.
+
+The **CSV export** is not part of `/api/v1`: `GET /api/analytics/export.csv` is a
+manager-only, JWT-authenticated download on the console surface. It carries the
+same three aggregates (three sections, each with its own header row), no session
+ids, contacts or transcript text, and neutralizes every cell a spreadsheet would
+evaluate — see [Advanced analytics (F1)](../README.md#advanced-analytics-f1).
 
 `top_topics` is the term-frequency list by default. For a company that opted into
 V3 topic clustering (`topic_clustering_enabled=true`) and asks for a range that is

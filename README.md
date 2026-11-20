@@ -176,7 +176,10 @@ npm install && npm run dev   # :5173
 - `/api/feedback` (`GET`, `POST /rebuild`, `PATCH /{id}`) — rating review and Q&A rebuild
 - `/api/handoff` (public POST) and `/api/handoffs` (`GET`, `PATCH /{id}`)
 - `/api/integrations` (`GET`, `POST`, `PATCH /{id}`, `DELETE /{id}`, `POST /{id}/test`)
-- `GET /api/analytics/summary`, `POST /api/digest/preview`, `POST /api/digest/send-now`
+- `GET /api/analytics/summary`, `GET /api/analytics/export.csv?days=`,
+  `POST /api/digest/preview`, `POST /api/digest/send-now` — the summary's V3
+  counts plus the V4 trend/funnel/top-questions fields; the CSV is those three
+  as one aggregate-only file (manager+)
 - `/api/privacy/export`, `/api/privacy/conversations/{sid}`, `/api/privacy/contacts/{sid}`
   — admin-only export and erasure (see [`docs/security.md`](docs/security.md))
 - `/api/api-keys` (`GET`, `POST`, `DELETE /{id}`) — admin key management; the
@@ -357,6 +360,11 @@ Keys understood by `widget_ui_strings`: `clear`, `send`, `thinking`, `sources`,
   worker clusters, so the email's counts and its named groups describe one week.
   Delivery is at-most-once: the `digest_log` row is claimed before the email is
   sent, so a retry, a restart or a second worker cannot send the same week twice.
+  Since V4 (F1) the same summary route — and `/api/v1/analytics/summary` — also
+  returns a per-day trend, an engagement funnel and the top questions (see
+  [Advanced analytics](#advanced-analytics-f1)), and `GET /api/analytics/export.csv`
+  downloads them as one CSV. Neither touches `build_digest`: the digest payload
+  and HTML stay byte-identical.
 
 ### V3 (released — tag `v3`)
 
@@ -484,6 +492,54 @@ tag `v2.1`, JSON and HTML, with cluster rows present or not.
   every week that held one of its messages (and the run row, so the window can be
   rebuilt from what is left); `retention_days` expires cluster rows on the same
   policy. Both are covered in [`docs/security.md`](docs/security.md) §4.
+
+### V4 (in progress)
+
+Only Wave 1 — advanced analytics (F1) — has landed; the rest of
+[`plans/PLAN_V4.md`](plans/PLAN_V4.md)'s waves are still pending.
+
+#### Advanced analytics (F1)
+
+The `/analytics` page and `GET /api/analytics/summary` gained three panels. They
+read rows that already exist, through the weekly digest's own definitions (a
+conversation is a `session_id`; an unanswered answer is a `role='assistant'` row
+with `answered = False`), and call no model:
+
+- **Trend** — one point per UTC day in the window (7 / 30 / 90 days on the page),
+  zeros included: distinct conversations, messages, visitor messages, new
+  contacts, 👍/👎 and unanswered answers. A session that spans midnight counts on
+  both days, so the daily rows do **not** add up to the window's
+  `conversation_volume` (the digest owns that number), and the last day is
+  partial because the window ends "now". The chart is a hand-rolled SVG: V4 adds
+  no charting library (D1).
+- **Engagement funnel** — `started`, `answered`, `lead`, `handoff`, `human`, each
+  a count of **distinct sessions**. The stages **overlap** rather than nest (D4):
+  a lead without a handoff still counts, and so does a handoff that never reached
+  a human. `answered` accepts an `assistant` **or** an `agent` reply, so an
+  agent-handled conversation is not counted as unanswered traffic; `human` needs
+  the inbox row in `human` or `closed_at` set — a released session goes back to
+  `waiting` and stops counting.
+- **Top questions** — the ten most asked visitor questions, grouped by an exact
+  match on the normalized text (lowercased, whitespace collapsed, trailing
+  punctuation stripped) with ties broken by first appearance (D4). No embedding
+  and no LLM call, so the same rows always produce the same list.
+
+**CSV export.** The **Export CSV** button and `GET /api/analytics/export.csv?days=`
+download those same three results as one `text/csv` attachment named `analytics-<first UTC day>_<last UTC day>.csv`: three sections in page
+order, each with its own header row and separated by a blank line. It is an
+**aggregate-only** export — no session id, no contact field, no transcript text
+— and it stays manager+ like the summary; the per-conversation dump is
+`GET /api/privacy/export`, a different route with a different audience. Every
+cell is neutralized: a value starting with `=`, `+`, `-`, `@`, TAB or CR is
+written with a leading `'`, so a visitor's `=HYPERLINK(…)` question is text and
+never a formula in Excel or Sheets.
+
+**The digest is untouched.** No V4 task edits `build_digest` or
+`render_digest_html`, and the three fields are a separate additive read over the
+same window, so the digest payload and HTML stay byte-identical (invariant 15 —
+gate `V4-1G` re-checks it against the module loaded from tag `v3`). That is also
+why `/api/v1/analytics/summary` can gain the fields without breaking a V3 client,
+and it is the rule the later per-conversation insights (F2) must follow too.
 
 ## Dev commands
 
