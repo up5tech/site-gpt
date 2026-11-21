@@ -1243,9 +1243,14 @@ conversation. **Entry:** V4-3G.
     rows present, flag on adds `outcomes` while the V4-1G keys keep their values).
     Suite: **889 tests, OK** (11.6 s), `node --test tests/*.mjs` 46/46,
     `npm run build` and `npm run lint` clean. No migration (head stays
-    `f33497bc1ecd`) and no widget change. The seeded-insight render was checked at
-    the API payload level (route tests) and through build/lint, not visually in a
-    browser — no dev server was run for this task.
+    `f33497bc1ecd`) and no widget change. The seeded-insight render was then
+    verified visually: a throwaway Postgres database (`v4_v43_seed`, upgraded to
+    `f33497bc1ecd`, dropped afterwards — the dev database was never seeded) held
+    two settled conversations with `completed` insights and both flags on; `/inbox`
+    showed the sentiment/resolution tags in the queue and the summary alert in the
+    detail pane, and `/analytics` rendered the "Conversation outcomes" card (2
+    classified: positive/resolved and frustrated/escalated) alongside the V4-1G
+    cards. The app and Vite dev server were stopped with the database.
 
 - [ ] **V4-44 · Privacy, erasure, retention — prove the cascade** — `S`, depends: V4-43, migration: —
   - Files: `tests/test_privacy_retention_endpoint.py` (extend),
