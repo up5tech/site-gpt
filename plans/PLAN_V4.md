@@ -3,7 +3,7 @@
 | | | |
 |---|---|---|
 | Version | **V4** — closes the feature gap against sitegpt.ai recorded in the 2026-11-20 comparison (§2): advanced analytics, per-conversation AI insights, new training sources, per-conversation cost caps + sitemap auto-scan, and a hosted chat page |
-| Status | **In progress — Wave 0 and Wave 1 complete (gates V4-0G and V4-1G signed off): V4-10 done (trend, funnel, top questions), V4-11 done (aggregate CSV export), V4-12 done (analytics page: SVG trend, funnel, top questions, export button), V4-13 done (docs: the analytics surface in README/AGENTS/api-v1); gate V4-1G signed off (both suites, widget suite, build/lint, `trail build`, digest byte-comparison, CSV by way of the API, `/api/v1` summary + foreign-id 404). Wave 2 is under way: V4-20 done (per-session message cap), V4-21 done (Settings field + docs), V4-22 done (daily sitemap diff scan), V4-23 done (docs: caps and freshness); gate V4-2G signed off (both suites, widget suite, build/lint, `trail build`, `alembic current`, the session-cap refusal on the API, and the scan + 500-sitemap hand checks). Wave 3 is under way: V4-30 done (PPTX extraction), V4-31 done (YouTube source provider), V4-32 done (Notion source provider), V4-33 done (frontend buttons + docs for the new sources); gate V4-3G signed off (both suites, widget suite, build/lint, `trail build`, `alembic current`, and the `.pptx` + YouTube end-to-end imports with cited answers plus the three negatives — a successful Notion import stayed **blocked** for lack of an integration token, and the gate found and fixed the `attachments.file_type` length defect that broke `.pptx`/`.docx` uploads). Wave 4 is under way: V4-40 done (M10 `conversation_insights`, plus the `attachments.file_type` widening 50 → 120 that removes the V4-3G truncation clamp), V4-41 done (the insight service: claim/refresh lifecycle, caps, batched classification, failure handling); Alembic head is `f33497bc1ecd`.** D1–D9 confirmed twice against code anchors (§3) |
+| Status | **In progress — Wave 0 and Wave 1 complete (gates V4-0G and V4-1G signed off): V4-10 done (trend, funnel, top questions), V4-11 done (aggregate CSV export), V4-12 done (analytics page: SVG trend, funnel, top questions, export button), V4-13 done (docs: the analytics surface in README/AGENTS/api-v1); gate V4-1G signed off (both suites, widget suite, build/lint, `trail build`, digest byte-comparison, CSV by way of the API, `/api/v1` summary + foreign-id 404). Wave 2 is under way: V4-20 done (per-session message cap), V4-21 done (Settings field + docs), V4-22 done (daily sitemap diff scan), V4-23 done (docs: caps and freshness); gate V4-2G signed off (both suites, widget suite, build/lint, `trail build`, `alembic current`, the session-cap refusal on the API, and the scan + 500-sitemap hand checks). Wave 3 is under way: V4-30 done (PPTX extraction), V4-31 done (YouTube source provider), V4-32 done (Notion source provider), V4-33 done (frontend buttons + docs for the new sources); gate V4-3G signed off (both suites, widget suite, build/lint, `trail build`, `alembic current`, and the `.pptx` + YouTube end-to-end imports with cited answers plus the three negatives — a successful Notion import stayed **blocked** for lack of an integration token, and the gate found and fixed the `attachments.file_type` length defect that broke `.pptx`/`.docx` uploads). Wave 4 is under way: V4-40 done (M10 `conversation_insights`, plus the `attachments.file_type` widening 50 → 120 that removes the V4-3G truncation clamp), V4-41 done (the insight service: claim/refresh lifecycle, caps, batched classification, failure handling), V4-42 done (the `insights` job type, the opt-in scheduler and the handler); Alembic head is `f33497bc1ecd`.** D1–D9 confirmed twice against code anchors (§3) |
 | Created | 2026-11-20 |
 | Derived from | `plans/PLAN_V3.md` (§2 non-goals, §4 invariants, §8 release-tag policy), `plans/SPEC.md`, `README.md` §V3, `docs/security.md` §5 (K18 stays accepted), and the sitegpt.ai feature/pricing comparison of 2026-11-20 (gap list reproduced in §2 so this plan is self-contained) |
 | Baseline | V3 tag `v3` = `2e5ab734b09b4eb229f927a875e737153c544779` (immutable); `master` HEAD `59e0cc2d13c51dacdb05fb3572715d0e5c40d85f` is docs-only after the tag (8 commits, incl. this plan); `feat/v4` branched from it at V4-01; Alembic head `1c5516fa864d`; suite counts are historical (V3-4G recorded 47 modules / 718 Python tests / 46 node checks; the **V4 baseline is 47 / 720 / 46**, recorded in §3's pre-flight block) and **must be re-run at pre-flight, never copied** |
@@ -1167,7 +1167,7 @@ conversation. **Entry:** V4-3G.
     `f33497bc1ecd`), no frontend or widget change, so the node suite and
     `npm run build`/`lint` were not rerun.
 
-- [ ] **V4-42 · Worker loop + scheduler** — `S`, depends: V4-41, migration: —
+- [x] **V4-42 · Worker loop + scheduler** — `S`, depends: V4-41, migration: —
   - Files: `worker.py` (`insight_loop`, `handle_insights`,
     `enqueue_due_insights`), `tests/test_worker_insights.py` (new).
   - Do: `insight_loop` wakes every `INSIGHT_INTERVAL_SECONDS`, queues
@@ -1176,6 +1176,31 @@ conversation. **Entry:** V4-3G.
     AGENTS.md. Flag off → nothing queued, no row written, no provider call.
   - Done when: tests prove the opt-in gate, the cadence, and that a failed run
     leaves previous classifications intact (the topics guarantee).
+  - Done: `worker.py` gains three functions in the topic/sitemap pattern.
+    `enqueue_due_insights()` queues one `{"type": "insights", "company_id": …}`
+    per company whose `conversation_insights_enabled` flag is on — read through
+    `insights.enabled`, so an unset or explicitly `false` flag queues nothing, and
+    a second opted-in company is the only one queued. `handle_insights(data)`
+    returns before opening a session on an incomplete payload, otherwise owns the
+    `SessionLocal`, parses the id (`UUID(...)`) and calls
+    `insights.run_for_company(db, company_id)`, logging its summary — the flag
+    re-check, the claims and the caps stay in the service, so a provider outage is
+    recorded as `failed` there and never reaches the job loop. `insight_loop()`
+    wakes on `INSIGHT_INTERVAL_SECONDS`, enqueues, and prints-and-continues on an
+    exception. The `insights` type is in `worker()`'s dispatch and the loop in its
+    task list, and AGENTS.md lists the type with the other job types and the
+    company-only payload. **11 stubbed tests** in `tests/test_worker_insights.py`:
+    the opt-in gate (unset, explicit `false`, opted-in payload shape, one of two
+    companies), the handler (an incomplete payload never opens a session, the id
+    is parsed and the session closed, a flag-off job writes no row and makes no
+    provider call, a successful run stores the classification end to end, and a
+    failed refresh leaves the previous sentiment/resolution/summary readable with
+    `status='failed'` rather than erased), and the cadence (the loop sleeps the
+    configured interval and enqueues on every tick; a failing enqueue is logged
+    and the next tick still runs). Suite: **879 tests, OK** (10.3 s) and
+    `import site_gpt.app.worker` passes; no migration (head stays
+    `f33497bc1ecd`) and no frontend or widget change, so the node suite and
+    `npm run build`/`lint` were not rerun.
 
 - [ ] **V4-43 · Read side: console badges + analytics outcomes** — `M`, depends: V4-42, migration: —
   - Files: `api/inbox.py`, `services/inbox.py` (read-only join),
@@ -1479,9 +1504,9 @@ provider absence.
 | 1 — Advanced analytics (F1) | 4 | 4 / 4 | ☑ V4-1G |
 | 2 — Cost & freshness (F4) | 4 | 4 / 4 | ☑ V4-2G |
 | 3 — Training sources (F3) | 4 | 4 / 4 | ☑ V4-3G |
-| 4 — Conversation insights (F2) | 6 | 2 / 6 | ☐ V4-4G |
+| 4 — Conversation insights (F2) | 6 | 3 / 6 | ☐ V4-4G |
 | 5 — Hosted chat page (F5) | 3 | 0 / 3 | ☐ V4-5G |
-| **Total** | **25 tasks + 6 gates** | **18 / 25** | **4 / 6 gates** |
+| **Total** | **25 tasks + 6 gates** | **19 / 25** | **4 / 6 gates** |
 
 ---
 

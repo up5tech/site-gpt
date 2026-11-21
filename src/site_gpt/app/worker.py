@@ -17,13 +17,14 @@ from site_gpt.app.core.config import (
     DELIVERY_CHECK_SECONDS,
     DELIVERY_RETENTION_CHECK_SECONDS,
     DIGEST_CHECK_SECONDS,
+    INSIGHT_INTERVAL_SECONDS,
     RETENTION_CHECK_SECONDS,
     SITEMAP_SCAN_INTERVAL_SECONDS,
     TOPIC_CLUSTER_INTERVAL_SECONDS,
     DIGEST_ENABLED,
     DIGEST_HOUR,
 )
-from site_gpt.app.services import company_settings, digest, retention, topics
+from site_gpt.app.services import company_settings, digest, insights, retention, topics
 from site_gpt.app.services.integrations import (
     process_due_deliveries,
     purge_deliveries,
@@ -141,6 +142,10 @@ async def worker():
     # Daily sitemap diff scan for companies that opted in (`sitemap_scan_enabled`,
     # V4 F4). Reads settings only, so an untouched deployment queues nothing.
     asyncio.create_task(sitemap_loop())
+    # Conversation insights for companies that opted in
+    # (`conversation_insights_enabled`, V4 F2). This loop only reads settings; the
+    # run it queues is what bounds the provider cost.
+    asyncio.create_task(insight_loop())
     while True:
         try:
             _, job = await redis_client.brpop("queue:jobs")  # type: ignore
@@ -181,6 +186,12 @@ async def worker():
                 await handle_sitemap_scan(data)
             except Exception as e:
                 print(f"[worker] sitemap scan failed: {e}")
+                traceback.print_exc()
+        elif data.get("type") == "insights":
+            try:
+                await handle_insights(data)
+            except Exception as e:
+                print(f"[worker] insights failed: {e}")
                 traceback.print_exc()
 
 
@@ -774,6 +785,70 @@ async def sitemap_loop():
                 print(f"[sitemap] queued {len(queued)} website scan(s)")
         except Exception as e:
             print(f"[sitemap] loop error: {e}")
+            traceback.print_exc()
+
+
+# -- Conversation insights (V4 F2, D3) ---------------------------------------
+
+
+async def enqueue_due_insights() -> list[str]:
+    """Queue one insight run per company that opted in.
+
+    The switch is per company (`conversation_insights_enabled`, off by default), so
+    a deployment where nobody opted in makes no provider call and writes no row.
+    This loop only enqueues: the run claims each conversation through its unique
+    row, so a duplicate job classifies nothing twice and a claim left by a dead
+    worker is taken over by the next run.
+    """
+    db = SessionLocal()
+    queued: list[str] = []
+    try:
+        for company in db.query(models.Company).all():
+            if not insights.enabled(db, company.id):
+                continue
+            await enqueue_job(
+                {"type": "insights", "company_id": str(company.id)}
+            )
+            queued.append(str(company.id))
+            print(f"[insights] queued company {company.id}")
+    finally:
+        db.close()
+    return queued
+
+
+async def handle_insights(data):
+    """Classify one company's settled conversations; the run bounds the cost.
+
+    The handler owns the session and the company id only — `run_for_company`
+    re-checks the flag, claims each conversation, and records a failed batch
+    instead of raising it, so a provider outage never kills the job loop.
+    """
+    company_id = data.get("company_id")
+    if not company_id:
+        print(f"[insights] incomplete job: {data}")
+        return
+
+    db = SessionLocal()
+    try:
+        result = insights.run_for_company(db, UUID(str(company_id)))
+        print(f"[insights] company {company_id}: {result}")
+    finally:
+        db.close()
+
+
+async def insight_loop():
+    """Wake every INSIGHT_INTERVAL_SECONDS and queue the opted-in companies.
+
+    Like the topic loop, the interval is only how often the check runs: a company
+    with nothing settled, or one whose flag was switched off since the job was
+    queued, claims nothing and spends nothing.
+    """
+    while True:
+        await asyncio.sleep(INSIGHT_INTERVAL_SECONDS)
+        try:
+            await enqueue_due_insights()
+        except Exception as e:
+            print(f"[insights] loop error: {e}")
             traceback.print_exc()
 
 
