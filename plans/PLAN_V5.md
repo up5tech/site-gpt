@@ -1,0 +1,311 @@
+# PLAN — Version 5 execution plan
+
+| | |
+|---|---|
+| Version | **V5 — public marketing site, self-serve billing and a separate platform-owner management console** |
+| Status | **Planning — no V5 implementation or commercial terms have been approved yet.** V4 is the released product baseline. |
+| Baseline observed while authoring | `master` at `d6008d4`; Alembic head `f33497bc1ecd` (V4 M10). Reconfirm branch, tag, commit, migration head and working-tree state at V5 pre-flight. |
+| Scope | 5 features (F1–F5), 6 waves (W0–W5), 6 gates, planned migrations M11–M12, Stripe Checkout + Billing Portal + signed webhooks, separate platform-owner console. |
+| Derived from | `plans/PLAN_V4.md`, `plans/PLAN_V3.md` (§4 invariants and §8 immutable tags), `plans/SPEC.md`, `README.md`, current frontend routes, registration/auth, company settings and quota services. |
+| Out of scope | New chatbot/AI capabilities; replacing the customer admin console; self-service creation of platform-owner accounts; marketplace; sales CRM; mobile app; custom card entry or storing card data; accounting/tax filing; usage-based metering beyond approved plan limits; custom enterprise contracts; compliance certification or legal advice. Stripe handles hosted payment entry; SiteGPT owns subscription and entitlement state. |
+
+> **Launch dependency:** V5 integrates **Stripe** for recurring payments using Stripe Checkout in subscription mode, Stripe Billing Portal and signed Stripe webhooks. Wave 0 still requires approval for tier names, features, limits, prices/currency, billing cadence, trial/refund/cancellation policy, merchant country/account readiness and legal copy. Until these business and launch inputs are approved and Stripe test/live configuration is ready, paid checkout must remain disabled.
+
+---
+
+## 1. How to use this plan
+
+- V5 focuses on the gap the request identifies: there is no public product landing/pricing funnel or subscription purchase workflow. It does **not** assume a marketing site, Stripe account/configuration, price list, plan catalog, or subscription state already exists; Stripe integration is part of this plan.
+- The app already has `/api/register`, `/token`, `/login`, a company-admin role, and a React admin console. Extend those flows; do not create a parallel account or password system.
+- Each task has an ID, size, dependencies, files/surfaces, and a completion condition. Check it only after evidence is recorded in a `Done:` line. Each gate is a separate commit and blocks the next wave.
+- Marketing, tenant-console and platform-owner paths are intentionally separated in §3 and §5. Preserve existing API and widget URLs; platform ownership is not implied by tenant `admin`.
+- No exact price, quota, feature entitlement, free-trial length, platform privilege, or legal promise is implied by examples in this plan. Empty decisions are blockers for production launch, not permission to guess.
+- Follow `plans/PLAN_V3.md` §8: a release tag is immutable and is cut only on the exact commit verified by the release gate. Do not move/delete/force-push `v4` or any published tag.
+
+## 2. Traceability — current gap and V5 target
+
+| V5 feature | User need | Current verified state | Planned outcome | Migration | Wave | Exit criterion |
+|---|---|---|---|---|---|---|
+| F1 Public landing and pricing | Understand the product, plans and next step before creating an account | `frontend/src/App.tsx` mounts the authenticated console at `/`; there are `/register` and `/login` forms, but no public landing/pricing funnel or marketing shell | Responsive public home, pricing and FAQ/legal-link surfaces; clear CTA; accessible mobile/desktop behavior; public routes do not inherit admin navigation | — | 1 | Anonymous visitor can move from landing → pricing → selected plan → registration, while existing authenticated console routes remain reachable |
+| F2 Signup-to-checkout | Register and purchase a chosen plan without manual operator intervention | `POST /api/register` creates a company, admin user and settings; login is JWT. No checkout, subscription or Stripe integration exists | Carry an allowlisted plan choice through signup; authenticated company admin creates a Stripe Checkout Session; a verified Stripe webhook, not the browser redirect, confirms paid status | M11 | 2 | Stripe test-mode checkout completes end-to-end and updates the correct company once; spoofed client redirects/amounts cannot grant a paid plan |
+| F3 Plan entitlements and account billing | Know the current plan/usage and manage/cancel a subscription | Daily message limit is company setting/env based; per-session cap and other V4 features are available but not sold/gated as a commercial catalog. No subscription page | One server-side catalog and entitlement resolver; admin billing page for plan/status/usage, upgrade and Stripe Billing Portal; enforce only approved limits/features in the relevant services | M11 | 3 | Each approved entitlement is enforced at its existing service boundary; legacy/self-hosted mode remains unchanged when Stripe billing is disabled |
+| F4 Production readiness | Operate paid accounts safely | No Stripe webhook, event idempotency store, operational billing guide or pricing/legal approval path | Stripe-signature-verified, replay-safe webhook processing; documented support/incident/refund/cancellation operations; launch checklist and gates | M11 | 5 | Full test-mode runbook passes on a throwaway DB; billing cannot be enabled accidentally or with missing configuration |
+| F5 Platform-owner console | Let the project owner manage plans/prices, subscriptions and approved global settings | `admin` is company-scoped; no platform-owner role or cross-company operator console exists | Separate out-of-band-provisioned owner permission and isolated `/platform` console with audited catalog, billing operations and allowlisted non-secret settings | M12 | 4 | Tenant roles/API keys cannot access the surface; privileged changes are validated, audited and recoverable |
+
+**Existing foundations to reuse:** company/user registration and JWT (`src/site_gpt/app/api/routes.py`, `schemas/user.py`, `core/auth.py`); frontend auth/API (`frontend/src/pages/Register.tsx`, `Login.tsx`, `context/AuthContext.tsx`, `utils/api.ts`); company settings and limits (`api/setting.py`, `services/quota.py`); router wiring (`src/site_gpt/app/main.py`). The actual current route `/` is protected and renders the dashboard. V5 must explicitly migrate that UI route rather than silently replacing it.
+
+## 3. Pre-flight decisions (blocking)
+
+Resolve, record the owner/date/evidence, and update this table before implementation of the affected task. These are business and architecture decisions, not facts inferred from the repository.
+
+| ID | Question | Proposed engineering default (requires approval) | Must resolve before |
+|---|---|---|---|
+| D1 | Where do the public site and app live? | Same SPA/origin: `/` marketing, `/pricing`, `/register`, `/login`; console moves to `/app` (including `/app` dashboard and console navigation). An authenticated visitor hitting `/` is offered a clear “Go to app” link. Add a compatibility redirect from old authenticated `/` dashboard to `/app`; preserve deep links and `ProtectedRoute` return-to behavior. If deployment instead uses a marketing subdomain, document its origin/CORS/SEO separately before Wave 1. | V5-10 |
+| D2 | What are the saleable plans and exact terms? | Product owner supplies approved tier names, display descriptions, feature matrix, limits (sites, messages, seats, source/integration/analytics features), price in integer minor units, currency, billing cadence, and whether any free tier exists. No placeholder price or “unlimited” claim in production. Public plan response is server-owned and is the only UI source of truth. | V5-01 and V5-10 |
+| D3 | Payment processor and merchant readiness? | **Stripe is the V5 payment processor.** Use Stripe Checkout in `subscription` mode for hosted payment entry, Stripe Billing Portal for self-service billing, the official Stripe Python SDK on the backend, and Stripe-signed webhooks for lifecycle updates. Configure Stripe Price IDs on the server for every approved plan/cadence; never return them to the browser. Pin/review the SDK and Stripe API version. Confirm merchant-country eligibility, account ownership, test/live keys, webhook endpoint, supported currencies/payment methods and Stripe test-mode access. If the project's merchant account cannot use Stripe, paid billing is blocked pending an explicit revised plan; do not silently substitute another processor or build custom card entry. | V5-02 and V5-20 |
+| D4 | Trial, free plan and registration semantics? | No Stripe trial by default. Registration may choose an approved free tier or create a company in `pending`/free state, then authenticate and start Stripe Checkout for a paid tier. Paid access begins only after a verified Stripe webhook confirms subscription/payment state; the Checkout success URL is informational only. If a trial is desired, approve duration, eligibility, card requirement and conversion/expiry behavior first, then configure it explicitly in Stripe Checkout and verify state server-side. | V5-10, V5-20 |
+| D5 | Subscription lifecycle policy? | One current Stripe subscription per company; only the company admin can start Checkout, open Stripe Billing Portal or request plan/cancellation changes. Cancellation is at period end by default. Define Stripe invoice retry/grace period, past-due behavior, upgrade/downgrade/proration, refund policy and reactivation before implementation; configure Stripe Billing consistently and mirror confirmed state from webhooks. Until approved, payment failure never silently grants a higher entitlement. | V5-20, V5-30 |
+| D6 | Existing company rollout and self-hosted deployments? | `BILLING_ENABLED=false` by default. Disabled means current registration, settings limits, chat and features behave as they do today; no Stripe secrets are required. For hosted billing-enabled deployments, explicitly choose grandfathering/migration for existing companies and never mass-disable accounts as a side effect of enabling billing. Self-hosters can leave billing disabled. | V5-02, V5-30 |
+| D7 | Which enforcement policy is approved? | Map the approved plans to explicit entitlements and resolve conflicts with existing admin-set `daily_message_limit`, `session_message_limit`, feature flags, website status and env defaults. The plan tier is a ceiling, not a client-editable setting; retain internal safety caps. Do not enforce an unapproved limit or change chat refusal semantics. | V5-01, V5-30 |
+| D8 | Legal and public content? | Product owner/legal supplies terms of service, privacy notice, cancellation/refund/tax wording, support contact, company identity and approved claims. Existing `docs/security.md` disclaimers remain accurate; engineering does not claim SOC 2/HIPAA/GDPR certification. | V5-10, V5-50 |
+| D9 | Public branding and content? | Confirm product name/logo, target audience, approved screenshots/testimonials, copy, locale(s), SEO title/description/social preview, analytics/consent approach. No invented customer quotes, security guarantees or performance metrics. | V5-10 |
+| D10 | Who is a platform owner and how is that identity granted? | Use a distinct platform-owner grant bound to an existing authenticated user and provisioned out of band (never infer it from `users.role='admin'`, company membership, public registration or an API key). No tenant admin/UI can grant or revoke this privilege. Require MFA/SSO or approved strong auth before production exposure; until available, restrict the console to a private operator-only route/network. | V5-40 |
+| D11 | What can platform owners change? | Allowlisted plan catalog/Stripe price mappings, subscription support actions and explicitly approved non-secret runtime settings only. Every mutation is validated, confirmed for high-impact actions and written to append-only redacted audit history. Secrets, DB credentials, JWT keys, CORS and deployment topology remain in deployment secret/config management, not a browser form. | V5-41–43 |
+| D12 | Which global settings are runtime-editable? | Define a typed allowlist with validation, safe defaults, auditability and rollback. Do not expose arbitrary `core/config.py` environment variables. Auth, networking, secrets, destructive retention/erasure and billing enforcement are not generic live settings; require a separate approved operational procedure. | V5-43 |
+
+### Pre-flight checklist
+
+- [ ] Confirm current `master`, immutable `v4` tag and branch delta; create `feat/v5` from the intended current `master` only after reviewing any post-tag commits.
+- [ ] Inspect and preserve any unrelated user changes/untracked files; do not include them in V5 commits.
+- [ ] Confirm `uv run alembic current` = `uv run alembic heads` = `f33497bc1ecd` (single head), PostgreSQL/pgvector version, database backup and a disposable test database.
+- [ ] Run and record current Python test/module counts, `node --test tests/*.mjs`, frontend build/lint, import checks and `trail build`. Never copy historical counts from `AGENTS.md` or V4.
+- [ ] Complete D1–D12 as applicable. A live Stripe test is blocked until test-mode credentials/account exist; unit tests and signed Stripe fixture tests are still mandatory.
+- [ ] Verify hosted deployment topology, TLS, `FRONTEND_URL`, CORS and Stripe webhook reachability. Configure a Stripe test-mode endpoint and use Stripe CLI/test events where appropriate. Stripe secret keys, webhook signing secret and Price IDs stay backend-only, never in frontend env/build artifacts.
+
+## 4. Invariants (every task)
+
+1. **Auth and card data:** keep JWT and existing password hashing/auth helpers. Never log/store raw passwords, Stripe secret keys, card data or bearer tokens. Stripe Checkout hosts payment entry; SiteGPT never receives or stores PAN/CVC.
+2. **Checkout authority:** browser-provided plan code is validated against the server catalog. Never trust client-supplied amount, currency, customer ID, success URL, entitlement, or a `success` query parameter as evidence of payment.
+3. **Webhook integrity and idempotency:** verify the `Stripe-Signature` against the exact raw body with the Stripe SDK before parsing. Persist a unique Stripe event ID and apply subscription changes atomically; duplicate/replayed events are harmless. Validate Stripe object/customer/company linkage and tolerate delayed/out-of-order events without restoring stale status.
+4. **Tenant scope:** every subscription, billing status, portal and usage read/write is scoped through the authenticated user's company. Foreign IDs are not disclosed. Only company admins may change billing.
+5. **Billing-off compatibility:** default billing is off. With it off, no Stripe calls occur, no Stripe credentials are needed, and current self-hosted/legacy registration, quotas and feature behavior remain unchanged.
+6. **Plan enforcement:** centralize catalog/entitlement lookup; enforce through existing quota/feature service boundaries, not UI-only checks or scattered plan-name comparisons. Preserve per-IP → session cap → daily quota ordering, refusal response behavior, and existing Redis fail-open semantics. The plan must not override a stricter safety cap.
+7. **No sudden lockout:** a billing flag rollout does not retroactively remove service from existing companies without an explicit migration/communication plan. Unknown or temporarily unavailable billing state fails according to the approved policy and is observable; it must not be mistaken for a successful payment.
+8. **Pricing/content correctness:** the server catalog is authoritative. Public prices and configured Stripe Price IDs must match; live Stripe Checkout refuses incomplete/mismatched Stripe configuration. Stripe Price IDs and secret keys are private server configuration, never public catalog fields. No made-up prices, tier promises, trials, legal claims, reviews or logos.
+9. **Route compatibility:** preserve all existing `/api/...`, `/api/v1/...`, `/chat/{website_id}`, widget URLs and localStorage behavior. Moving the frontend dashboard from `/` to `/app` includes a tested compatibility path for signed-in users and deep links.
+10. **Privacy/minimal retention:** store Stripe identifiers and only the billing/event fields needed for account state, support and reconciliation. Do not persist full webhook payloads by default; document retention/deletion implications for subscription records and event IDs. Do not add payment details to privacy export unless explicitly required and designed.
+11. **Migrations:** M11 and M12 chain linearly from `f33497bc1ecd`, keep one head and follow migration guidance in `AGENTS.md`. Review autogenerate drift; never edit an applied revision. Indexes on busy tables use `CONCURRENTLY` where applicable.
+12. **Frontend:** React/Vite/TypeScript/Ant Design/axios; no new UI framework. Public routes use a distinct responsive marketing shell and must remain readable without auth. Preserve admin shell behavior under `/app`.
+13. **Config/docs:** every new env var is added to `core/config.py`, `.env.example`, and the README env table in the same wave. Secrets are backend-only. Update `README.md`, `AGENTS.md`, relevant security/API docs and this plan at gates.
+14. **Platform-owner access:** company admin/manager, API key and ordinary JWT never imply platform-owner permission. Owner access is separately provisioned, checked server-side on every platform endpoint, protected by strong authentication, and privileged mutations are audited. Never implement tenant impersonation as an authorization shortcut.
+15. **Platform settings and audit:** expose only a typed allowlist of non-secret settings. Secret values are not readable/writable there; deployment config remains authoritative for secrets. Audit records are append-only at the application/DB-role boundary, redacted, actor/target/action/time stamped and cannot be edited through the UI. Any retention/deletion exception is explicit and tested.
+16. **Release:** gate commit contains release docs and `trail build`; release tag is created once on the verified commit and never moved. Do not tag or deploy paid billing before D2–D12 and operational readiness are approved.
+
+## 5. Waves and tasks
+
+### Wave 0 — Product, billing and migration foundation
+
+**Goal:** resolve business constraints, freeze the catalog contract, add safe disabled-by-default configuration, and record the baseline. **Entry:** §3 pre-flight. No production billing or new schema in this wave.
+
+- [ ] **V5-01 · Approve catalog and entitlement matrix** — `M`, depends: D2/D4/D5/D7/D8. Files: this plan, `plans/SPEC.md` or a focused pricing reference if product approves. Record approved tier codes, exact limits/features, price/currency/cadence, free/trial choice, upgrade/downgrade/cancel/refund/grace policies and existing-customer treatment. Keep sensitive commercial details out of env files. **Done when:** product/legal owner approval is recorded and every displayed plan has an enforceable definition or is explicitly marked “contact sales” and excluded from self-serve checkout.
+- [ ] **V5-02 · Stripe SDK and billing configuration** — `M`, depends: D3/D6. Files: `src/site_gpt/app/core/config.py`, `.env.example`, `README.md`, `pyproject.toml`, `uv.lock`, tests. Add the reviewed/pinned official `stripe` Python SDK and Stripe API version; add `BILLING_ENABLED=false`, backend-only `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET`. Until V5-42 ships, keep the approved catalog and private Stripe Product/Price mappings in a server-only catalog/config source; do not require plan IDs in `VITE_*` or return mappings in public API responses. V5-42 migrates that catalog to the durable platform-managed records. Billing-enabled configuration validation fails clearly when Stripe credentials or a published plan's mapping is missing; billing-off imports/startup make no Stripe request and require no credentials. **Done when:** tests cover disabled mode, missing/invalid configuration, provider-ID secrecy, secret redaction and SDK behavior; imports work with billing disabled.
+- [ ] **V5-03 · Baseline and schema design review** — `S`, depends: V5-01/02. Record actual suite/build counts, route behavior, current limits, existing-company fixtures, and M11 data/lifecycle/retention design before code. **Done when:** baseline evidence and M11 schema/event idempotency contract are in this plan or a reviewed task note; branch is free of unrelated changes.
+
+#### Gate V5-0G — Foundation
+
+- [ ] D1–D12 decisions needed for following waves are resolved or explicitly excluded from V5; Stripe account/test endpoint and platform-owner provisioning/strong-auth readiness are documented.
+- [ ] Billing defaults off; backend imports/startup/tests work without Stripe credentials.
+- [ ] Catalog/entitlement matrix and legal/content owners are approved; no public price is guessed.
+- [ ] Actual baseline test/build counts and single migration head recorded; `trail build` succeeds.
+- [ ] Commit `chore(v5): V5-0G gate — foundation`.
+
+### Wave 1 — Public landing page, pricing and signup funnel (F1)
+
+**Goal:** make the product understandable and let an anonymous visitor reach registration with a selected, validated plan. No payment is claimed in this wave.
+
+- [ ] **V5-10 · Public route architecture and marketing shell** — `L`, depends: V5-0G / D1 / D9. Files: `frontend/src/App.tsx`, new public layout/page components and styles, `frontend/src/components/Layout.tsx`, tests. Implement `/` landing, `/pricing`, `/register`, `/login` outside the authenticated console shell; move dashboard to `/app`; use a safe compatibility redirect for authenticated legacy `/` and preserve console deep links. Add FAQ/feature sections, accessible nav/footer, responsive layout and approved legal links. **Done when:** anonymous routes render without auth/API credentials; logged-in navigation can reach `/app`; existing API/widget URLs are untouched; route tests cover old `/` and protected deep links.
+- [ ] **V5-11 · Pricing page and server-owned plan listing** — `M`, depends: V5-01, V5-10. Files: `src/site_gpt/app/api/` and matching schemas/service, `main.py`, frontend pricing page/API types/tests, docs. Read the approved server-side catalog source and expose public fields (code, name, approved display price/interval, included features/limits, CTA eligibility), never Stripe secrets or Product/Price IDs. V5-42 later moves this source to durable published plan records without changing the public response contract. Render the approved comparison with clear limit definitions and no unsupported claims. **Done when:** endpoint is unauthenticated/read-only, stable, validated, test-covered; UI derives all displayed values from it and shows a safe unavailable/error state when catalog is misconfigured.
+- [ ] **V5-12 · Plan-aware registration handoff** — `M`, depends: V5-10/11. Files: `Register.tsx`, route/API helpers and registration tests. Carry plan code through `/register?plan=…`, validate it against public catalog, keep existing registration fields/validation and avoid accepting a redirect target or price from query parameters. After registration, authenticate/route to `/app` (free plan) or to an explicit authenticated checkout start for a paid plan. **Done when:** unknown/stale plan code never upgrades an account, company/user registration remains tenant-safe and duplicate/rate-limit behavior is unchanged.
+- [ ] **V5-13 · Marketing content, SEO and accessibility** — `S`, depends: V5-10, approved content D8/D9. Files: public page components, metadata/index HTML, styles, README if relevant. Add title/description/social preview, semantic headings, keyboard/focus behavior, contrast, mobile layout and approved product imagery. No public testimonials, customer logos, guarantees, or legal language without supplied approval. **Done when:** production build succeeds and the gate's desktop/mobile/accessibility checklist passes.
+
+#### Gate V5-1G — Public funnel
+
+- [ ] Landing/pricing/register/login are public and separated from the console shell; `/app` works after login.
+- [ ] Pricing data comes only from the backend catalog; invalid plan query cannot create paid entitlement.
+- [ ] Responsive, accessibility, SEO metadata, frontend build/lint and route tests pass.
+- [ ] Existing login/register rate limiting, CORS and API/widget paths remain covered.
+- [ ] `trail build`, README/AGENTS updates and commit `chore(v5): V5-1G gate — public site`.
+
+### Wave 2 — Subscription checkout, webhook and schema (F2)
+
+**Goal:** support paid signup via Stripe-hosted Checkout, with verified Stripe webhooks as the subscription source of truth. **M11** is introduced here after catalog and Stripe configuration decisions.
+
+- [ ] **V5-20 · M11 Stripe subscription and event schema** — `M`, depends: V5-0G / D3–D6. Files: `src/site_gpt/app/models.py`, Alembic revision generated from current head, schema/index tests. Store company-scoped subscription state and Stripe Customer/Subscription identifiers, approved plan code and cadence, lifecycle timestamps/status/cancel-at-period-end, plus a minimal idempotency receipt for Stripe event IDs/types/creation/processing. Establish uniqueness/check/index/FK cascade policy. Do not store card data or full raw webhook JSON. Support one current subscription per company without accidental duplicate paid subscriptions. **Done when:** single linear M11 upgrades/downgrades on PostgreSQL, schema/index/revision-chain tests pass, and rollback/data-retention implications are documented before deployment.
+- [ ] **V5-21 · Stripe Customer and Checkout Session** — `L`, depends: V5-20 / D3/D5. Files: `services/billing.py` and a focused Stripe client wrapper, billing API/schema, router registration, config/tests. Authenticated company admin selects a plan code; backend resolves the approved Stripe Price ID, creates/reuses the Stripe Customer safely, associates it with the company through trusted server-side metadata and creates a Stripe Checkout Session with `mode='subscription'`. Construct success/cancel return URLs from configured `FRONTEND_URL`; use Stripe idempotency keys for retryable session creation. Never accept arbitrary URLs, Price IDs, quantities or amounts from the client. **Done when:** mocked tests pin the Stripe request and tenant/customer linkage; bad/unknown/unconfigured plans fail closed; card entry stays on Stripe's hosted domain and browser return alone grants no subscription.
+- [ ] **V5-22 · Stripe-signed webhook lifecycle processing** — `L`, depends: V5-20/21. Files: Stripe webhook route/service/tests/docs. Read the raw request body and verify `Stripe-Signature` with the configured endpoint signing secret using the Stripe SDK before applying changes. Handle the required Stripe events (`checkout.session.completed`, relevant asynchronous checkout payment events if enabled, `customer.subscription.created/updated/deleted`, `invoice.paid` and `invoice.payment_failed`); finalize the event set against the approved billing lifecycle and pinned Stripe API version. Validate Stripe Customer/Subscription IDs against trusted stored mappings and company metadata, atomically record unique Stripe event IDs and apply allowed state transitions. Handle Stripe retries/duplicates, stale or out-of-order events, unknown customer/object, invalid signatures and DB failures; return non-2xx on transient processing failure so Stripe retries, and acknowledge already-processed duplicates. Do not trust Checkout return URL as fulfillment. **Done when:** tests prove signature failure changes no rows, duplicate event changes state once, out-of-order events cannot restore stale access, and failed DB processing can be retried.
+- [ ] **V5-23 · Stripe Billing Portal and billing API** — `M`, depends: V5-21/22. Files: billing router/schema/service, frontend API/types. Expose company-admin-scoped subscription summary, Stripe Checkout start, Stripe Billing Portal session creation and the Stripe webhook endpoint. Create portal sessions only for the authenticated company's stored Stripe Customer; portal return URL is fixed from configured `FRONTEND_URL`; foreign-company Stripe IDs are never addressable. **Done when:** non-admin and foreign-tenant requests are refused; no Stripe secret, raw Stripe object or payment method details are returned.
+- [ ] **V5-24 · Migration/API lifecycle tests** — `M`, depends: V5-20–23. Extend `tests/test_models_indexes.py` and focused Stripe billing tests; test M11 from empty DB and from V4 head, downgrade in throwaway DB, event-ID race/idempotency transaction semantics, Stripe signature verification and no raw event payload retention. **Done when:** M11 invariants and Stripe subscription lifecycle state table are pinned without a live Stripe account.
+
+#### Gate V5-2G — Test-mode checkout
+
+- [ ] M11 is the sole Alembic head; empty replay, upgrade from V4 and safe downgrade pass on disposable PostgreSQL.
+- [ ] Stripe Checkout never grants access from browser return; a valid Stripe-signed webhook grants the correct subscription exactly once.
+- [ ] Stripe signature, duplicate, retry, stale event, invalid customer/company, canceled/failed and tenant-scope negatives pass.
+- [ ] Stripe test-mode Checkout/webhook is exercised with Stripe test keys or Stripe CLI fixtures if available; otherwise marked **blocked and unexecuted** with the missing Stripe prerequisite, while mocked SDK/signature fixture tests still pass.
+- [ ] Billing-off behavior and startup remain unchanged; imports, suites, build/lint, `trail build` pass; docs and commit `chore(v5): V5-2G gate — subscription checkout`.
+
+### Wave 3 — Entitlements, usage and in-app billing (F3)
+
+**Goal:** connect paid status to approved product access without changing self-hosted defaults or scattering plan logic.
+
+- [ ] **V5-30 · Entitlement resolver and compatibility policy** — `L`, depends: V5-01/20/22 / D5–D7. Files: `services/entitlements.py` (or a reviewed existing-service extension), config/catalog, tests. Resolve subscription status + plan code to a typed entitlement snapshot; define free/past-due/canceled/grace/unknown behavior and existing-company grandfather policy. Centralize allowed site/message/seat/feature values. Billing disabled bypasses paid-plan enforcement exactly as before. **Done when:** exhaustive state/plan table tests prove the approved policy; missing/stale Stripe subscription data cannot become a higher plan.
+- [ ] **V5-31 · Enforce plan ceilings at existing boundaries** — `L`, depends: V5-30. Files: services/quota and relevant company/website/user/API endpoints, tests. Enforce only approved caps/features at server-side creation/use points (e.g. website/seat limits and chat daily/session ceilings); preserve existing limit parsing, settings and internal ceilings, and the current chat guard ordering/refusal semantics. A plan limit cannot be raised by `PUT /api/settings` or bypassed through `/api/v1`. **Done when:** every entitlement has at least one direct allow/deny service/API test, including both auth paths where applicable, and existing-company behavior is regression-tested.
+- [ ] **V5-32 · Console billing and usage page** — `M`, depends: V5-23/30/31. Files: new frontend billing page, `App.tsx`, console navigation, `utils/api.ts`, API types, possibly `Settings.tsx`. Show plan, lifecycle status, renewal/cancel-at-period-end, Stripe Billing Portal link, and accurate current usage versus approved limits; provide upgrade/select/cancel entry points according to policy. Admin-only mutation controls; ordinary members see only whatever summary D5 approves. **Done when:** loading/error/past-due/canceled/disabled states are clear, no UI implies paid status before Stripe webhook confirmation, and account is scoped to the signed-in company.
+- [ ] **V5-33 · Stripe lifecycle operations, notices and reconciliation** — `M`, depends: V5-22/30. Files: worker only if an approved scheduled reconciliation is required, mail/templates only if notice content is approved, docs/tests. Define operator procedure for delayed/failed Stripe webhooks, Stripe Dashboard reconciliation, invoice failures and cancellation; implement only minimal alert/reconciliation needed to detect drift. No worker should silently rewrite status without verifying canonical Stripe state. **Done when:** runbook gives actionable recovery steps and tests/metrics cover Stripe API/webhook failure visibility.
+
+#### Gate V5-3G — Entitlement enforcement
+
+- [ ] Each approved paid entitlement is enforced server-side at its canonical boundary; client-only gating is not counted.
+- [ ] Billing-off mode reproduces V4 behavior; legacy companies follow approved rollout policy; Redis-down and current quota ordering semantics remain intact.
+- [ ] Billing page status/usage is tenant-scoped and Stripe-authoritative; admin mutations are protected.
+- [ ] Existing quota/settings, widget/chat, API-key `/api/v1` and company registration tests pass; no daily/session cap is silently raised or bypassed.
+- [ ] Docs, fresh test counts, build/lint and `trail build` recorded; commit `chore(v5): V5-3G gate — plan entitlements`.
+
+### Wave 4 — Platform-owner operations console (F5)
+
+**Goal:** provide the project owner a separate control plane for plan/pricing management, subscription operations and safe global settings. This is not the tenant company-admin console. Entry: V5-3G signed off and D10–D12 resolved.
+
+- [ ] **V5-40 · Platform-owner access boundary and M12** — `L`, depends: V5-2G / D10. Files: `models.py`, Alembic M12, `core/auth.py`, platform-admin API/dependencies, tests. Add an out-of-band provisioned platform-owner grant bound to an existing authenticated user (not the tenant role field) and an append-only audit record model; protect every route with a distinct `require_platform_owner` dependency. Add deployment procedure to grant/revoke owners; no public or tenant-admin endpoint can do so. Require approved strong auth or private-network restriction for production. Never add tenant impersonation. **Done when:** ordinary admin/manager/member/API key/anonymous callers are denied across platform routes; provisioned owner is allowed; revocation takes effect; audit captures actor/action/target/time with secrets redacted.
+- [ ] **V5-41 · Platform overview and subscription operations** — `M`, depends: V5-40 / V5-20–23. Provide searchable/paginated company and subscription overview, plan/status/period/usage, minimal Stripe references and dashboard links. Support only approved actions (e.g. cancel at period end or request reconciliation); require reason/confirmation for high-impact changes and audit them. No card details, manual “mark paid” bypass or implicit impersonation. **Done when:** cross-company operations are platform-owner-only, paginated/minimal and auditable; Stripe/webhook state remains authoritative.
+- [ ] **V5-42 · Plan and Stripe price catalog management** — `L`, depends: V5-40 / V5-01/02/11/21 / D2/D11. M12 migrates the initial approved server-side catalog into durable plan, feature/limit, publication and cadence/currency price-mapping records; a database-backed catalog is required for operator edits. Preserve plan codes and public response compatibility through cutover. Owners can draft/edit/publish/archive plans and create Stripe Products/Prices server-side or map validated pre-created Stripe Price IDs. Price IDs remain private. Stripe Prices are immutable: a price change creates a new Price and preserves existing subscribers on the old price unless a separately approved migration occurs. Public pricing reads only the published catalog; edits have preview/confirmation and audit history. **Done when:** CRUD validation, Stripe test-mode sync/mapping, publish/archive, price-change behavior and existing-subscriber preservation are tested; no secret or provider ID leaks into public pricing.
+- [ ] **V5-43 · Safe global settings and owner dashboard UX** — `M`, depends: V5-40 / D11/D12. M12 stores only explicitly allowlisted global runtime values; setting readers must validate these typed overrides, and deployment environment remains authoritative for secrets and non-editable configuration. Build categorized `/platform` sections (overview, plans/pricing, subscriptions, settings, audit) separate from `/app`. Allow approved non-secret settings and rollout toggles with validation, preview, high-impact confirmation and audit trail. Never expose arbitrary env vars, API/JWT/webhook secrets, DB URLs, CORS or destructive retention settings as generic form inputs. **Done when:** unknown keys rejected; secrets cannot be read/written; allowed changes validate, audit and have rollback docs; service runs if UI unavailable.
+- [ ] **V5-44 · Platform security and recovery operations** — `M`, depends: V5-40–43. Add authorization matrix, audit tamper/secret-redaction tests, CSRF/session hardening as applicable, owner grant/revoke and lockout recovery procedure, backups/restore and break-glass guide. Browser-test role separation between public marketing, tenant `/app` and platform `/platform`; confirm sensitive operations require re-auth/confirmation. **Done when:** no privilege escalation path remains; high-impact actions are audited; owner recovery does not depend on ad hoc production DB edits.
+
+#### Gate V5-4G — Platform-owner operations
+
+- [ ] M12 is the sole Alembic head chained from M11; migration/audit constraints are verified on a disposable PostgreSQL DB.
+- [ ] Platform owner is separately provisioned; tenant admin/manager/member, anonymous visitor and API key cannot access platform pages or APIs.
+- [ ] Plan/price CRUD/publish/archive, Stripe test-mode sync, approved subscription actions and safe global-setting updates pass and create redacted audit records.
+- [ ] No “mark paid” shortcut, raw secret/card display, arbitrary environment editing or implicit tenant impersonation exists.
+- [ ] Platform routes/shell are isolated from `/app` and public routes; auth/API tests, frontend build/lint, suites and `trail build` pass.
+- [ ] Docs/dashboard updated; commit `chore(v5): V5-4G gate — platform owner console`.
+
+### Wave 5 — Launch hardening and V5 release (F4)
+
+**Goal:** prove the marketing-to-Stripe-payment and owner-operations journeys. Do not enable live billing or release until commercial/legal, merchant, privileged-access and operational readiness are signed off.
+
+- [ ] **V5-50 · Security, privacy, docs and support runbook** — `M`, depends: V5-1G/2G/3G/4G / D5/D8/D10–D12. Update README, AGENTS, security/API docs and pricing/operations docs. Document Stripe data flow, webhook signing/rotation, platform-owner provisioning/revocation, audit retention, subscription deletion, cancellation/refunds/grace policy, reconciliation, global-setting boundaries and billing-off self-hosted mode. Include approved legal links and support ownership. **Done when:** docs match code and make no unsupported certification/legal claims.
+- [ ] **V5-51 · End-to-end test-mode and platform gate** — `L`, depends: V5-50. On a **throwaway DB** and Stripe test mode only, drive landing → pricing → registration → Stripe Checkout → signed webhook → entitlement → Billing Portal/cancellation; separately provision an owner and exercise catalog/price management, subscription overview, allowlisted setting update and audit history. Test role escalation, owner revocation, price tampering, duplicate webhook, tenant isolation, secret redaction, billing disabled, existing-company policy and `/app` vs `/platform`. **Done when:** runnable checks pass and missing Stripe/browser prerequisites are explicitly blocked, not skipped.
+- [ ] **V5-52 · Release content and deployment checklist** — `S`, depends: V5-50/51. Confirm approved catalog and Stripe live configuration, webhook/signing-secret rotation, platform-owner strong-auth/bootstrap and network access, CORS/FRONTEND_URL, backups/audit retention, legal/support contact, monitoring, rollback and staged rollout. **Done when:** each launch prerequisite has an owner and go/no-go sign-off.
+- [ ] **V5-53 · Release gate and immutable tag** — `M`, depends: V5-51/52 and all gates. Re-run verification, inspect migrations/release diff, update dashboard/docs in the same commit, run `trail build`, merge/fast-forward the verified commit and create `v5` once only if authorized. **Done when:** tag points exactly to V5-5G-verified commit; if business/legal/Stripe/owner-access prerequisites are unresolved, billing remains disabled and no paid launch is claimed.
+
+#### Gate V5-5G — Release gate
+
+- [ ] All tasks/gates have evidence; unresolved business, legal, Stripe merchant or owner-access prerequisites are explicitly blocking.
+- [ ] Full suites/imports/build/lint/migration replay-current/`trail build` pass; actual counts are recorded from this run.
+- [ ] Stripe test-mode checkout/webhook/entitlement/cancellation and platform-owner catalog/settings/audit paths pass, or external checks are blocked with prerequisites.
+- [ ] No production Stripe secrets or real card data were used in tests; billing-off and tenant/platform authorization boundaries are proven.
+- [ ] README/AGENTS/security/API/operations docs, plan, release notes and dashboard match implementation in the gate commit.
+- [ ] Only after explicit authorization: fast-forward verified release to `master`, create annotated tag `v5` once on that exact commit and verify target; never move it afterward.
+
+## 6. Dependency graph and migration ledger
+
+```mermaid
+graph LR
+  W0[Wave 0: decisions/config/baseline] --> G0{V5-0G}
+  G0 --> W1[Wave 1: landing/pricing/signup] --> G1{V5-1G}
+  G1 --> M11[M11: subscription + billing event records]
+  M11 --> W2[Wave 2: checkout/webhook/portal] --> G2{V5-2G}
+  G2 --> W3[Wave 3: entitlements/console enforcement] --> G3{V5-3G}
+  G3 --> W4[Wave 4: platform owner console] --> G4{V5-4G}
+  G4 --> W5[Wave 5: launch hardening] --> G5{V5-5G / optional v5 tag}
+```
+
+Critical path: **decisions/catalog → public signup → M11/Stripe Checkout + webhook → entitlement enforcement → M12/platform-owner console → release gate**. Public marketing can be authored without Stripe credentials after content is approved, but paid checkout cannot precede the Stripe configuration decision and M11 gate.
+
+| ID | Revision | Contents (planned; review autogenerate) | Task | Chains from |
+|---|---|---|---|---|
+| M11 | Generated only when V5-20 starts | Company subscription state and Stripe Customer/Subscription identifiers plus a minimal unique Stripe event receipt for idempotency; no card data/raw event payload. | V5-20 | `f33497bc1ecd` |
+| M12 | Generated only when V5-40 starts | Separately provisioned platform-owner grants, append-only audit records, durable plan/price catalog and typed allowlisted global-setting records; no secret values/card data. | V5-40/42/43 | M11 head |
+
+M11 design review must decide whether a single current Stripe subscription row per company is sufficient or whether lifecycle history needs a separate table. Prefer the smallest schema that supports uniqueness, webhook replay protection, support, deletion and retry semantics. M12 is justified by the approved requirement for owner-managed pricing/global settings: it includes durable catalog and typed setting records, separately provisioned owner grants and redacted audit history. Stripe Price IDs are private catalog fields, never public API output. Pin the Stripe API version used by the SDK/webhook endpoint. M12 design establishes owner-grant revocation, audit-retention and company-deletion policies. Keep secrets in deployment config. The Alembic chain remains linear. Apply the known drift cleanup rules from `AGENTS.md` and test on PostgreSQL, not SQLite alone.
+
+## 7. Verification runbook and acceptance scenarios
+
+Run the standard repository checks after tasks and at every gate; follow `AGENTS.md` for exact commands and current suite modules.
+
+```bash
+source .venv/bin/activate
+uv run python -c "import site_gpt.app.main"
+uv run python -c "import site_gpt.app.worker"
+uv run alembic upgrade head && uv run alembic current
+uv run python -m unittest discover -s tests -v
+node --test tests/*.mjs
+cd frontend && npm run build && npm run lint
+trail build
+```
+
+At relevant gates, use one dedicated disposable PostgreSQL database and Stripe test-mode credentials/Stripe CLI only. Never run destructive scripts against a user database or use Stripe live-mode keys/real cards in tests. The final end-to-end scenario is:
+
+1. Visit `/` anonymously; navigate to `/pricing`; verify exact approved tier/limits/price and legal links; select a paid tier.
+2. Register using that plan selection, authenticate as company admin, and begin Stripe-hosted Checkout. Verify the backend created a `subscription`-mode session for the server-mapped Stripe Price ID, the correct Stripe Customer/company association and configured return URLs only.
+3. Return from Stripe Checkout without a webhook: paid entitlements remain off. Deliver a valid Stripe-signed test webhook: the correct company changes state once. Replay the same Stripe event: no duplicate state change. Deliver invalid-signature and foreign-customer Stripe events: no account mutation.
+4. Check plan limits at each enforced API/service boundary; attempt a client price/plan tamper, a non-admin upgrade, foreign-company portal access, and `/api/v1` bypass. All fail safely.
+5. Exercise cancel-at-period-end, duplicate/out-of-order events, invoice failure/past-due policy, reactivation and Stripe outage according to D5 and the configured Stripe Billing policy. Check user-facing billing/usage state and operator recovery docs.
+6. Disable billing and repeat relevant V4 flows: login, registration, website/chat, settings quotas, widget and API paths behave as before; no Stripe call is made.
+7. Confirm M11 foreign-key behavior, event receipt retention/minimal data, M12 owner-grant revocation/audit retention/catalog-setting constraints, migration replay/downgrade and company/account deletion policy on the disposable DB.
+8. Confirm `/app` dashboard and all old protected pages work; old signed-in `/` reaches `/app`; anonymous `/` remains the marketing landing page; no widget/storage/API URL changed.
+9. As a provisioned platform owner, publish a test plan/Stripe Price mapping, inspect a subscription, update an allowlisted global setting and verify its redacted audit record. Confirm tenant admins, members and API keys cannot perform these actions; revoke owner access and verify it takes effect.
+
+**Negative checks are mandatory:** fake success redirect; unknown plan code; Stripe Price ID missing/mismatched; altered webhook body/signature; duplicate webhook; stale event after cancellation; event for unknown customer; checkout retry; billing disabled with secrets absent; existing company under rollout; non-admin billing mutation; foreign tenant subscription/portal; limit changed from browser/admin settings; dark/mobile layout; keyboard-only CTA; invalid/expired signup selection. No real card data, real charges or destructive live database steps.
+
+**Blocked-item rule:** absence of a Stripe test account/secret, Stripe CLI access, browser, legal approval or production merchant approval blocks only the corresponding external check. Record the exact prerequisite and leave it unchecked. Unit/service tests, Stripe SDK mock/signature/idempotency fixtures, migration tests and the billing-off proof still run. Production go-live cannot be marked complete while Stripe merchant/legal/catalog prerequisites are unresolved.
+
+## 8. Rollback and operational safety
+
+| Situation | Action |
+|---|---|
+| Marketing route/build regression | Revert the isolated frontend task; preserve `/app` and auth route fallback. |
+| Stripe unavailable or credentials misconfigured | Set `BILLING_ENABLED=false`; public content may remain only if its pricing/CTA accurately explains Stripe Checkout is unavailable. Do not claim purchase succeeded. |
+| Stripe webhook processing failure | Keep Stripe webhook retries enabled; inspect Stripe event ID/status and redacted logs without exposing secrets/PII; replay through the documented idempotent path after fixing cause. Do not manually mark paid based on a browser redirect. |
+| Wrong entitlement/limit rollout | Disable billing enforcement through the approved flag/rollback; restore prior config. Do not delete subscription/event records or silently mutate plan state. |
+| M11 migration incorrect before deployment | Regenerate an unapplied revision after review. |
+| M11 already applied and incorrect | Never edit the applied revision; write a forward migration. Back up and review before any downgrade that discards billing state. |
+| Stripe live launch incident | Disable new Stripe Checkout sessions first; preserve existing service per approved grace/rollout policy; keep the signed webhook endpoint/reconciliation available if needed to process cancellations/refunds. Escalate to named billing operator and Stripe support. |
+| V5 abandoned after deployment | Leave billing disabled and follow the existing V4 behavior. Only downgrade after backup, account-state review, and explicit data-loss approval. Published tags remain immutable. |
+
+## 9. Risk register
+
+| Risk | Trigger | Mitigation | Owner tasks |
+|---|---|---|---|
+| Incorrect/unapproved price or feature claim | Placeholder content reaches production | D2/D8 approvals; server catalog is authoritative; release checklist blocks unknown terms | V5-01, V5-11, V5-42 |
+| Client redirect or plan tampering grants paid access | Frontend treats a Stripe Checkout success URL as payment | Only a verified Stripe webhook updates state; server resolves the approved plan and Stripe Price ID | V5-21, V5-22 |
+| Forged/replayed/out-of-order Stripe webhook corrupts status | Missing `Stripe-Signature` verification/idempotency/ordering check | Verify exact raw body with Stripe SDK; unique Stripe event ID; atomic update; stale event protection; negative tests | V5-22, V5-24 |
+| Cross-company billing exposure | Subscription/customer ID supplied by another tenant | Resolve through `user.company_id`; admin-only; Stripe IDs never authorize a tenant on their own | V5-23, V5-32 |
+| Self-hosted behavior breaks | Billing code assumes Stripe credentials or active plan | Off-by-default flag; no Stripe calls when disabled; parity gate | V5-02, V5-30, V5-41 |
+| Tenant privilege escalates to platform owner | Company `admin`, JWT or API key is treated as platform authority | Separate out-of-band grant, endpoint-level owner dependency, revoke test and isolated route/shell | V5-40, V5-44, V5-51 |
+| Owner changes wrong price or unsafe setting | Catalog publish or global mutation bypasses validation/audit | Typed allowlists, preview/confirmation, append-only redacted audit, Stripe Price immutability and recovery procedure | V5-42, V5-43, V5-44 |
+| Existing customers lose access | Billing enabled without grandfather policy | D6 and staged rollout; explicit migration/communication; no mass downgrade on enable | V5-01, V5-30, V5-42 |
+| Limits conflict or can be bypassed | Plan cap exists only in UI, or conflicts with company settings/API | Central entitlement resolver; enforce at canonical service boundary and both public/admin API paths; preserve safety caps | V5-30, V5-31 |
+| Cancellation/failure surprise or wrongful lockout | Stripe webhook delay, retry state, ambiguous grace policy | Approve D5, display true status, operational reconciliation and conservative transition behavior | V5-22, V5-33 |
+| Secret/card/PII exposure | SDK/debug logs, webhook payload retention, client bundle | Backend-only secrets, hosted card entry, minimal event receipts, redaction tests, security docs | V5-02, V5-22, V5-40 |
+| Route collision with existing dashboard | `/` repurposed without compatibility plan | D1 route migration and signed-in/anonymous regression tests | V5-10, V5-12 |
+| Dark patterns / accessibility / SEO defects | CTA or price unclear, mobile-only regression | Approved content, semantic/keyboard/responsive checklist, browser gate | V5-11, V5-13 |
+| Release tag moved or billing launched prematurely | Docs/tag after gate or live keys enabled before approval | V3 §8 immutable-tag rule; separate release authorization; disabled default; explicit operator checklist | V5-42, V5-43 |
+
+## 10. Progress dashboard
+
+| Wave | Planned tasks | Done | Gate |
+|---|---:|---:|---|
+| 0 — Foundation and decisions | 3 | 0 / 3 | ☐ V5-0G |
+| 1 — Landing, pricing and registration | 4 | 0 / 4 | ☐ V5-1G |
+| 2 — Subscription checkout and webhook | 5 | 0 / 5 | ☐ V5-2G |
+| 3 — Entitlements and billing console | 4 | 0 / 4 | ☐ V5-3G |
+| 4 — Platform-owner operations console | 5 | 0 / 5 | ☐ V5-4G |
+| 5 — Launch hardening and release | 4 | 0 / 4 | ☐ V5-5G |
+| **Total** | **25 tasks + 6 gates** | **0 / 25** | **0 / 6 gates** |
+
+## 11. Definition of done — V5
+
+- [ ] All 25 tasks and 6 gates have checked completion evidence; unresolved approvals are explicitly recorded as blockers, not hidden.
+- [ ] Anonymous visitors can understand the product and approved pricing, select a plan, register, and start Stripe-hosted Checkout for an eligible paid plan.
+- [ ] Only verified, tenant-linked, idempotently processed Stripe events confirm paid status; Checkout redirects never grant access.
+- [ ] Approved plan entitlements are enforced server-side; billing page accurately reflects subscription/usage; billing mutations are company-admin scoped.
+- [ ] Billing disabled remains the default and preserves V4 self-hosted behavior, with no Stripe secret requirement or call.
+- [ ] M11 and M12 chain from `f33497bc1ecd` as one Alembic head and are verified on disposable PostgreSQL; no card data/full event payload is stored.
+- [ ] Existing widget/API/auth compatibility is proven; the dashboard route migration and deep-link behavior are tested.
+- [ ] Python and node suites, imports, frontend build/lint, migration checks and `trail build` pass; counts recorded from the final run, never copied.
+- [ ] README/AGENTS/security/API/pricing/operations/release docs match code and approved terms.
+- [ ] The platform-owner console is inaccessible to tenant admins/ordinary users; plan/price, subscription and safe global-setting changes are authorized, validated and audited.
+- [ ] Production Stripe billing is enabled only after Stripe merchant readiness, catalog/legal approval, platform-owner strong-auth/provisioning, operator support and release authorization. Tag `v5`, if cut, points once to the exact verified release commit and is never moved.
+
+## Appendix — task index
+
+| Wave | IDs |
+|---|---|
+| 0 | V5-01, V5-02, V5-03 → gate V5-0G |
+| 1 | V5-10, V5-11, V5-12, V5-13 → gate V5-1G |
+| 2 | V5-20 (M11), V5-21, V5-22, V5-23, V5-24 → gate V5-2G |
+| 3 | V5-30, V5-31, V5-32, V5-33 → gate V5-3G |
+| 4 | V5-40, V5-41, V5-42, V5-43, V5-44 → gate V5-4G (platform-owner console) |
+| 5 | V5-50, V5-51, V5-52, V5-53 → gate V5-5G (release only if authorized) |
