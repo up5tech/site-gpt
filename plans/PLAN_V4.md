@@ -3,7 +3,7 @@
 | | | |
 |---|---|---|
 | Version | **V4** — closes the feature gap against sitegpt.ai recorded in the 2026-11-20 comparison (§2): advanced analytics, per-conversation AI insights, new training sources, per-conversation cost caps + sitemap auto-scan, and a hosted chat page |
-| Status | **In progress — Wave 0 and Wave 1 complete (gates V4-0G and V4-1G signed off): V4-10 done (trend, funnel, top questions), V4-11 done (aggregate CSV export), V4-12 done (analytics page: SVG trend, funnel, top questions, export button), V4-13 done (docs: the analytics surface in README/AGENTS/api-v1); gate V4-1G signed off (both suites, widget suite, build/lint, `trail build`, digest byte-comparison, CSV by way of the API, `/api/v1` summary + foreign-id 404). Wave 2 is under way: V4-20 done (per-session message cap), V4-21 done (Settings field + docs), V4-22 done (daily sitemap diff scan), V4-23 done (docs: caps and freshness); gate V4-2G signed off (both suites, widget suite, build/lint, `trail build`, `alembic current`, the session-cap refusal on the API, and the scan + 500-sitemap hand checks). Wave 3 is under way: V4-30 done (PPTX extraction), V4-31 done (YouTube source provider), V4-32 done (Notion source provider), V4-33 done (frontend buttons + docs for the new sources); gate V4-3G signed off (both suites, widget suite, build/lint, `trail build`, `alembic current`, and the `.pptx` + YouTube end-to-end imports with cited answers plus the three negatives — a successful Notion import stayed **blocked** for lack of an integration token, and the gate found and fixed the `attachments.file_type` length defect that broke `.pptx`/`.docx` uploads). Wave 4 is under way: V4-40 done (M10 `conversation_insights`, plus the `attachments.file_type` widening 50 → 120 that removes the V4-3G truncation clamp), V4-41 done (the insight service: claim/refresh lifecycle, caps, batched classification, failure handling), V4-42 done (the `insights` job type, the opt-in scheduler and the handler), V4-43 done (insight labels on the inbox queue/detail and the flag-gated `outcomes` breakdown in analytics, plus the seeded render check on a throwaway database), V4-44 done (the erasure/retention cascade proof for insight rows and the security §4 insight data flow), V4-45 done (the insights docs: README section, worker job types, SPEC Scale-tier note); Alembic head is `f33497bc1ecd`.** D1–D9 confirmed twice against code anchors (§3) |
+| Status | **In progress — Wave 0 and Wave 1 complete (gates V4-0G and V4-1G signed off): V4-10 done (trend, funnel, top questions), V4-11 done (aggregate CSV export), V4-12 done (analytics page: SVG trend, funnel, top questions, export button), V4-13 done (docs: the analytics surface in README/AGENTS/api-v1); gate V4-1G signed off (both suites, widget suite, build/lint, `trail build`, digest byte-comparison, CSV by way of the API, `/api/v1` summary + foreign-id 404). Wave 2 is under way: V4-20 done (per-session message cap), V4-21 done (Settings field + docs), V4-22 done (daily sitemap diff scan), V4-23 done (docs: caps and freshness); gate V4-2G signed off (both suites, widget suite, build/lint, `trail build`, `alembic current`, the session-cap refusal on the API, and the scan + 500-sitemap hand checks). Wave 3 is under way: V4-30 done (PPTX extraction), V4-31 done (YouTube source provider), V4-32 done (Notion source provider), V4-33 done (frontend buttons + docs for the new sources); gate V4-3G signed off (both suites, widget suite, build/lint, `trail build`, `alembic current`, and the `.pptx` + YouTube end-to-end imports with cited answers plus the three negatives — a successful Notion import stayed **blocked** for lack of an integration token, and the gate found and fixed the `attachments.file_type` length defect that broke `.pptx`/`.docx` uploads). Wave 4 is under way: V4-40 done (M10 `conversation_insights`, plus the `attachments.file_type` widening 50 → 120 that removes the V4-3G truncation clamp), V4-41 done (the insight service: claim/refresh lifecycle, caps, batched classification, failure handling), V4-42 done (the `insights` job type, the opt-in scheduler and the handler), V4-43 done (insight labels on the inbox queue/detail and the flag-gated `outcomes` breakdown in analytics, plus the seeded render check on a throwaway database), V4-44 done (the erasure/retention cascade proof for insight rows and the security §4 insight data flow), V4-45 done (the insights docs: README section, worker job types, SPEC Scale-tier note); gate V4-4G signed off (M10 replayed from an empty Postgres 16.13 + pgvector 0.8.2 with its downgrade, both suites + widget suite + build/lint + `trail build`, the flag-off digest and analytics-summary byte comparisons against `v3` and V4-1G, the stubbed claim/retry matrix with a real live-provider classification, and the erasure/retention cascade with zero orphan rows on the throwaway database). Wave 5 is next. Alembic head is `f33497bc1ecd`.** D1–D9 confirmed twice against code anchors (§3) |
 | Created | 2026-11-20 |
 | Derived from | `plans/PLAN_V3.md` (§2 non-goals, §4 invariants, §8 release-tag policy), `plans/SPEC.md`, `README.md` §V3, `docs/security.md` §5 (K18 stays accepted), and the sitegpt.ai feature/pricing comparison of 2026-11-20 (gap list reproduced in §2 so this plan is self-contained) |
 | Baseline | V3 tag `v3` = `2e5ab734b09b4eb229f927a875e737153c544779` (immutable); `master` HEAD `59e0cc2d13c51dacdb05fb3572715d0e5c40d85f` is docs-only after the tag (8 commits, incl. this plan); `feat/v4` branched from it at V4-01; Alembic head `1c5516fa864d`; suite counts are historical (V3-4G recorded 47 modules / 718 Python tests / 46 node checks; the **V4 baseline is 47 / 720 / 46**, recorded in §3's pre-flight block) and **must be re-run at pre-flight, never copied** |
@@ -1318,17 +1318,77 @@ conversation. **Entry:** V4-3G.
 
 #### Gate V4-4G
 
-- [ ] M10 replayed from an empty Postgres 16 + pgvector: `1c5516fa864d → M10`,
+- [x] M10 replayed from an empty Postgres 16 + pgvector: `1c5516fa864d → M10`,
       single head, downgrade tested on the throwaway database.
-- [ ] Both suites + widget suite + build + lint + `trail build` pass; counts recorded.
-- [ ] Flag off: no insight rows, no provider call, digest byte-identical to `v3`,
+  - Done: a throwaway `v4_gate_4g` database on **PostgreSQL 16.13** with
+    **pgvector 0.8.2** was created empty, upgraded to `1c5516fa864d`, then to
+    `f33497bc1ecd` (parent `1c5516fa864d`; `alembic heads` is the single head
+    `f33497bc1ecd`). `alembic downgrade 1c5516fa864d` dropped
+    `conversation_insights` and narrowed `attachments.file_type` back to 50;
+    `alembic upgrade head` restored the table with its three check constraints,
+    the unique `conversation_id`, the `ON DELETE CASCADE` FK, the primary key
+    and `idx_conversation_insights_status_claimed_at`, with `file_type` at 120.
+    The database was dropped afterwards; the dev database was never pointed at.
+- [x] Both suites + widget suite + build + lint + `trail build` pass; counts recorded.
+  - Done: `python -m unittest discover -s tests` → **55 test modules / 894
+    tests, OK** (10.9 s); `node --test tests/*.mjs` → **46 checks, 46 pass, 0
+    fail** (8 files); `cd frontend && npm run build` (✓ built in 2.34 s) and
+    `npm run lint` (`--max-warnings 0`) exit 0; `trail build` → 211 cards /
+    3070 nodes / 6976 edges, exit 0; `uv run alembic current` on the dev
+    database is `f33497bc1ecd (head)`, unchanged.
+- [x] Flag off: no insight rows, no provider call, digest byte-identical to `v3`,
       analytics summary byte-identical to V4-1G.
-- [ ] Flag on with a stubbed provider: one run classifies a seeded settled
+  - Done: `scripts/gate_v4_4g/gate.py` seeds the V4-1G-shaped fixture on the
+    throwaway database (2 sessions, 6 messages with one `answered=False`, 1
+    contact, 1 👍, 1 handoff, 1 `human` conversation, clustering off). With the
+    flag unset, `run_for_company` answers `status: disabled` with `claimed 0` /
+    `calls 0`, writes **0** insight rows, and `enqueue_due_insights` queues
+    nothing (`queued=0`); the provider is a stub that raises, so any call would
+    fail the check. The digest from HEAD and from a `git archive v3` checkout
+    (`v3` = `2e5ab73`; the subprocess reports `site_gpt.__file__` under
+    `/tmp/gate_v4_4g_v3`, so it is the tag's code, not a copy) is byte-identical:
+    JSON sha256 `6348d52df7e62aca` and HTML `e76081c4161c0262` on both sides,
+    keys exactly the V3 set (`company_id, conversation_volume, feedback_down,
+    feedback_up, message_count, new_contacts, period_end, period_start,
+    top_topics, unanswered_questions`). The analytics summary — the admin
+    route's payload, `build_digest` + `daily_trend` / `engagement_funnel` /
+    `top_questions` with the window pinned to the fixture's `[2026-11-02,
+    2026-11-09)` — is byte-identical to the code at the V4-1G commit
+    `52a45d7` (`site_gpt.__file__` under `/tmp/gate_v4_4g_1g`, sha256
+    `3300c4b5a76e1773`): funnel `started 2 / answered 2 / lead 1 / handoff 1 /
+    human 1`, 7 trend rows, 3 top questions, and **no** `outcomes` key. The two
+    hashes include the run's freshly generated company/website ids; what is
+    compared is both codebases' output on the same rows in the same run.
+- [x] Flag on with a stubbed provider: one run classifies a seeded settled
       conversation, a duplicate job cannot double-claim, a failed batch retries.
       Live-provider classification follows the blocked-item rule.
-- [ ] Erasure/retention cascade checks run against the real database (zero
+  - Done: the flag on for a second company on the same database. One run
+    completed 1 of 1 claimed conversation with one provider call, and the stored
+    row holds only derived values (`completed`, `positive`, `resolved`, a
+    summary within 280 chars, the `custom_openai/auto` model pair — no
+    transcript text). A duplicate job started while the first held its
+    `processing` claim (the row was observed in `processing` on the database,
+    then the first call was released) returned `claimed 0` / `calls 0`; a
+    repeated job after completion, through `worker.handle_insights`, did no work
+    and spent nothing. An injected provider error marked the row `failed`
+    without raising into the worker, and the next job retried the same row in
+    place to `completed` with one call. **Live-provider classification was not
+    blocked**: the same handler, unstubbed, classified a fifth seeded
+    conversation `positive` / `resolved` (`custom_openai/auto`) in one call. The
+    injected error above is the only simulated failure.
+- [x] Erasure/retention cascade checks run against the real database (zero
       orphan rows) — this one is **not** blockable by provider absence.
-- [ ] commit `chore(v4): V4-4G gate — conversation insights`.
+  - Done: on the same Postgres database, `erase_session` removed the erased
+    session's insight and kept a neighbouring session's, `delete_conversation`
+    left none for its conversation, and `retention.purge_company(days=1,
+    dry_run=False)` deleted the `last_message_at`-expired conversation (1) and
+    its row while keeping the fresh conversation's. `conversation_insights`
+    went from 8 to 5 rows, and a `LEFT JOIN conversations … WHERE c.id IS NULL`
+    count is **0** — no orphan rows. The gate script is 21 checks, all passing.
+- [x] commit `chore(v4): V4-4G gate — conversation insights`.
+  - Done: this commit, with `scripts/gate_v4_4g/gate.py` (the replay above).
+    The throwaway database and the two `/tmp` checkouts are removed afterwards;
+    the untracked V4-43 screenshots at the repo root are left as they were.
 
 ---
 
@@ -1579,9 +1639,9 @@ provider absence.
 | 1 — Advanced analytics (F1) | 4 | 4 / 4 | ☑ V4-1G |
 | 2 — Cost & freshness (F4) | 4 | 4 / 4 | ☑ V4-2G |
 | 3 — Training sources (F3) | 4 | 4 / 4 | ☑ V4-3G |
-| 4 — Conversation insights (F2) | 6 | 6 / 6 | ☐ V4-4G |
+| 4 — Conversation insights (F2) | 6 | 6 / 6 | ☑ V4-4G |
 | 5 — Hosted chat page (F5) | 3 | 0 / 3 | ☐ V4-5G |
-| **Total** | **25 tasks + 6 gates** | **22 / 25** | **4 / 6 gates** |
+| **Total** | **25 tasks + 6 gates** | **22 / 25** | **5 / 6 gates** |
 
 ---
 
