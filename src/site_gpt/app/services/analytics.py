@@ -18,6 +18,9 @@ disagree about the same window:
   released session goes back to `waiting` and leaves no marker, so it is no
   longer counted.
 
+The V4 F2 outcomes breakdown (V4-43) is a read too: it counts the labels the
+insight worker already stored, in the same window, and never classifies.
+
 Nothing here calls a model, adds an index or edits `build_digest`: these are
 plain company-scoped reads returning dicts, so the digest payload is untouched
 and stays byte-identical (invariant 15).
@@ -35,6 +38,7 @@ from sqlalchemy.orm import Session
 
 from site_gpt.app import models
 from site_gpt.app.services import digest
+from site_gpt.app.services.insights import RESOLUTIONS, SENTIMENTS
 
 # D4: the top questions are an exact-match grouping, top 10, no embeddings.
 TOP_QUESTION_LIMIT = 10
@@ -257,6 +261,52 @@ def top_questions(
         {"question": question, "count": count}
         for question, count in counter.most_common(max(0, int(limit)))
     ]
+
+
+def outcomes(
+    db: Session, company_id: UUID, start: datetime, end: datetime
+) -> dict:
+    """The window's sentiment and resolution counts (V4 F2, flag-on only).
+
+    A conversation belongs to the window by `last_message_at`, the same clock the
+    funnel's `human` stage and retention use. Only `completed` insight rows are
+    counted — a `processing` row has no verdict yet, and a `failed` row still
+    shows its previous labels but is not a fresh classification. Labels come from
+    `services.insights`' enums, so the choices here and in the check constraints
+    cannot drift, and every allowed value is listed with a zero count.
+    """
+    rows = (
+        db.query(
+            models.ConversationInsight.sentiment,
+            models.ConversationInsight.resolution,
+        )
+        .join(
+            models.Conversation,
+            models.Conversation.id
+            == models.ConversationInsight.conversation_id,
+        )
+        .join(models.Website, models.Website.id == models.Conversation.website_id)
+        .filter(
+            models.Website.company_id == company_id,
+            models.Conversation.last_message_at >= start,
+            models.Conversation.last_message_at < end,
+            models.ConversationInsight.status == "completed",
+        )
+        .all()
+    )
+    sentiments = Counter(label for label, _ in rows if label)
+    resolutions = Counter(label for _, label in rows if label)
+    return {
+        "classified": len(rows),
+        "sentiment": [
+            {"value": label, "count": sentiments.get(label, 0)}
+            for label in SENTIMENTS
+        ],
+        "resolution": [
+            {"value": label, "count": resolutions.get(label, 0)}
+            for label in RESOLUTIONS
+        ],
+    }
 
 
 # D5: the trend's columns, in the order the header and every row use them.

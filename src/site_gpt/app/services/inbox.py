@@ -415,6 +415,25 @@ def _contacts(
     return {(row.website_id, row.session_id): row for row in rows}
 
 
+def _insights(
+    db: Session, conversation_ids: list[UUID]
+) -> dict[UUID, models.ConversationInsight]:
+    """The insight row of each conversation on a page, when one exists.
+
+    A read-only join beside the queue, not a second endpoint: the badge belongs
+    on the row an agent is already looking at, and a company that never opted in
+    simply has no rows here, so its items carry null labels (V4 F2).
+    """
+    if not conversation_ids:
+        return {}
+    rows = (
+        db.query(models.ConversationInsight)
+        .filter(models.ConversationInsight.conversation_id.in_(conversation_ids))
+        .all()
+    )
+    return {row.conversation_id: row for row in rows}
+
+
 def _person_name(contact: models.Contact) -> str | None:
     return f"{contact.first_name} {contact.last_name}".strip() or None
 
@@ -428,10 +447,11 @@ def _truncate(title: str | None) -> str | None:
 def _describe(
     db: Session, rows: list[tuple[models.Conversation, str]]
 ) -> list[dict]:
-    """Turn page rows into list items, in two extra queries."""
+    """Turn page rows into list items, in three extra queries."""
     pairs = [(row.website_id, row.session_id) for row, _ in rows]
     counts, titles = _message_stats(db, pairs)
     contacts = _contacts(db, pairs)
+    insights = _insights(db, [row.id for row, _ in rows])
     names = _user_names(
         db, {row.assigned_user_id for row, _ in rows if row.assigned_user_id}
     )
@@ -440,6 +460,7 @@ def _describe(
     for row, website_name in rows:
         key = (row.website_id, row.session_id)
         contact = contacts.get(key)
+        insight = insights.get(row.id)
         items.append(
             {
                 "id": row.id,
@@ -459,6 +480,9 @@ def _describe(
                     _person_name(contact) if contact is not None else None
                 ),
                 "contact_email": contact.email if contact is not None else None,
+                "sentiment": insight.sentiment if insight is not None else None,
+                "resolution": insight.resolution if insight is not None else None,
+                "summary": insight.summary if insight is not None else None,
             }
         )
     return items

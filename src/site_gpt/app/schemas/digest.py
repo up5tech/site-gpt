@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, SerializerFunctionWrapHandler, model_serializer
 
 
 class DigestTopic(BaseModel):
@@ -98,15 +98,55 @@ class TopQuestion(BaseModel):
     count: int
 
 
+class OutcomeCount(BaseModel):
+    """One insight label and how many classified conversations ended with it.
+
+    Every allowed label is present, zeros included, so the dashboard's shape does
+    not depend on what a window happens to contain.
+    """
+
+    value: str
+    count: int
+
+
+class Outcomes(BaseModel):
+    """The window's sentiment/resolution breakdown (V4 F2, opt-in only).
+
+    Only `completed` insight rows count: a `processing` row has no verdict yet and
+    a `failed` row keeps its previous labels but is not a fresh result.
+    """
+
+    classified: int
+    sentiment: list[OutcomeCount] = []
+    resolution: list[OutcomeCount] = []
+
+
 class AnalyticsSummary(DigestData):
     """The same aggregation as the digest, over a rolling window.
 
     `trend`, `funnel` and `top_questions` are additive (V4 F1): every V3 key keeps
     its exact meaning and value, so `/api/v1/analytics/summary` gains the fields
-    without breaking an existing client.
+    without breaking an existing client. `outcomes` is the V4 F2 addition and is
+    only ever populated for an opted-in company (`_omit_absent_outcomes`).
     """
 
     days: int
     trend: list[TrendPoint] = []
     funnel: list[FunnelStage] = []
     top_questions: list[TopQuestion] = []
+    outcomes: Outcomes | None = None
+
+    @model_serializer(mode="wrap")
+    def _omit_absent_outcomes(
+        self, handler: SerializerFunctionWrapHandler
+    ) -> dict:
+        """Drop `outcomes` when insights are off — absent, not null.
+
+        With the flag off the summary must stay the V4-1G payload byte for byte,
+        so a V3 client reads exactly the keys it always had; only a company that
+        opted in ever sees the extra key.
+        """
+        data = handler(self)
+        if data.get("outcomes") is None:
+            data.pop("outcomes", None)
+        return data

@@ -1202,7 +1202,7 @@ conversation. **Entry:** V4-3G.
     `f33497bc1ecd`) and no frontend or widget change, so the node suite and
     `npm run build`/`lint` were not rerun.
 
-- [ ] **V4-43 · Read side: console badges + analytics outcomes** — `M`, depends: V4-42, migration: —
+- [x] **V4-43 · Read side: console badges + analytics outcomes** — `M`, depends: V4-42, migration: —
   - Files: `api/inbox.py`, `services/inbox.py` (read-only join),
     `schemas/`, `api/analytics.py`, `services/analytics.py`,
     `frontend/src/pages/Inbox.tsx`, `frontend/src/pages/Analytics.tsx`,
@@ -1216,6 +1216,36 @@ conversation. **Entry:** V4-3G.
   - Done when: build + lint pass; a seeded insight renders in both pages; a
     flag-off company's summary is byte-identical to the V4-1G output; foreign
     conversation ids stay 404.
+  - Done: read-only throughout — no route in `api/inbox.py` changed (the
+    existing UUID-scoped queue/detail already answer 404 for a foreign id), the
+    service does the join. `services/inbox.py` gains `_insights` (one query per
+    page) and `_describe` adds nullable `sentiment`/`resolution`/`summary`, so
+    the queue, the detail and every action response share one shape and a
+    conversation with no row carries three nulls; `schemas/inbox.py` documents
+    the trio. `services/analytics.py` gains `outcomes` (completed rows only — a
+    `processing` row has no verdict and a `failed` refresh keeps old labels but
+    is not fresh — windowed by the conversation's `last_message_at`, the
+    funnel/retention clock, with the `services.insights` enums zero-filled and
+    the company scoped through the website join), `api/analytics.py` adds the key
+    only when `insights.enabled`, and `AnalyticsSummary._omit_absent_outcomes`
+    drops it when null: the flag-off summary is byte-identical, and a V3 client
+    sees the V4-1G shape (frozen-clock before/after test). Frontend:
+    `types/api.ts` gains `OutcomeCount`/`Outcomes` and the inbox trio; `Inbox.tsx`
+    shows small sentiment/resolution tags beside the state tag and an "AI insight"
+    alert with the summary in the detail pane (rendered only when there is
+    something to show); `Analytics.tsx` adds a "Conversation outcomes" card with
+    both breakdowns, rendered only when the key is present. **10 new tests**
+    (no new module): the queue and detail carry the labels, a row-less
+    conversation reports nulls, a foreign company's insight never leaks (and its
+    id stays 404); the breakdown's enum-ordered counts, `processing`/`failed`
+    exclusion, foreign company exclusion, the `last_message_at` window and the
+    all-zero shape, plus the two route cases (flag off byte-identical with insight
+    rows present, flag on adds `outcomes` while the V4-1G keys keep their values).
+    Suite: **889 tests, OK** (11.6 s), `node --test tests/*.mjs` 46/46,
+    `npm run build` and `npm run lint` clean. No migration (head stays
+    `f33497bc1ecd`) and no widget change. The seeded-insight render was checked at
+    the API payload level (route tests) and through build/lint, not visually in a
+    browser — no dev server was run for this task.
 
 - [ ] **V4-44 · Privacy, erasure, retention — prove the cascade** — `S`, depends: V4-43, migration: —
   - Files: `tests/test_privacy_retention_endpoint.py` (extend),
@@ -1504,9 +1534,9 @@ provider absence.
 | 1 — Advanced analytics (F1) | 4 | 4 / 4 | ☑ V4-1G |
 | 2 — Cost & freshness (F4) | 4 | 4 / 4 | ☑ V4-2G |
 | 3 — Training sources (F3) | 4 | 4 / 4 | ☑ V4-3G |
-| 4 — Conversation insights (F2) | 6 | 3 / 6 | ☐ V4-4G |
+| 4 — Conversation insights (F2) | 6 | 4 / 6 | ☐ V4-4G |
 | 5 — Hosted chat page (F5) | 3 | 0 / 3 | ☐ V4-5G |
-| **Total** | **25 tasks + 6 gates** | **19 / 25** | **4 / 6 gates** |
+| **Total** | **25 tasks + 6 gates** | **20 / 25** | **4 / 6 gates** |
 
 ---
 

@@ -46,6 +46,7 @@ TABLES = [
     models.Website.__table__,
     models.ChatMessage.__table__,
     models.Conversation.__table__,
+    models.ConversationInsight.__table__,
     models.Contact.__table__,
     models.HandoffRequest.__table__,
     models.Setting.__table__,
@@ -300,6 +301,67 @@ class LiveInboxToggleTests(InboxTestCase):
         self.assertEqual(
             self.client.get("/api/inbox/conversations").status_code, 404
         )
+
+
+class InsightBadgeTests(InboxTestCase):
+    """V4-43: the queue and the detail read the stored insight labels."""
+
+    def _insight(self, conversation, sentiment=None, resolution=None, summary=None):
+        row = models.ConversationInsight(
+            conversation_id=conversation.id,
+            status="completed",
+            sentiment=sentiment,
+            resolution=resolution,
+            summary=summary,
+        )
+        self.db.add(row)
+        self.db.commit()
+        return row
+
+    def test_the_queue_and_the_detail_carry_the_insight(self):
+        row = self._conversation()
+        self._insight(
+            row,
+            sentiment="frustrated",
+            resolution="escalated",
+            summary="Visitor waited for a human.",
+        )
+        client = self._client()
+
+        item = client.get("/api/inbox/conversations").json()["items"][0]
+        self.assertEqual(item["sentiment"], "frustrated")
+        self.assertEqual(item["resolution"], "escalated")
+        self.assertEqual(item["summary"], "Visitor waited for a human.")
+
+        detail = client.get(f"/api/inbox/conversations/{row.id}").json()
+        self.assertEqual(detail["sentiment"], "frustrated")
+        self.assertEqual(detail["resolution"], "escalated")
+        self.assertEqual(detail["summary"], "Visitor waited for a human.")
+
+    def test_a_conversation_without_an_insight_reports_nulls(self):
+        self._conversation()
+
+        item = self._client().get("/api/inbox/conversations").json()["items"][0]
+
+        self.assertIsNone(item["sentiment"])
+        self.assertIsNone(item["resolution"])
+        self.assertIsNone(item["summary"])
+
+    def test_insight_labels_never_leak_across_companies(self):
+        mine = self._conversation()
+        theirs = self._conversation(site=self.other_site, session_id="s2")
+        self._insight(
+            theirs, sentiment="positive", resolution="resolved"
+        )
+        client = self._client()
+
+        body = client.get("/api/inbox/conversations").json()
+        self.assertEqual(body["total"], 1)
+        self.assertEqual(body["items"][0]["id"], str(mine.id))
+        self.assertIsNone(body["items"][0]["sentiment"])
+        # The foreign conversation id stays a 404, as it did before V4-43.
+        response = client.get(f"/api/inbox/conversations/{theirs.id}")
+        self.assertEqual(response.status_code, 404, response.text)
 
 
 class ClaimTests(InboxTestCase):

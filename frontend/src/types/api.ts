@@ -369,11 +369,27 @@ export interface TopQuestion {
   count: number;
 }
 
+/** One insight label and how many classified conversations ended with it. */
+export interface OutcomeCount {
+  value: string;
+  count: number;
+}
+
+/** The window's AI-classified outcomes. Present only when the company opted
+ * into conversation insights (`conversation_insights_enabled`); the key is
+ * absent otherwise, so a V3 client still reads the V3 shape. */
+export interface Outcomes {
+  classified: number;
+  sentiment: OutcomeCount[];
+  resolution: OutcomeCount[];
+}
+
 export interface AnalyticsSummary extends DigestSummary {
   days: number;
   trend: TrendPoint[];
   funnel: FunnelStage[];
   top_questions: TopQuestion[];
+  outcomes?: Outcomes | null;
 }
 
 export interface DigestPreview {
@@ -466,6 +482,11 @@ export interface InboxConversation {
   title?: string | null;
   contact_name?: string | null;
   contact_email?: string | null;
+  /** The AI's read of this conversation (V4 F2, opt-in): null when the company
+   * never opted in or no run has classified it yet. Read-only here. */
+  sentiment?: string | null;
+  resolution?: string | null;
+  summary?: string | null;
 }
 
 export interface InboxMessage {

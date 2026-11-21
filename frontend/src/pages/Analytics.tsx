@@ -22,6 +22,7 @@ import type {
   DigestGroup,
   DigestTopic,
   FunnelStage,
+  OutcomeCount,
   TopQuestion,
   TrendPoint,
   UnansweredQuestion,
@@ -287,6 +288,57 @@ function FunnelBars({ stages }: { stages: FunnelStage[] }) {
   );
 }
 
+/**
+ * One insight breakdown (sentiment or resolution): every allowed label with its
+ * count and a bar relative to the largest one. Only rendered when the company
+ * opted into insights — the summary has no `outcomes` key otherwise.
+ */
+function OutcomeList({ title, items }: { title: string; items: OutcomeCount[] }) {
+  if (items.length === 0) return null;
+  const max = Math.max(1, ...items.map((item) => item.count));
+
+  return (
+    <div>
+      <Text strong style={{ fontSize: 13 }}>
+        {title}
+      </Text>
+      <Space direction='vertical' size={10} style={{ width: '100%', marginTop: 8 }}>
+        {items.map((item) => (
+          <div key={item.value}>
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                marginBottom: 4,
+              }}
+            >
+              <Text style={{ textTransform: 'capitalize' }}>{item.value}</Text>
+              <Text strong>{item.count}</Text>
+            </div>
+            <div
+              style={{
+                height: 8,
+                background: '#f0f0f0',
+                borderRadius: 4,
+                overflow: 'hidden',
+              }}
+            >
+              <div
+                style={{
+                  width: `${(item.count / max) * 100}%`,
+                  height: '100%',
+                  background: MESSAGES_FILL,
+                  borderRadius: 4,
+                }}
+              />
+            </div>
+          </div>
+        ))}
+      </Space>
+    </div>
+  );
+}
+
 export function Analytics() {
   const { isAuthenticated } = useAuth();
   const [days, setDays] = useState(7);
@@ -361,6 +413,8 @@ export function Analytics() {
   const positiveShare = ratings > 0 ? Math.round(((data?.feedback_up ?? 0) / ratings) * 100) : 0;
   // Only populated when the window is exactly one completed digest week.
   const groups = data?.topic_groups ?? [];
+  // Absent unless the company opted into conversation insights (V4 F2).
+  const outcomes = data?.outcomes ?? null;
 
   const topicColumns: ColumnsType<DigestTopic> = [
     { title: 'Topic', dataIndex: 'term', key: 'term' },
@@ -526,6 +580,28 @@ export function Analytics() {
       >
         <FunnelBars stages={data?.funnel ?? []} />
       </Card>
+
+      {outcomes && (
+        <Card
+          title='Conversation outcomes'
+          style={{ marginBottom: 16 }}
+          loading={loading}
+          extra={
+            <Text type='secondary' style={{ fontSize: 12 }}>
+              AI-classified · {outcomes.classified} conversation(s)
+            </Text>
+          }
+        >
+          <Row gutter={[24, 16]}>
+            <Col xs={24} md={12}>
+              <OutcomeList title='Sentiment' items={outcomes.sentiment} />
+            </Col>
+            <Col xs={24} md={12}>
+              <OutcomeList title='Resolution' items={outcomes.resolution} />
+            </Col>
+          </Row>
+        </Card>
+      )}
 
       <Card title='Top questions' style={{ marginBottom: 16 }}>
         <Table

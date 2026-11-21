@@ -45,6 +45,7 @@ TABLES = [
     models.User.__table__,
     models.Website.__table__,
     models.Conversation.__table__,
+    models.ConversationInsight.__table__,
     models.ChatMessage.__table__,
     models.Contact.__table__,
     # V3-45: claim/release/close also update the session's handoff row.

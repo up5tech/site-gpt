@@ -39,6 +39,7 @@ TABLES = [
     models.Website.__table__,
     models.ChatMessage.__table__,
     models.Conversation.__table__,
+    models.ConversationInsight.__table__,
     models.Contact.__table__,
     models.HandoffRequest.__table__,
     models.Setting.__table__,

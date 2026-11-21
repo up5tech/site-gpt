@@ -14,6 +14,7 @@ called, so none of this depends on an API key.
 import unittest
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -38,6 +39,7 @@ TABLES = [
     models.Website.__table__,
     models.ChatMessage.__table__,
     models.Conversation.__table__,
+    models.ConversationInsight.__table__,
     models.Contact.__table__,
     models.HandoffRequest.__table__,
     models.ChatFeedback.__table__,
@@ -48,6 +50,38 @@ TABLES = [
 def _at(day: int, hour: int = 9, minute: int = 0) -> datetime:
     """A moment inside the fixture week (day 9..15 November 2026)."""
     return datetime(2026, 11, day, hour, minute, tzinfo=UTC)
+
+
+# The route reads `datetime.now(UTC)`; freezing it makes the rolling window
+# deterministic, so a flag-off response can be compared byte for byte.
+FROZEN_NOW = datetime(2026, 11, 15, 12, tzinfo=UTC)
+
+
+class _FrozenDatetime(datetime):
+    @classmethod
+    def now(cls, tz=None):
+        return FROZEN_NOW.astimezone(tz) if tz is not None else FROZEN_NOW
+
+
+# What V4-1G's `/api/analytics/summary` returned: the V3 digest keys plus the
+# three V4-10 additions, and nothing else.
+V4_1G_KEYS = {
+    "company_id",
+    "period_start",
+    "period_end",
+    "conversation_volume",
+    "message_count",
+    "new_contacts",
+    "feedback_up",
+    "feedback_down",
+    "top_topics",
+    "topic_groups",
+    "unanswered_questions",
+    "days",
+    "trend",
+    "funnel",
+    "top_questions",
+}
 
 
 class AnalyticsTestCase(unittest.TestCase):
@@ -205,6 +239,35 @@ class AnalyticsTestCase(unittest.TestCase):
         self.db.add(row)
         self.db.commit()
         return row
+
+    def _conversation_row(self, website, session):
+        return (
+            self.db.query(models.Conversation)
+            .filter(
+                models.Conversation.website_id == website.id,
+                models.Conversation.session_id == session,
+            )
+            .one()
+        )
+
+    def _insight(
+        self, conversation, sentiment=None, resolution=None, status="completed"
+    ):
+        row = models.ConversationInsight(
+            conversation_id=conversation.id,
+            status=status,
+            sentiment=sentiment,
+            resolution=resolution,
+        )
+        self.db.add(row)
+        self.db.commit()
+        return row
+
+    def _setting(self, key, value):
+        self.db.add(
+            models.Setting(company_id=self.company.id, key=key, value=value)
+        )
+        self.db.commit()
 
     def rows(self, company_id=None):
         return {
@@ -531,6 +594,110 @@ class SharedDefinitionTests(AnalyticsTestCase):
         )
 
 
+class OutcomeTests(AnalyticsTestCase):
+    """V4-43: the breakdown counts stored classifications, never re-classifies."""
+
+    def test_completed_labels_are_counted_in_enum_order(self):
+        self._insight(
+            self._conversation_row(self.site_b, "s2"),
+            sentiment="positive",
+            resolution="resolved",
+        )
+        self._insight(
+            self._conversation_row(self.site_a, "s3"),
+            sentiment="frustrated",
+            resolution="unresolved",
+        )
+
+        self.assertEqual(
+            analytics.outcomes(self.db, self.company.id, WEEK_START, WEEK_END),
+            {
+                "classified": 2,
+                "sentiment": [
+                    {"value": "positive", "count": 1},
+                    {"value": "neutral", "count": 0},
+                    {"value": "negative", "count": 0},
+                    {"value": "frustrated", "count": 1},
+                ],
+                "resolution": [
+                    {"value": "resolved", "count": 1},
+                    {"value": "unresolved", "count": 1},
+                    {"value": "escalated", "count": 0},
+                    {"value": "unknown", "count": 0},
+                ],
+            },
+        )
+
+    def test_a_processing_or_failed_row_is_not_a_verdict(self):
+        self._insight(
+            self._conversation_row(self.site_b, "s2"), status="processing"
+        )
+        # A failed refresh keeps its previous labels on the row, but they are not
+        # a fresh result and must not be counted as one.
+        self._insight(
+            self._conversation_row(self.site_a, "s3"),
+            sentiment="positive",
+            resolution="resolved",
+            status="failed",
+        )
+
+        breakdown = analytics.outcomes(
+            self.db, self.company.id, WEEK_START, WEEK_END
+        )
+        self.assertEqual(breakdown["classified"], 0)
+        self.assertTrue(
+            all(item["count"] == 0 for item in breakdown["sentiment"])
+        )
+        self.assertTrue(
+            all(item["count"] == 0 for item in breakdown["resolution"])
+        )
+
+    def test_a_foreign_companys_insight_is_not_counted(self):
+        self._insight(
+            self._conversation_row(self.site_x, "s1"),
+            sentiment="negative",
+            resolution="unresolved",
+        )
+
+        self.assertEqual(
+            analytics.outcomes(self.db, self.company.id, WEEK_START, WEEK_END)[
+                "classified"
+            ],
+            0,
+        )
+        self.assertEqual(
+            analytics.outcomes(self.db, self.other.id, WEEK_START, WEEK_END)[
+                "classified"
+            ],
+            1,
+        )
+
+    def test_the_window_is_the_conversations_last_activity(self):
+        conversation = self._conversation(self.site_b, "late", "human", WEEK_END)
+        self._insight(conversation, sentiment="neutral", resolution="unknown")
+
+        self.assertEqual(
+            analytics.outcomes(self.db, self.company.id, WEEK_START, WEEK_END)[
+                "classified"
+            ],
+            0,
+        )
+
+    def test_no_insight_rows_is_an_all_zero_breakdown(self):
+        breakdown = analytics.outcomes(
+            self.db, self.company.id, WEEK_START, WEEK_END
+        )
+        self.assertEqual(breakdown["classified"], 0)
+        self.assertEqual(
+            [item["value"] for item in breakdown["sentiment"]],
+            ["positive", "neutral", "negative", "frustrated"],
+        )
+        self.assertEqual(
+            [item["value"] for item in breakdown["resolution"]],
+            ["resolved", "unresolved", "escalated", "unknown"],
+        )
+
+
 class AnalyticsSummaryRouteTests(AnalyticsTestCase):
     def setUp(self):
         super().setUp()
@@ -571,6 +738,61 @@ class AnalyticsSummaryRouteTests(AnalyticsTestCase):
         )
         self.assertTrue(all("sessions" in row for row in body["funnel"]))
         self.assertIsInstance(body["top_questions"], list)
+
+    def test_a_flag_off_summary_keeps_the_v4_1g_shape_byte_for_byte(self):
+        with patch.object(analytics_api, "datetime", _FrozenDatetime):
+            before = self.client.get("/api/analytics/summary", params={"days": 7})
+            # Insight rows existing does not change a flag-off payload: the key is
+            # absent, not null, so a V3 client reads exactly the V4-1G bytes.
+            self._insight(
+                self._conversation_row(self.site_b, "s2"),
+                sentiment="positive",
+                resolution="resolved",
+            )
+            after = self.client.get("/api/analytics/summary", params={"days": 7})
+
+        self.assertEqual(before.status_code, 200, before.text)
+        self.assertEqual(before.text, after.text)
+        self.assertEqual(set(after.json()), V4_1G_KEYS)
+        self.assertNotIn("outcomes", after.json())
+
+    def test_a_flag_on_summary_adds_the_outcomes_breakdown(self):
+        self._setting("conversation_insights_enabled", "true")
+        self._insight(
+            self._conversation_row(self.site_b, "s2"),
+            sentiment="positive",
+            resolution="resolved",
+        )
+        self._insight(
+            self._conversation_row(self.site_a, "s3"),
+            sentiment="frustrated",
+            resolution="unresolved",
+        )
+
+        with patch.object(analytics_api, "datetime", _FrozenDatetime):
+            response = self.client.get("/api/analytics/summary", params={"days": 7})
+
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.json()
+        self.assertEqual(set(body), V4_1G_KEYS | {"outcomes"})
+        self.assertEqual(body["outcomes"]["classified"], 2)
+        self.assertEqual(
+            {
+                item["value"]: item["count"]
+                for item in body["outcomes"]["sentiment"]
+            },
+            {"positive": 1, "neutral": 0, "negative": 0, "frustrated": 1},
+        )
+        self.assertEqual(
+            {
+                item["value"]: item["count"]
+                for item in body["outcomes"]["resolution"]
+            },
+            {"resolved": 1, "unresolved": 1, "escalated": 0, "unknown": 0},
+        )
+        # The V3/V4-1G keys keep their values alongside the new one.
+        self.assertEqual(body["conversation_volume"], 3)
+        self.assertEqual(body["days"], 7)
 
 
 if __name__ == "__main__":

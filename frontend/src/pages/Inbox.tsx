@@ -60,6 +60,49 @@ const STATE_LABELS: Record<InboxState, string> = {
   closed: 'Closed',
 };
 
+// The insight labels (V4 F2) — shown only when the company opted in and a run
+// classified the conversation. Colour is secondary to the word itself.
+const SENTIMENT_COLORS: Record<string, string> = {
+  positive: 'green',
+  neutral: 'default',
+  negative: 'orange',
+  frustrated: 'red',
+};
+
+const RESOLUTION_COLORS: Record<string, string> = {
+  resolved: 'green',
+  unresolved: 'orange',
+  escalated: 'purple',
+  unknown: 'default',
+};
+
+const capitalise = (value: string) => value.charAt(0).toUpperCase() + value.slice(1);
+
+/** The AI's sentiment/resolution tags of one conversation, or nothing. */
+function InsightTags({
+  sentiment,
+  resolution,
+}: {
+  sentiment?: string | null;
+  resolution?: string | null;
+}) {
+  if (!sentiment && !resolution) return null;
+  return (
+    <Space size={4} wrap>
+      {sentiment && (
+        <Tag color={SENTIMENT_COLORS[sentiment] || 'default'} style={{ fontSize: 11 }}>
+          {capitalise(sentiment)}
+        </Tag>
+      )}
+      {resolution && (
+        <Tag color={RESOLUTION_COLORS[resolution] || 'default'} style={{ fontSize: 11 }}>
+          {capitalise(resolution)}
+        </Tag>
+      )}
+    </Space>
+  );
+}
+
 function ageOf(iso: string | null | undefined): string {
   if (!iso) return '—';
   const then = new Date(iso).getTime();
@@ -463,6 +506,10 @@ export function Inbox() {
                           {item.title || 'New conversation'}
                         </Text>
                         <Tag color={STATE_COLORS[item.state]}>{STATE_LABELS[item.state]}</Tag>
+                        <InsightTags
+                          sentiment={item.sentiment}
+                          resolution={item.resolution}
+                        />
                       </Space>
                     }
                     description={
@@ -554,6 +601,25 @@ export function Inbox() {
           >
             {detail ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                {(detail.sentiment || detail.resolution || detail.summary) && (
+                  <Alert
+                    type='info'
+                    showIcon
+                    message={
+                      <Space size={6} wrap>
+                        <Text strong style={{ fontSize: 13 }}>
+                          AI insight
+                        </Text>
+                        <InsightTags
+                          sentiment={detail.sentiment}
+                          resolution={detail.resolution}
+                        />
+                      </Space>
+                    }
+                    description={detail.summary || undefined}
+                  />
+                )}
+
                 <div
                   ref={transcriptRef}
                   style={{

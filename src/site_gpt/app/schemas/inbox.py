@@ -41,6 +41,12 @@ class InboxConversation(BaseModel):
     title: str | None = None
     contact_name: str | None = None
     contact_email: str | None = None
+    # The AI's read of this conversation (V4 F2, opt-in). All three stay null for
+    # a company that never opted in, and a conversation no run has classified yet;
+    # they are read from `conversation_insights`, never written here.
+    sentiment: str | None = None
+    resolution: str | None = None
+    summary: str | None = None
 
 
 class InboxMessage(BaseModel):

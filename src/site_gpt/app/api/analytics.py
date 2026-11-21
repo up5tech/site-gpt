@@ -17,7 +17,7 @@ from site_gpt.app import models
 from site_gpt.app.core.auth import get_manager_user
 from site_gpt.app.db.session import get_db
 from site_gpt.app.schemas.digest import AnalyticsSummary
-from site_gpt.app.services import analytics
+from site_gpt.app.services import analytics, insights
 from site_gpt.app.services.digest import build_digest
 
 router = APIRouter()
@@ -29,13 +29,17 @@ def analytics_summary(
     db: Session = Depends(get_db),
     user: models.User = Depends(get_manager_user),
 ):
-    """Counts, topics, trend, funnel and top questions for the last `days` days."""
+    """Counts, topics, trend, funnel and top questions for the last `days` days.
+
+    `outcomes` is added only for a company with `conversation_insights_enabled`
+    on: with the flag off the key is *absent* rather than null, so the payload
+    stays the V4-1G summary and a V3 client reads the same bytes it always did.
+    """
     days = max(1, min(days, 90))
     end = datetime.now(UTC)
     start = end - timedelta(days=days)
-    data = build_digest(db, user.company_id, start, end)
-    return {
-        **data,
+    data = {
+        **build_digest(db, user.company_id, start, end),
         "days": days,
         "trend": analytics.daily_trend(db, user.company_id, start, end),
         "funnel": analytics.engagement_funnel(db, user.company_id, start, end),
@@ -43,6 +47,9 @@ def analytics_summary(
             db, user.company_id, start, end
         ),
     }
+    if insights.enabled(db, user.company_id):
+        data["outcomes"] = analytics.outcomes(db, user.company_id, start, end)
+    return data
 
 
 @router.get("/api/analytics/export.csv")
