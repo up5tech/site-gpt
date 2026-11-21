@@ -3,7 +3,7 @@
 | | | |
 |---|---|---|
 | Version | **V4** — closes the feature gap against sitegpt.ai recorded in the 2026-11-20 comparison (§2): advanced analytics, per-conversation AI insights, new training sources, per-conversation cost caps + sitemap auto-scan, and a hosted chat page |
-| Status | **In progress — Wave 0 and Wave 1 complete (gates V4-0G and V4-1G signed off): V4-10 done (trend, funnel, top questions), V4-11 done (aggregate CSV export), V4-12 done (analytics page: SVG trend, funnel, top questions, export button), V4-13 done (docs: the analytics surface in README/AGENTS/api-v1); gate V4-1G signed off (both suites, widget suite, build/lint, `trail build`, digest byte-comparison, CSV by way of the API, `/api/v1` summary + foreign-id 404). Wave 2 is under way: V4-20 done (per-session message cap), V4-21 done (Settings field + docs), V4-22 done (daily sitemap diff scan), V4-23 done (docs: caps and freshness); gate V4-2G signed off (both suites, widget suite, build/lint, `trail build`, `alembic current`, the session-cap refusal on the API, and the scan + 500-sitemap hand checks). Wave 3 is under way: V4-30 done (PPTX extraction), V4-31 done (YouTube source provider), V4-32 done (Notion source provider), V4-33 done (frontend buttons + docs for the new sources); gate V4-3G signed off (both suites, widget suite, build/lint, `trail build`, `alembic current`, and the `.pptx` + YouTube end-to-end imports with cited answers plus the three negatives — a successful Notion import stayed **blocked** for lack of an integration token, and the gate found and fixed the `attachments.file_type` length defect that broke `.pptx`/`.docx` uploads). Wave 4 has started: V4-40 done (M10 `conversation_insights`, plus the `attachments.file_type` widening 50 → 120 that removes the V4-3G truncation clamp); Alembic head is `f33497bc1ecd`.** D1–D9 confirmed twice against code anchors (§3) |
+| Status | **In progress — Wave 0 and Wave 1 complete (gates V4-0G and V4-1G signed off): V4-10 done (trend, funnel, top questions), V4-11 done (aggregate CSV export), V4-12 done (analytics page: SVG trend, funnel, top questions, export button), V4-13 done (docs: the analytics surface in README/AGENTS/api-v1); gate V4-1G signed off (both suites, widget suite, build/lint, `trail build`, digest byte-comparison, CSV by way of the API, `/api/v1` summary + foreign-id 404). Wave 2 is under way: V4-20 done (per-session message cap), V4-21 done (Settings field + docs), V4-22 done (daily sitemap diff scan), V4-23 done (docs: caps and freshness); gate V4-2G signed off (both suites, widget suite, build/lint, `trail build`, `alembic current`, the session-cap refusal on the API, and the scan + 500-sitemap hand checks). Wave 3 is under way: V4-30 done (PPTX extraction), V4-31 done (YouTube source provider), V4-32 done (Notion source provider), V4-33 done (frontend buttons + docs for the new sources); gate V4-3G signed off (both suites, widget suite, build/lint, `trail build`, `alembic current`, and the `.pptx` + YouTube end-to-end imports with cited answers plus the three negatives — a successful Notion import stayed **blocked** for lack of an integration token, and the gate found and fixed the `attachments.file_type` length defect that broke `.pptx`/`.docx` uploads). Wave 4 is under way: V4-40 done (M10 `conversation_insights`, plus the `attachments.file_type` widening 50 → 120 that removes the V4-3G truncation clamp), V4-41 done (the insight service: claim/refresh lifecycle, caps, batched classification, failure handling); Alembic head is `f33497bc1ecd`.** D1–D9 confirmed twice against code anchors (§3) |
 | Created | 2026-11-20 |
 | Derived from | `plans/PLAN_V3.md` (§2 non-goals, §4 invariants, §8 release-tag policy), `plans/SPEC.md`, `README.md` §V3, `docs/security.md` §5 (K18 stays accepted), and the sitegpt.ai feature/pricing comparison of 2026-11-20 (gap list reproduced in §2 so this plan is self-contained) |
 | Baseline | V3 tag `v3` = `2e5ab734b09b4eb229f927a875e737153c544779` (immutable); `master` HEAD `59e0cc2d13c51dacdb05fb3572715d0e5c40d85f` is docs-only after the tag (8 commits, incl. this plan); `feat/v4` branched from it at V4-01; Alembic head `1c5516fa864d`; suite counts are historical (V3-4G recorded 47 modules / 718 Python tests / 46 node checks; the **V4 baseline is 47 / 720 / 46**, recorded in §3's pre-flight block) and **must be re-run at pre-flight, never copied** |
@@ -1101,7 +1101,7 @@ conversation. **Entry:** V4-3G.
     was applied to the dev database (`current` = `f33497bc1ecd`),
     `import site_gpt.app.main` passes and `trail build` exits 0.
 
-- [ ] **V4-41 · Insight service: claim, cap, classify** — `L`, depends: V4-40, migration: —
+- [x] **V4-41 · Insight service: claim, cap, classify** — `L`, depends: V4-40, migration: —
   - Files: `services/insights.py` (new), `tests/test_insights.py` (new).
   - Do: `claim(conversation_id)` inserts the `processing` row — a lost insert
     race rolls back and returns `None` (the `topics.claim_run` pattern); a
@@ -1122,6 +1122,50 @@ conversation. **Entry:** V4-3G.
     (questions, chars, batch, calls), enum clamping, failure→`failed`→retry,
     refresh-on-new-message, and that no raw transcript text is persisted
     beyond the 280-char summary; tenant scoping is a query-level join.
+  - Done: `services/insights.py` (new) — `claim(db, conversation_id)` inserts
+    the `processing` row, so the unique `conversation_id` **is** the lock: a lost
+    insert race rolls back and returns `None` (the `topics.claim_run` pattern), a
+    claim silent past `STALE_CLAIM_AFTER` (30 min) is taken over in place, a
+    `failed` row is retryable at once, and a `completed` row only when the
+    conversation's `last_message_at` moved past the row. A takeover keeps the
+    previous labels, so a failed refresh leaves the last classification
+    readable. `run_for_company(db, company_id)` returns `disabled` without a
+    query or a provider call when the flag is off; `_candidates` is one
+    company-scoped query (website join, an `EXISTS` for ≥ 1 non-blank visitor
+    message, `last_message_at` older than `INSIGHT_SETTLE_MINUTES`, and no row /
+    `failed` / refresh-due / stale-`processing`) ordered oldest first and capped
+    at `INSIGHT_MAX_CONVERSATIONS`; `transcript` is the last
+    `MAX_TRANSCRIPT_MESSAGES` (20) messages as `visitor:`/`assistant:`/`agent:`
+    lines cut to the **tail** of `INSIGHT_TRANSCRIPT_CHARS`, so the end of the
+    conversation — where the outcome is — survives the bound; batches of
+    `INSIGHT_BATCH_SIZE` send one temperature-0 `get_llm(provider, model,
+    temperature=0)` call each with the fixed `CLASSIFY_SYSTEM_PROMPT` (the
+    transcripts are declared untrusted data), and the reply must be a JSON list
+    with exactly one object per conversation. Values are clamped (`sentiment` →
+    `positive`/`neutral`/`negative`/`frustrated` else `neutral`; `resolution` →
+    the four D3 values else `unknown`), the summary is whitespace-collapsed and
+    truncated to 280, and `model` records the resolved pair (or the environment's
+    through `model_settings.resolve` + `LLM_AI`/`LLM_MODEL`). A provider error,
+    an unusable reply or a missing entry marks that batch's rows `failed` (that
+    entry's row alone when the list length matches) and is logged, never raised;
+    the next tick retries them. One run is at most ⌈50/10⌉ = 5 chat calls and
+    imports no embedding helper at all. **23 stubbed tests** in
+    `tests/test_insights.py` pin the claim (the insert, the unique constraint,
+    the lost race, the live claim, the stale takeover, refresh only when the
+    conversation grows, a missing conversation), the run (flag off spends
+    nothing, a settled conversation is classified and only the bounded fields are
+    stored with the transcript marker absent, a second run is `skipped`, a new
+    message refreshes in place, unsettled / bot-only / blank conversations are
+    skipped, another tenant never enters the prompt), the caps (the conversation
+    cap oldest-first, 25 conversations → 3 calls of 10/10/5, the transcript's 20
+    messages and character bound with the tail kept, blank messages dropped) and
+    the failures (provider → `failed` → retry, a failed refresh keeping the
+    previous labels, a malformed reply failing the batch without raising, one bad
+    batch not stopping the next, enum clamping and summary truncation, an
+    unusable entry failing only its conversation). Suite: **868 tests, OK**
+    (10.3 s), `import site_gpt.app.main` passes; no migration (head stays
+    `f33497bc1ecd`), no frontend or widget change, so the node suite and
+    `npm run build`/`lint` were not rerun.
 
 - [ ] **V4-42 · Worker loop + scheduler** — `S`, depends: V4-41, migration: —
   - Files: `worker.py` (`insight_loop`, `handle_insights`,
@@ -1435,9 +1479,9 @@ provider absence.
 | 1 — Advanced analytics (F1) | 4 | 4 / 4 | ☑ V4-1G |
 | 2 — Cost & freshness (F4) | 4 | 4 / 4 | ☑ V4-2G |
 | 3 — Training sources (F3) | 4 | 4 / 4 | ☑ V4-3G |
-| 4 — Conversation insights (F2) | 6 | 1 / 6 | ☐ V4-4G |
+| 4 — Conversation insights (F2) | 6 | 2 / 6 | ☐ V4-4G |
 | 5 — Hosted chat page (F5) | 3 | 0 / 3 | ☐ V4-5G |
-| **Total** | **25 tasks + 6 gates** | **17 / 25** | **4 / 6 gates** |
+| **Total** | **25 tasks + 6 gates** | **18 / 25** | **4 / 6 gates** |
 
 ---
 
