@@ -167,6 +167,9 @@ npm install && npm run dev   # :5173
 - `GET /widget.js` — embeddable widget; served with `Cache-Control: max-age=300`
   and an `X-Widget-Version` content hash, and accepts `?v=<version>` so an install
   snippet can bust the cache immediately after a deploy
+- `GET /chat/{website_id}` — hosted first-party chat page (no build step): one HTML
+  document that loads `/widget.js` in `displayMode: 'page'`, so a bot can be linked
+  to directly. An unknown id is a 404; a disabled website shows the unavailable notice
 - `POST /api/chat/feedback` — public 👍/👎 rating `{website_id, session_id, rating, comment?}`
 - `GET /api/widget-config?website_id=` — public widget appearance/config (assistant name, colors, greeting, placeholder, position, suggested questions)
 - `POST /api/v1/ingest?website_id=` — API-key ingest for scripts/CI (`X-API-Key`); admins mint and revoke keys at `/api/api-keys` (the raw key is returned once)
@@ -497,15 +500,18 @@ tag `v2.1`, JSON and HTML, with cluster rows present or not.
   rebuilt from what is left); `retention_days` expires cluster rows on the same
   policy. Both are covered in [`docs/security.md`](docs/security.md) §4.
 
-### V4 (in progress)
+### V4 (release — tag `v4`)
 
-Waves 0–3 have landed and signed off: the settings/env scaffolding (gate
-`V4-0G`), advanced analytics (F1, gate `V4-1G`), the cost & freshness pair (F4:
-a per-session message cap and the daily sitemap diff scan, gate `V4-2G`) and the
-new training sources (F3: `.pptx` uploads plus YouTube and Notion imports, gate
-`V4-3G`). Wave 4 (per-conversation insights, F2) is implemented and awaiting
-gate `V4-4G`; Wave 5 (the hosted chat page, F5) is still pending. Every feature
-is off by default, and with all V4 flags off the deployment behaves as tag `v3`.
+All five features are implemented: advanced analytics (F1, gate `V4-1G`), the
+cost & freshness pair (F4: a per-session message cap and the daily sitemap diff
+scan, gate `V4-2G`), the new training sources (F3: `.pptx` uploads plus YouTube
+and Notion imports, gate `V4-3G`), per-conversation insights (F2, gate `V4-4G`)
+and the hosted chat page (F5). The release tag `v4` is cut **once** on the commit
+gate `V4-5G` verified; the commits that record the release sit on `master` above
+it, untagged, because a release tag is never moved (the rule is
+[`plans/PLAN_V3.md`](plans/PLAN_V3.md) §8). Every feature is off by default, and
+with all V4 flags off the deployment behaves as tag `v3`. [`plans/PLAN_V4.md`](plans/PLAN_V4.md)
+records what each task did and what the gate verified, blocked items included.
 
 #### Advanced analytics (F1)
 
@@ -624,6 +630,32 @@ what to classify — the loop only decides **whether** to queue.
   (see [`docs/security.md`](docs/security.md) §4). Turning the flag off stops new
   classifications; existing rows stay until their conversation goes.
 
+#### Hosted chat page (F5)
+
+`GET /chat/{website_id}` is a bot's own URL — one HTML document, no build step,
+served by the API. It loads the same `/widget.js` an embed does with one extra
+config key, `displayMode: 'page'`, which fills the viewport and hides the
+launcher bubble; a snippet that never sends the key keeps the bubble exactly as
+before. The page's title and favicon come from the company's `assistant_name` and
+`widget_logo_url` settings (the logo only when it is an `https://` URL), the head
+carries `noindex, nofollow`, and an unknown or malformed id is a 404.
+
+- **Disabled websites.** A website whose `status` is not active gets the page with
+the same "temporarily unavailable" notice the widget paints in an embed — and no
+widget script or config request at all — rather than a JSON error or an empty chat.
+- **Origin.** The page sets `apiUrl: window.location.origin`, so a reverse proxy or
+an alternate hostname needs no configuration, and `embed_guard` accepts a request
+whose `Origin`/`Referer` origin equals the API's own request origin **exactly** on
+scheme, host and port (a lookalike host, a different port or an `http` downgrade is
+still `403`). This is first-party convenience for the page, **not** origin
+authentication: K18 stays accepted, and under `EMBED_TOKEN_MODE=enforce` the hosted
+page must carry the embed token exactly like an embed.
+- **Guards.** Every chat call keeps the per-IP limiter, the per-session cap, the
+daily quota and the K4 session token; the page is public, so there is nothing to
+log in to.
+- **Where to find it.** Settings → Widget shows the selected website's hosted URL
+with a **Copy Link** button beside the install snippet.
+
 ## Dev commands
 
 ```bash
@@ -635,7 +667,7 @@ cd frontend && npm run build && npm run lint
 
 ## Deploying
 
-SiteGPT is self-hosted; the release is V3 (tag `v3`). None of the dev defaults below should survive into production.
+SiteGPT is self-hosted; the release is V4 (tag `v4`). None of the dev defaults below should survive into production.
 
 > **Full checklist:** [`docs/security.md`](docs/security.md) lists every control
 the code enforces, every control it cannot (TLS, encryption at rest, backups,

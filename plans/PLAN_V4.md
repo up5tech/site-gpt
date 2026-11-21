@@ -3,7 +3,7 @@
 | | | |
 |---|---|---|
 | Version | **V4** — closes the feature gap against sitegpt.ai recorded in the 2026-11-20 comparison (§2): advanced analytics, per-conversation AI insights, new training sources, per-conversation cost caps + sitemap auto-scan, and a hosted chat page |
-| Status | **In progress — Wave 0 and Wave 1 complete (gates V4-0G and V4-1G signed off): V4-10 done (trend, funnel, top questions), V4-11 done (aggregate CSV export), V4-12 done (analytics page: SVG trend, funnel, top questions, export button), V4-13 done (docs: the analytics surface in README/AGENTS/api-v1); gate V4-1G signed off (both suites, widget suite, build/lint, `trail build`, digest byte-comparison, CSV by way of the API, `/api/v1` summary + foreign-id 404). Wave 2 is under way: V4-20 done (per-session message cap), V4-21 done (Settings field + docs), V4-22 done (daily sitemap diff scan), V4-23 done (docs: caps and freshness); gate V4-2G signed off (both suites, widget suite, build/lint, `trail build`, `alembic current`, the session-cap refusal on the API, and the scan + 500-sitemap hand checks). Wave 3 is under way: V4-30 done (PPTX extraction), V4-31 done (YouTube source provider), V4-32 done (Notion source provider), V4-33 done (frontend buttons + docs for the new sources); gate V4-3G signed off (both suites, widget suite, build/lint, `trail build`, `alembic current`, and the `.pptx` + YouTube end-to-end imports with cited answers plus the three negatives — a successful Notion import stayed **blocked** for lack of an integration token, and the gate found and fixed the `attachments.file_type` length defect that broke `.pptx`/`.docx` uploads). Wave 4 is under way: V4-40 done (M10 `conversation_insights`, plus the `attachments.file_type` widening 50 → 120 that removes the V4-3G truncation clamp), V4-41 done (the insight service: claim/refresh lifecycle, caps, batched classification, failure handling), V4-42 done (the `insights` job type, the opt-in scheduler and the handler), V4-43 done (insight labels on the inbox queue/detail and the flag-gated `outcomes` breakdown in analytics, plus the seeded render check on a throwaway database), V4-44 done (the erasure/retention cascade proof for insight rows and the security §4 insight data flow), V4-45 done (the insights docs: README section, worker job types, SPEC Scale-tier note); gate V4-4G signed off (M10 replayed from an empty Postgres 16.13 + pgvector 0.8.2 with its downgrade, both suites + widget suite + build/lint + `trail build`, the flag-off digest and analytics-summary byte comparisons against `v3` and V4-1G, the stubbed claim/retry matrix with a real live-provider classification, and the erasure/retention cascade with zero orphan rows on the throwaway database). Wave 5 is next. Alembic head is `f33497bc1ecd`.** D1–D9 confirmed twice against code anchors (§3) |
+| Status | **In progress — Wave 0 and Wave 1 complete (gates V4-0G and V4-1G signed off): V4-10 done (trend, funnel, top questions), V4-11 done (aggregate CSV export), V4-12 done (analytics page: SVG trend, funnel, top questions, export button), V4-13 done (docs: the analytics surface in README/AGENTS/api-v1); gate V4-1G signed off (both suites, widget suite, build/lint, `trail build`, digest byte-comparison, CSV by way of the API, `/api/v1` summary + foreign-id 404). Wave 2 is under way: V4-20 done (per-session message cap), V4-21 done (Settings field + docs), V4-22 done (daily sitemap diff scan), V4-23 done (docs: caps and freshness); gate V4-2G signed off (both suites, widget suite, build/lint, `trail build`, `alembic current`, the session-cap refusal on the API, and the scan + 500-sitemap hand checks). Wave 3 is under way: V4-30 done (PPTX extraction), V4-31 done (YouTube source provider), V4-32 done (Notion source provider), V4-33 done (frontend buttons + docs for the new sources); gate V4-3G signed off (both suites, widget suite, build/lint, `trail build`, `alembic current`, and the `.pptx` + YouTube end-to-end imports with cited answers plus the three negatives — a successful Notion import stayed **blocked** for lack of an integration token, and the gate found and fixed the `attachments.file_type` length defect that broke `.pptx`/`.docx` uploads). Wave 4 is under way: V4-40 done (M10 `conversation_insights`, plus the `attachments.file_type` widening 50 → 120 that removes the V4-3G truncation clamp), V4-41 done (the insight service: claim/refresh lifecycle, caps, batched classification, failure handling), V4-42 done (the `insights` job type, the opt-in scheduler and the handler), V4-43 done (insight labels on the inbox queue/detail and the flag-gated `outcomes` breakdown in analytics, plus the seeded render check on a throwaway database), V4-44 done (the erasure/retention cascade proof for insight rows and the security §4 insight data flow), V4-45 done (the insights docs: README section, worker job types, SPEC Scale-tier note); gate V4-4G signed off (M10 replayed from an empty Postgres 16.13 + pgvector 0.8.2 with its downgrade, both suites + widget suite + build/lint + `trail build`, the flag-off digest and analytics-summary byte comparisons against `v3` and V4-1G, the stubbed claim/retry matrix with a real live-provider classification, and the erasure/retention cascade with zero orphan rows on the throwaway database). Wave 5 is done: V4-50 (hosted page + `displayMode: 'page'`), V4-51 (the first-party origin rule) and V4-52 (release docs + the Settings hosted link); gate V4-5G (the release, tag `v4`) is next. Alembic head is `f33497bc1ecd`.** D1–D9 confirmed twice against code anchors (§3) |
 | Created | 2026-11-20 |
 | Derived from | `plans/PLAN_V3.md` (§2 non-goals, §4 invariants, §8 release-tag policy), `plans/SPEC.md`, `README.md` §V3, `docs/security.md` §5 (K18 stays accepted), and the sitegpt.ai feature/pricing comparison of 2026-11-20 (gap list reproduced in §2 so this plan is self-contained) |
 | Baseline | V3 tag `v3` = `2e5ab734b09b4eb229f927a875e737153c544779` (immutable); `master` HEAD `59e0cc2d13c51dacdb05fb3572715d0e5c40d85f` is docs-only after the tag (8 commits, incl. this plan); `feat/v4` branched from it at V4-01; Alembic head `1c5516fa864d`; suite counts are historical (V3-4G recorded 47 modules / 718 Python tests / 46 node checks; the **V4 baseline is 47 / 720 / 46**, recorded in §3's pre-flight block) and **must be re-run at pre-flight, never copied** |
@@ -1494,7 +1494,26 @@ and no change to the third-party origin posture. **Entry:** V4-4G.
     lookalike refusal, and `docs/security.md` §5's K18 row is updated without
     claiming K18 is closed.
 
-- [ ] **V4-52 · Release docs + hosted link in Settings** — `S`, depends: V4-51, migration: —
+- [x] **V4-52 · Release docs + hosted link in Settings** — `S`, depends: V4-51, migration: —
+  - Done: **Settings** (Widget tab) shows the selected website's hosted URL under
+    the install snippet with a **Copy Link** button. The value is
+    `<VITE_BACKEND_URL or window.location.origin>/chat/<website_id>`, i.e. the API
+    origin the page is served from — never the admin UI's origin — and a note says
+    the page needs no embed and that a disabled website shows the unavailable
+    notice. `README.md` now describes V4 as the release (tag `v4` cut once on the
+    commit gate `V4-5G` verifies, the PLAN_V3 §8 rule), lists `GET /chat/{website_id}`
+    in the endpoint list, and gains a **Hosted chat page (F5)** section: the one-document
+    page and its `displayMode: 'page'` key, title/favicon/noindex, the 404 and the
+    disabled notice, the `window.location.origin` base with the exact-match first-party
+    rule (K18 still accepted; `enforce` needs the token on the page too), the guards a
+    page call keeps, and where to copy the link. The Deploying line reads V4 (`v4`).
+    `AGENTS.md` records the new suite counts, describes `api/chat_page.py` + the
+    `displayMode` key + the first-party rule in the layout notes and the Settings link,
+    and its `plans/` paragraph reads **25 / 25 tasks, 5 / 6 gates**, gate `V4-5G` next,
+    head `f33497bc1ecd`. The §12 dashboard reads 25 / 25 (Wave 5: 3 / 3). Frontend:
+    `npm run build` ✓ and `npm run lint` exit 0; suites from this run: **56 modules /
+    919 Python tests, OK**, **46 node checks, 46 pass**. No code, schema, settings key or
+    dependency changed beyond the Settings link.
   - Files: `frontend/src/pages/Settings.tsx` (copy hosted link beside the
     embed snippet), `README.md` (V4 section, upgrade notes), `AGENTS.md`
     (layout/ownership, suite counts, migration head), `plans/PLAN_V4.md`
@@ -1703,8 +1722,8 @@ provider absence.
 | 2 — Cost & freshness (F4) | 4 | 4 / 4 | ☑ V4-2G |
 | 3 — Training sources (F3) | 4 | 4 / 4 | ☑ V4-3G |
 | 4 — Conversation insights (F2) | 6 | 6 / 6 | ☑ V4-4G |
-| 5 — Hosted chat page (F5) | 3 | 0 / 3 | ☐ V4-5G |
-| **Total** | **25 tasks + 6 gates** | **22 / 25** | **5 / 6 gates** |
+| 5 — Hosted chat page (F5) | 3 | 3 / 3 | ☐ V4-5G |
+| **Total** | **25 tasks + 6 gates** | **25 / 25** | **5 / 6 gates** |
 
 ---
 

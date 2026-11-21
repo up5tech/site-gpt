@@ -623,6 +623,16 @@ export function Settings() {
       version: widgetVersion,
     });
 
+  // V4 F5: the hosted page is served by the API, so the link points at the API
+  // origin (`VITE_BACKEND_URL` when the console runs on another host), never at
+  // the admin UI.
+  const getHostedPageUrl = () => {
+    const base = (
+      import.meta.env.VITE_BACKEND_URL || window.location.origin
+    ).replace(/\/+$/, '');
+    return `${base}/chat/${selectedWebsiteId}`;
+  };
+
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
     message.success('Copied to clipboard');
@@ -1014,6 +1024,34 @@ export function Settings() {
                     fontSize: '13px',
                   }}
                 />
+                <div style={{ marginTop: 16 }}>
+                  <div
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      marginBottom: 8,
+                    }}
+                  >
+                    <Text strong>Hosted page</Text>
+                    <Button
+                      type='link'
+                      icon={<CopyOutlined />}
+                      onClick={() => copyToClipboard(getHostedPageUrl())}
+                    >
+                      Copy Link
+                    </Button>
+                  </div>
+                  <Input value={getHostedPageUrl()} readOnly />
+                  <Paragraph
+                    type='secondary'
+                    style={{ marginTop: 8, marginBottom: 0 }}
+                  >
+                    A full-page chat served by this API — link to it directly, no
+                    embed needed. A disabled website shows the unavailable notice
+                    instead of the chat.
+                  </Paragraph>
+                </div>
                 <Alert
                   message='Tip'
                   description='You can customize the widget theme and behavior by modifying the ChatWidgetConfig object in the script.'
