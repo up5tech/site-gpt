@@ -3,7 +3,7 @@
 | | | |
 |---|---|---|
 | Version | **V4** — closes the feature gap against sitegpt.ai recorded in the 2026-11-20 comparison (§2): advanced analytics, per-conversation AI insights, new training sources, per-conversation cost caps + sitemap auto-scan, and a hosted chat page |
-| Status | **In progress — Wave 0 and Wave 1 complete (gates V4-0G and V4-1G signed off): V4-10 done (trend, funnel, top questions), V4-11 done (aggregate CSV export), V4-12 done (analytics page: SVG trend, funnel, top questions, export button), V4-13 done (docs: the analytics surface in README/AGENTS/api-v1); gate V4-1G signed off (both suites, widget suite, build/lint, `trail build`, digest byte-comparison, CSV by way of the API, `/api/v1` summary + foreign-id 404). Wave 2 is under way: V4-20 done (per-session message cap), V4-21 done (Settings field + docs), V4-22 done (daily sitemap diff scan), V4-23 done (docs: caps and freshness); gate V4-2G signed off (both suites, widget suite, build/lint, `trail build`, `alembic current`, the session-cap refusal on the API, and the scan + 500-sitemap hand checks). Wave 3 is under way: V4-30 done (PPTX extraction), V4-31 done (YouTube source provider), V4-32 done (Notion source provider), V4-33 done (frontend buttons + docs for the new sources); gate V4-3G signed off (both suites, widget suite, build/lint, `trail build`, `alembic current`, and the `.pptx` + YouTube end-to-end imports with cited answers plus the three negatives — a successful Notion import stayed **blocked** for lack of an integration token, and the gate found and fixed the `attachments.file_type` length defect that broke `.pptx`/`.docx` uploads). No migration written yet — Alembic head is still `1c5516fa864d`.** D1–D9 confirmed twice against code anchors (§3) |
+| Status | **In progress — Wave 0 and Wave 1 complete (gates V4-0G and V4-1G signed off): V4-10 done (trend, funnel, top questions), V4-11 done (aggregate CSV export), V4-12 done (analytics page: SVG trend, funnel, top questions, export button), V4-13 done (docs: the analytics surface in README/AGENTS/api-v1); gate V4-1G signed off (both suites, widget suite, build/lint, `trail build`, digest byte-comparison, CSV by way of the API, `/api/v1` summary + foreign-id 404). Wave 2 is under way: V4-20 done (per-session message cap), V4-21 done (Settings field + docs), V4-22 done (daily sitemap diff scan), V4-23 done (docs: caps and freshness); gate V4-2G signed off (both suites, widget suite, build/lint, `trail build`, `alembic current`, the session-cap refusal on the API, and the scan + 500-sitemap hand checks). Wave 3 is under way: V4-30 done (PPTX extraction), V4-31 done (YouTube source provider), V4-32 done (Notion source provider), V4-33 done (frontend buttons + docs for the new sources); gate V4-3G signed off (both suites, widget suite, build/lint, `trail build`, `alembic current`, and the `.pptx` + YouTube end-to-end imports with cited answers plus the three negatives — a successful Notion import stayed **blocked** for lack of an integration token, and the gate found and fixed the `attachments.file_type` length defect that broke `.pptx`/`.docx` uploads). Wave 4 has started: V4-40 done (M10 `conversation_insights`, plus the `attachments.file_type` widening 50 → 120 that removes the V4-3G truncation clamp); Alembic head is `f33497bc1ecd`.** D1–D9 confirmed twice against code anchors (§3) |
 | Created | 2026-11-20 |
 | Derived from | `plans/PLAN_V3.md` (§2 non-goals, §4 invariants, §8 release-tag policy), `plans/SPEC.md`, `README.md` §V3, `docs/security.md` §5 (K18 stays accepted), and the sitegpt.ai feature/pricing comparison of 2026-11-20 (gap list reproduced in §2 so this plan is self-contained) |
 | Baseline | V3 tag `v3` = `2e5ab734b09b4eb229f927a875e737153c544779` (immutable); `master` HEAD `59e0cc2d13c51dacdb05fb3572715d0e5c40d85f` is docs-only after the tag (8 commits, incl. this plan); `feat/v4` branched from it at V4-01; Alembic head `1c5516fa864d`; suite counts are historical (V3-4G recorded 47 modules / 718 Python tests / 46 node checks; the **V4 baseline is 47 / 720 / 46**, recorded in §3's pre-flight block) and **must be re-run at pre-flight, never copied** |
@@ -1037,8 +1037,9 @@ pipeline: every source normalizes into a local file under `uploads/`, then
     had the same latent failure. `api/upload.py` now clamps the informational
     type through `FILE_TYPE_MAX`/`_file_type` in one place, with
     `tests/test_upload_limits.py::test_an_ooxml_mime_type_fits_the_attachment_column`
-    covering it; widening the column would be a schema change this wave does
-    not make, so it is recorded here as a follow-up.
+    covering it. **Amended at V4-40:** M10 widens `attachments.file_type` to
+    120, so the clamp was removed and the upload test now asserts the OOXML type
+    is stored in full.
   - Note: `handle_ingest` logs one `[quota] could not count message … Event loop
     is closed` line when called via `asyncio.run` inside the gate script; it is
     the Redis counter failing open as designed and does not affect the import,
@@ -1053,7 +1054,7 @@ pipeline: every source normalizes into a local file under `uploads/`, then
 auditable provider cost — derived data that lives and dies with its
 conversation. **Entry:** V4-3G.
 
-- [ ] **V4-40 · M10: `conversation_insights`** — `S`, depends: V4-3G, migration: M10
+- [x] **V4-40 · M10: `conversation_insights`** — `S`, depends: V4-3G, migration: M10
   - Files: `models.py`, `alembic/versions/<rev>_v4_m10_conversation_insights.py`.
   - Do: one new table — uuid `id`, `conversation_id` FK **unique** `ON DELETE
     CASCADE`, `status` (`processing`/`completed`/`failed`, check constraint),
@@ -1067,6 +1068,38 @@ conversation. **Entry:** V4-3G.
   - Done when: `alembic upgrade head` from the §3 backup replays to a single
     head chained from `1c5516fa864d`; downgrade drops the table (documented
     data loss: derived classifications only); the drift lines are gone.
+  - Done: revision `f33497bc1ecd` (parent `1c5516fa864d`, single head) adds
+    `conversation_insights` — `conversation_id` FK `conversations.id` CASCADE and
+    **unique** (the claim lock *and* the erasure path), `status` (default
+    `processing`, check `processing`/`completed`/`failed`), nullable
+    `sentiment`/`resolution` with their own check constraints, `summary`
+    `String(280)`, `model` `String(120)`, `claimed_at`, BaseModel timestamps —
+    plus the `(status, claimed_at)` stale-claim recovery index. The table is new
+    and empty, so its unique constraint and index build transactionally
+    (invariant 11), and nothing is backfilled. The same revision — folded in at
+    the user's request — widens `attachments.file_type` `VARCHAR(50)` →
+    `VARCHAR(120)`, which is metadata-only in Postgres (no table rewrite), so
+    the OOXML MIME types the V4-3G gate could not store are kept verbatim and
+    the gate's temporary truncation clamp in `api/upload.py` is gone; the
+    downgrade truncates longer values before narrowing (documented loss of
+    informational metadata) and then drops the table (derived classifications
+    only). Autogenerate's known drift was stripped — four naive `DateTime`
+    ALTERs plus the `chat_feedback` FK churn — leaving the `file_type` widening
+    as the migration's only `alter_column`. Verified on real Postgres: from an
+    empty database `alembic upgrade head` created the table with its unique
+    constraint, three check constraints, CASCADE FK and index, with
+    `attachments.file_type` at 120; `downgrade -1` dropped the table and
+    restored 50; `upgrade head` returned to the single head; the throwaway
+    database was dropped. Model → migration parity is pinned by
+    `ConversationInsightSchemaTests` (unique `conversation_id`, CASCADE, the
+    280/120 bounds, the index columns and the three checks) and
+    `ConversationInsightMigrationTests` (chains from M9, only the `file_type`
+    alter survived the drift removal, no `CONCURRENTLY`, truncate-then-narrow
+    downgrade); the single-head assertion in `tests/test_models_indexes.py` now
+    reads `f33497bc1ecd`, and the V4-3G upload test asserts an OOXML type is
+    stored in full. Suite: **845 tests, OK** (10.2 s); `alembic upgrade head`
+    was applied to the dev database (`current` = `f33497bc1ecd`),
+    `import site_gpt.app.main` passes and `trail build` exits 0.
 
 - [ ] **V4-41 · Insight service: claim, cap, classify** — `L`, depends: V4-40, migration: —
   - Files: `services/insights.py` (new), `tests/test_insights.py` (new).
@@ -1254,7 +1287,7 @@ autogenerate chain it, then confirm the parent is the head above.
 
 | ID | Revision file | Contents | Task | Chains from |
 |---|---|---|---|---|
-| M10 | `<rev>_v4_m10_conversation_insights.py` | `conversation_insights`: unique `conversation_id` FK CASCADE (the claim lock **and** the erasure/retention mechanism), `status`/`sentiment`/`resolution` check constraints, `summary` ≤ 280, `model`, `claimed_at`; transactional indexes on the new empty table (unique `conversation_id`, `(status, claimed_at)`) | V4-40 | `1c5516fa864d` |
+| M10 | `f33497bc1ecd_v4_m10_conversation_insights.py` ✅ | `conversation_insights`: unique `conversation_id` FK CASCADE (the claim lock **and** the erasure/retention mechanism), `status`/`sentiment`/`resolution` check constraints, `summary` ≤ 280, `model`, `claimed_at`; transactional indexes on the new empty table (unique `conversation_id`, `(status, claimed_at)`); also widens `attachments.file_type` 50 → 120 (OOXML MIME types), removing the V4-3G truncation clamp | V4-40 | `1c5516fa864d` |
 
 Rules that still apply:
 
@@ -1402,9 +1435,9 @@ provider absence.
 | 1 — Advanced analytics (F1) | 4 | 4 / 4 | ☑ V4-1G |
 | 2 — Cost & freshness (F4) | 4 | 4 / 4 | ☑ V4-2G |
 | 3 — Training sources (F3) | 4 | 4 / 4 | ☑ V4-3G |
-| 4 — Conversation insights (F2) | 6 | 0 / 6 | ☐ V4-4G |
+| 4 — Conversation insights (F2) | 6 | 1 / 6 | ☐ V4-4G |
 | 5 — Hosted chat page (F5) | 3 | 0 / 3 | ☐ V4-5G |
-| **Total** | **25 tasks + 6 gates** | **16 / 25** | **4 / 6 gates** |
+| **Total** | **25 tasks + 6 gates** | **17 / 25** | **4 / 6 gates** |
 
 ---
 

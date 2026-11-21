@@ -40,6 +40,10 @@ M8_REVISION = "afef1e91e0b5"
 M8_PATH = ROOT / "alembic" / "versions" / f"{M8_REVISION}_v3_m8_topic_clusters.py"
 M9_REVISION = "1c5516fa864d"
 M9_PATH = ROOT / "alembic" / "versions" / f"{M9_REVISION}_v3_m9_inbox.py"
+M10_REVISION = "f33497bc1ecd"
+M10_PATH = (
+    ROOT / "alembic" / "versions" / f"{M10_REVISION}_v4_m10_conversation_insights.py"
+)
 ACTIVE_INDEX = "uq_embed_tokens_website_id_active"
 
 
@@ -166,7 +170,7 @@ class EmbedTokenMigrationTests(unittest.TestCase):
         # Each migration must stay exactly one step behind the next one and the
         # chain must still start at the V2 head, or a later one was rebased onto
         # the wrong parent.
-        self.assertEqual(script.get_heads(), [M9_REVISION])
+        self.assertEqual(script.get_heads(), [M10_REVISION])
         self.assertEqual(script.get_revision(M9_REVISION).down_revision, M8_REVISION)
         self.assertEqual(script.get_revision(M8_REVISION).down_revision, M7_REVISION)
         self.assertEqual(script.get_revision(M7_REVISION).down_revision, M7_PARENT)
@@ -318,12 +322,12 @@ class TopicClusterMigrationTests(unittest.TestCase):
         self.assertIn("drop_table('topic_cluster_runs')", downgrade)
         self.assertIn("drop_index", downgrade)
 
-    def test_m8_is_the_single_head(self):
+    def test_the_chain_has_a_single_head(self):
         config = Config(str(ROOT / "alembic.ini"))
         config.set_main_option("script_location", str(ROOT / "alembic"))
         script = ScriptDirectory.from_config(config)
 
-        self.assertEqual(script.get_heads(), [M9_REVISION])
+        self.assertEqual(script.get_heads(), [M10_REVISION])
         self.assertEqual(script.get_revision(M8_REVISION).down_revision, M7_REVISION)
 
 
@@ -391,6 +395,101 @@ class ConversationMigrationTests(unittest.TestCase):
 
         self.assertIn("drop_column('chat_messages', 'author_user_id')", downgrade)
         self.assertIn("drop_table('conversations')", downgrade)
+
+
+class ConversationInsightSchemaTests(unittest.TestCase):
+    """M10: one derived row per conversation, bounded values only."""
+
+    def test_one_row_per_conversation(self):
+        self.assertIn(
+            ("conversation_id",),
+            _unique_column_sets(models.ConversationInsight),
+        )
+
+    def test_the_conversation_cascades(self):
+        foreign_key = next(
+            iter(models.ConversationInsight.__table__.c.conversation_id.foreign_keys)
+        )
+
+        self.assertEqual(foreign_key.target_fullname, "conversations.id")
+        self.assertEqual(foreign_key.ondelete, "CASCADE")
+
+    def test_summary_and_model_are_bounded(self):
+        table = models.ConversationInsight.__table__
+
+        self.assertEqual(table.c.summary.type.length, 280)
+        self.assertEqual(table.c.model.type.length, 120)
+
+    def test_the_recovery_index_is_status_then_claimed_at(self):
+        index = next(
+            item
+            for item in models.ConversationInsight.__table__.indexes
+            if item.name == "idx_conversation_insights_status_claimed_at"
+        )
+
+        self.assertEqual(
+            [column.name for column in index.columns], ["status", "claimed_at"]
+        )
+        self.assertFalse(index.unique)
+
+    def test_the_enums_are_check_constraints(self):
+        names = {
+            constraint.name
+            for constraint in models.ConversationInsight.__table__.constraints
+        }
+
+        self.assertLessEqual(
+            {
+                "ck_conversation_insights_status",
+                "ck_conversation_insights_sentiment",
+                "ck_conversation_insights_resolution",
+            },
+            names,
+        )
+
+
+class ConversationInsightMigrationTests(unittest.TestCase):
+    """M10 chains from M9, keeps only its two real changes, and undoes them."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.source = M10_PATH.read_text()
+
+    def test_m10_chains_from_m9(self):
+        self.assertTrue(M10_PATH.exists(), f"missing migration {M10_PATH.name}")
+        self.assertIn(
+            "down_revision: Union[str, Sequence[str], None] = '1c5516fa864d'",
+            self.source,
+        )
+
+    def test_only_the_file_type_alter_survives_the_drift_removal(self):
+        # The V4-3G gate's clamp is undone by this widening; every other
+        # `alter_column` autogenerate proposed rewrites a timezone-aware column.
+        # The module docstring names them, so only the code below it is searched.
+        code = self.source.split('"""', 2)[2]
+
+        self.assertEqual(code.count("alter_column"), 2)  # up + down
+        self.assertIn("'file_type',", code)
+        self.assertNotIn("last_used_at", code)
+        self.assertNotIn("consent_at", code)
+        self.assertNotIn("reset_token_expires_at", code)
+        self.assertNotIn("drop_constraint", code)
+
+    def test_new_table_indexes_are_built_transactionally(self):
+        self.assertNotIn("autocommit_block()", self.source)
+        self.assertNotIn("postgresql_concurrently=True", self.source)
+
+    def test_the_summary_is_limited_and_the_table_has_its_checks(self):
+        self.assertIn("sa.String(length=280)", self.source)
+        self.assertIn("name='ck_conversation_insights_status'", self.source)
+        self.assertIn("sa.UniqueConstraint('conversation_id')", self.source)
+
+    def test_downgrade_truncates_before_narrowing_and_drops_the_table(self):
+        downgrade = self.source.split("def downgrade()", 1)[1]
+
+        self.assertIn("left(file_type", downgrade)
+        self.assertIn("OLD_FILE_TYPE_WIDTH = 50", self.source)
+        self.assertIn("drop_table('conversation_insights')", downgrade)
 
 
 if __name__ == "__main__":

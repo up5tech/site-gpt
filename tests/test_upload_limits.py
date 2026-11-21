@@ -9,6 +9,7 @@ import httpx
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from site_gpt.app import models
 from site_gpt.app.api import upload as upload_api
 from site_gpt.app.core.auth import get_current_user
 from site_gpt.app.db.session import get_db
@@ -152,10 +153,10 @@ class UploadEndpointTests(unittest.TestCase):
         after = set(os.listdir("uploads")) if os.path.isdir("uploads") else set()
         self.assertEqual(after - before, set())
 
-    def test_an_ooxml_mime_type_fits_the_attachment_column(self):
-        # `attachments.file_type` is VARCHAR(50) while the OOXML types are 71
-        # characters; storing one verbatim was a DataError on Postgres (the
-        # V4-3G gate's .pptx import), so the value is clamped to the column.
+    def test_an_ooxml_mime_type_is_stored_in_full(self):
+        # `attachments.file_type` used to be VARCHAR(50) while the OOXML types
+        # are 73 characters, so a real `.pptx` upload was a DataError on Postgres
+        # (V4-3G gate). M10 widens the column, so the value is stored verbatim.
         db = MagicMock()
         app = FastAPI()
         app.include_router(upload_api.router, prefix="/api/uploads")
@@ -177,10 +178,13 @@ class UploadEndpointTests(unittest.TestCase):
                 os.remove(os.path.join("uploads", name))
 
         self.assertEqual(response.status_code, 200, response.text)
-        self.assertGreater(len(mime), upload_api.FILE_TYPE_MAX)
+        self.assertGreater(len(mime), 50)  # no longer fits the old column
         stored = db.add.call_args.args[0]
-        self.assertEqual(stored.file_type, mime[: upload_api.FILE_TYPE_MAX])
-        self.assertEqual(response.json()["file_type"], mime[: upload_api.FILE_TYPE_MAX])
+        self.assertEqual(stored.file_type, mime)
+        self.assertEqual(response.json()["file_type"], mime)
+        self.assertGreaterEqual(
+            models.Attachment.__table__.c.file_type.type.length, len(mime)
+        )
 
     def test_remote_import_over_limit_returns_413(self):
         class OversizedProvider:

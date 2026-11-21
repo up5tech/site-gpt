@@ -646,7 +646,7 @@ Run uvicorn behind nginx/Caddy/Traefik terminating **TLS 1.2+**:
 ```bash
 # fresh database: create it and install the extension first
 # CREATE EXTENSION IF NOT EXISTS vector;
-uv run alembic upgrade head      # head is 1c5516fa864d (V3 M9 conversations + agent author)
+uv run alembic upgrade head      # head is f33497bc1ecd (V4 M10 conversation_insights)
 ```
 
 The migration chain is linear from that head; never edit an already-applied revision.
@@ -672,7 +672,7 @@ restrict them at the proxy if that matters to you.
 1. `uv run alembic upgrade head` — the V2/V2.1 chain adds 15 revisions on top of
    the V1 head, ending at `c9d3e5a71b28`, and V3 adds three more, so a V1
    database ends at the single head `1c5516fa864d` (`plans/PLAN_V3.md` §7):
-   `07f83918a289 → c41d7e8a9f20 (api_keys) → 2f95a35b9d5d → 5fe07e597f12 → bebd929605ed → 94ca756068a7 (V2) → 5fbe6ce28d9b (session tokens) → b7d41c9e2f10 (deliveries) → d2f5a81c9b74 → e7b3c94a1d52 → a4c1e9d7f320 → c3f8a2b91d47 → d5b9c4e2a87f → e2a7c5d913f6 → f7c1d84b2e39 → c9d3e5a71b28 → 76f46b510350 (M7 embed tokens) → afef1e91e0b5 (M8 topic clusters) → 1c5516fa864d (M9 conversations + agent author)`.
+   `07f83918a289 → c41d7e8a9f20 (api_keys) → 2f95a35b9d5d → 5fe07e597f12 → bebd929605ed → 94ca756068a7 (V2) → 5fbe6ce28d9b (session tokens) → b7d41c9e2f10 (deliveries) → d2f5a81c9b74 → e7b3c94a1d52 → a4c1e9d7f320 → c3f8a2b91d47 → d5b9c4e2a87f → e2a7c5d913f6 → f7c1d84b2e39 → c9d3e5a71b28 → 76f46b510350 (M7 embed tokens) → afef1e91e0b5 (M8 topic clusters) → 1c5516fa864d (M9 conversations + agent author) → f33497bc1ecd (V4 M10 conversation insights + a wider `attachments.file_type`)`.
    V3 only adds tables, a nullable column, an index and a foreign key; no data
    migration and **no re-ingest** (the embedded `EMBEDDING_DIMENSIONS` is
    unchanged). The index revisions build `CONCURRENTLY`, so they are not

@@ -213,7 +213,10 @@ class Attachment(BaseModel):
     filename: Mapped[str] = mapped_column(String(255), nullable=False)
     status: Mapped[str] = mapped_column(String(50), nullable=True, default="tmp")
     file_url: Mapped[str] = mapped_column(String(500), nullable=False)
-    file_type: Mapped[str] = mapped_column(String(50), nullable=True)
+    # 120, not 50: the OOXML MIME types are 73 characters
+    # (`application/vnd.openxmlformats-officedocument...`), and a `.pptx` or
+    # `.docx` upload answered 500 when the value did not fit (V4-3G gate).
+    file_type: Mapped[str] = mapped_column(String(120), nullable=True)
     file_size: Mapped[int] = mapped_column(nullable=True)
 
     # Where the file bytes came from. "local" = uploaded directly; other values
@@ -324,6 +327,57 @@ class Conversation(BaseModel):
     # so metadata can never outlive the messages it describes.
     last_message_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
+    )
+
+
+class ConversationInsight(BaseModel):
+    """Derived sentiment/resolution/summary for one conversation (M10, V4 F2).
+
+    One row per conversation: the unique `conversation_id` is both the claim lock
+    (a lost insert race means another run is classifying that conversation) and
+    the erasure mechanism — the FK cascades, so deleting the conversation deletes
+    its classifications. Only bounded derived values live here: the summary is at
+    most 280 characters and the transcript itself is never stored (D3).
+    """
+
+    __tablename__ = "conversation_insights"
+
+    __table_args__ = (
+        UniqueConstraint("conversation_id"),
+        CheckConstraint(
+            "status IN ('processing', 'completed', 'failed')",
+            name="ck_conversation_insights_status",
+        ),
+        CheckConstraint(
+            "sentiment IS NULL OR sentiment IN "
+            "('positive', 'neutral', 'negative', 'frustrated')",
+            name="ck_conversation_insights_sentiment",
+        ),
+        CheckConstraint(
+            "resolution IS NULL OR resolution IN "
+            "('resolved', 'unresolved', 'escalated', 'unknown')",
+            name="ck_conversation_insights_resolution",
+        ),
+        # A run recovers dead claims by scanning `processing` rows by age.
+        Index(
+            "idx_conversation_insights_status_claimed_at", "status", "claimed_at"
+        ),
+    )
+
+    conversation_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False
+    )
+    # "processing" | "completed" | "failed" — see services.insights (V4-41).
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="processing"
+    )
+    sentiment: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    resolution: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    summary: Mapped[str | None] = mapped_column(String(280), nullable=True)
+    # Which provider/model pair produced this row, for audit.
+    model: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    claimed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
 
 
