@@ -3,7 +3,7 @@
 | | | |
 |---|---|---|
 | Version | **V4** — closes the feature gap against sitegpt.ai recorded in the 2026-11-20 comparison (§2): advanced analytics, per-conversation AI insights, new training sources, per-conversation cost caps + sitemap auto-scan, and a hosted chat page |
-| Status | **In progress — Wave 0 and Wave 1 complete (gates V4-0G and V4-1G signed off): V4-10 done (trend, funnel, top questions), V4-11 done (aggregate CSV export), V4-12 done (analytics page: SVG trend, funnel, top questions, export button), V4-13 done (docs: the analytics surface in README/AGENTS/api-v1); gate V4-1G signed off (both suites, widget suite, build/lint, `trail build`, digest byte-comparison, CSV by way of the API, `/api/v1` summary + foreign-id 404). Wave 2 is under way: V4-20 done (per-session message cap), V4-21 done (Settings field + docs), V4-22 done (daily sitemap diff scan), V4-23 done (docs: caps and freshness); gate V4-2G signed off (both suites, widget suite, build/lint, `trail build`, `alembic current`, the session-cap refusal on the API, and the scan + 500-sitemap hand checks). Wave 3 is under way: V4-30 done (PPTX extraction), V4-31 done (YouTube source provider), V4-32 done (Notion source provider), V4-33 done (frontend buttons + docs for the new sources); gate V4-3G signed off (both suites, widget suite, build/lint, `trail build`, `alembic current`, and the `.pptx` + YouTube end-to-end imports with cited answers plus the three negatives — a successful Notion import stayed **blocked** for lack of an integration token, and the gate found and fixed the `attachments.file_type` length defect that broke `.pptx`/`.docx` uploads). Wave 4 is under way: V4-40 done (M10 `conversation_insights`, plus the `attachments.file_type` widening 50 → 120 that removes the V4-3G truncation clamp), V4-41 done (the insight service: claim/refresh lifecycle, caps, batched classification, failure handling), V4-42 done (the `insights` job type, the opt-in scheduler and the handler), V4-43 done (insight labels on the inbox queue/detail and the flag-gated `outcomes` breakdown in analytics, plus the seeded render check on a throwaway database), V4-44 done (the erasure/retention cascade proof for insight rows and the security §4 insight data flow), V4-45 done (the insights docs: README section, worker job types, SPEC Scale-tier note); gate V4-4G signed off (M10 replayed from an empty Postgres 16.13 + pgvector 0.8.2 with its downgrade, both suites + widget suite + build/lint + `trail build`, the flag-off digest and analytics-summary byte comparisons against `v3` and V4-1G, the stubbed claim/retry matrix with a real live-provider classification, and the erasure/retention cascade with zero orphan rows on the throwaway database). Wave 5 is done: V4-50 (hosted page + `displayMode: 'page'`), V4-51 (the first-party origin rule) and V4-52 (release docs + the Settings hosted link); gate V4-5G (the release, tag `v4`) is next. Alembic head is `f33497bc1ecd`.** D1–D9 confirmed twice against code anchors (§3) |
+| Status | **In progress — Wave 0 and Wave 1 complete (gates V4-0G and V4-1G signed off): V4-10 done (trend, funnel, top questions), V4-11 done (aggregate CSV export), V4-12 done (analytics page: SVG trend, funnel, top questions, export button), V4-13 done (docs: the analytics surface in README/AGENTS/api-v1); gate V4-1G signed off (both suites, widget suite, build/lint, `trail build`, digest byte-comparison, CSV by way of the API, `/api/v1` summary + foreign-id 404). Wave 2 is under way: V4-20 done (per-session message cap), V4-21 done (Settings field + docs), V4-22 done (daily sitemap diff scan), V4-23 done (docs: caps and freshness); gate V4-2G signed off (both suites, widget suite, build/lint, `trail build`, `alembic current`, the session-cap refusal on the API, and the scan + 500-sitemap hand checks). Wave 3 is under way: V4-30 done (PPTX extraction), V4-31 done (YouTube source provider), V4-32 done (Notion source provider), V4-33 done (frontend buttons + docs for the new sources); gate V4-3G signed off (both suites, widget suite, build/lint, `trail build`, `alembic current`, and the `.pptx` + YouTube end-to-end imports with cited answers plus the three negatives — a successful Notion import stayed **blocked** for lack of an integration token, and the gate found and fixed the `attachments.file_type` length defect that broke `.pptx`/`.docx` uploads). Wave 4 is under way: V4-40 done (M10 `conversation_insights`, plus the `attachments.file_type` widening 50 → 120 that removes the V4-3G truncation clamp), V4-41 done (the insight service: claim/refresh lifecycle, caps, batched classification, failure handling), V4-42 done (the `insights` job type, the opt-in scheduler and the handler), V4-43 done (insight labels on the inbox queue/detail and the flag-gated `outcomes` breakdown in analytics, plus the seeded render check on a throwaway database), V4-44 done (the erasure/retention cascade proof for insight rows and the security §4 insight data flow), V4-45 done (the insights docs: README section, worker job types, SPEC Scale-tier note); gate V4-4G signed off (M10 replayed from an empty Postgres 16.13 + pgvector 0.8.2 with its downgrade, both suites + widget suite + build/lint + `trail build`, the flag-off digest and analytics-summary byte comparisons against `v3` and V4-1G, the stubbed claim/retry matrix with a real live-provider classification, and the erasure/retention cascade with zero orphan rows on the throwaway database). Wave 5 is done: V4-50 (hosted page + `displayMode: 'page'`), V4-51 (the first-party origin rule) and V4-52 (release docs + the Settings hosted link); gate V4-5G is signed off (the §9 runbook on a throwaway database: 81/81 checks, 0 blocked, all suites/build/lint/`trail build` green) and **only the merge to `master` and the `v4` tag remain, awaiting go-ahead**. Alembic head is `f33497bc1ecd`.** D1–D9 confirmed twice against code anchors (§3) |
 | Created | 2026-11-20 |
 | Derived from | `plans/PLAN_V3.md` (§2 non-goals, §4 invariants, §8 release-tag policy), `plans/SPEC.md`, `README.md` §V3, `docs/security.md` §5 (K18 stays accepted), and the sitegpt.ai feature/pricing comparison of 2026-11-20 (gap list reproduced in §2 so this plan is self-contained) |
 | Baseline | V3 tag `v3` = `2e5ab734b09b4eb229f927a875e737153c544779` (immutable); `master` HEAD `59e0cc2d13c51dacdb05fb3572715d0e5c40d85f` is docs-only after the tag (8 commits, incl. this plan); `feat/v4` branched from it at V4-01; Alembic head `1c5516fa864d`; suite counts are historical (V3-4G recorded 47 modules / 718 Python tests / 46 node checks; the **V4 baseline is 47 / 720 / 46**, recorded in §3's pre-flight block) and **must be re-run at pre-flight, never copied** |
@@ -1527,23 +1527,96 @@ and no change to the third-party origin posture. **Entry:** V4-4G.
 
 #### Gate V4-5G (release gate)
 
-- [ ] Full §9 runbook on a throwaway database: fresh DB → `alembic upgrade head`
+- [x] Full §9 runbook on a throwaway database: fresh DB → `alembic upgrade head`
       (M10 included) → register → website + sitemap → ingest → chat (sync +
       SSE) → analytics trend/funnel/top-questions + CSV → session cap refusal
       → sitemap scan diff + failed-fetch no-op → one import per new source →
       insights run (stubbed or live) → hosted page chat → privacy export +
       erasure (zero orphan insight rows) → **all V4 flags off** → repeat the
       V3 smoke and the digest byte-comparison to prove no regression.
-- [ ] Negative checks (§9) all executed or recorded blocked with the reason.
-- [ ] Both suites + widget suite + build + lint + `trail build`; counts recorded
+  - Done: `scripts/gate_v4_5g/gate.py` (committed with this gate, the V4-3G/
+    V4-4G precedent) on a throwaway `v4_gate_5g`: created empty, `alembic upgrade
+    head` replayed the whole chain and `alembic current` = **`f33497bc1ecd`**
+    (single head); the script starts a real `uvicorn` process against that
+    database (so the Redis counters run on one event loop) and drives it over
+    HTTP, while the worker handlers and direct row writes run in-process. The
+    first run after each fix passed **81 / 81 checks, 0 blocked**:
+    - schema: single head, `conversation_insights` exists,
+      `attachments.file_type` = 120; `/health` keeps its shape;
+    - register → login → website → `/api/widget-config` (14 keys) → a sitemap
+      page → `POST /api/ingest` (job captured and removed from the shared queue)
+      → `handle_ingest` with the **live embedding provider**: status `completed`,
+      the crawled page ingested (`documents=1`) and the knowledge base embedded;
+    - chat sync and SSE with the **live chat provider**: the answer used the
+      ingested SSO text ("supports SAML single sign-on on the Team plan…"), the
+      stream emitted `data:` frames;
+    - analytics: trend/funnel/top-questions from the route, the funnel's five
+      stages, the normalized `=HYPERLINK(...)` question; CSV `text/csv`
+      attachment `analytics-2026-11-14_2026-11-21.csv`, the formula cell written
+      as `'=hyperlink(...)`, the exact aggregate-only header, no session id or
+      contact detail; hosted page 200 with page mode, noindex and the
+      `assistant_name` title;
+    - session cap: `session_message_limit=3`, the fourth message is the friendly
+      `SESSION_CAP_MESSAGE`, the daily counter moved by exactly 3, the K4 session
+      still readable; `0`/`abc`/`-5`/empty → 0 and `7` → 7; Redis down fails open;
+    - sitemap scan: a real DNS failure and an empty fetch change zero rows; a
+      successful diff adds 2 pages and queues 1 ingest; a processing website is
+      not double-queued; a vanished page is retired and **both** of its document
+      rows deleted;
+    - sources: `.pptx` upload accepted, parsed and embedded (long MIME type); a
+      YouTube video imported 1 caption file; a wrong Notion token → 401 with no
+      attachment row and no file under `uploads/`, the token absent from logs;
+      an oversize upload → 413 with no attachment row;
+    - insights: one live classification (`sentiment=neutral`,
+      `resolution=resolved`, `model=custom_openai/auto`), `outcomes` in the
+      summary only for the opted-in company; erasure leaves 0 insight rows and 0
+      orphans; retention preview+apply removes the expired conversation;
+    - all flags off: a second registered company has every V4 flag off, its
+      insight run returns `disabled` with 0 claims/0 calls and 0 rows, its chat
+      still answers, its widget-config is 14 keys, its analytics has no
+      `outcomes`, and its digest JSON and HTML are **byte-identical to tag `v3`**
+      (sha256 `4cae8ef2ded3459b` / `82bb23b3094dc6fe`, V3 key set only).
+    The throwaway database was dropped afterwards (`pg_database` count 0) and the
+    `/tmp` checkout removed; the dev database was never written to (its
+    `alembic current` is still `f33497bc1ecd`).
+- [x] Negative checks (§9) all executed or recorded blocked with the reason.
+  - Done: every one executed, **none blocked**. Session cap ordering and the
+    no-reset rule; `0`/garbage fallbacks; Redis down → fail open; failed and
+    empty sitemap fetches → zero row changes; a processing website is never
+    double-queued; a caption-less YouTube video → 400 with no attachment row;
+    wrong Notion token → 401, nothing stored on disk or in `attachments`, token
+    absent from captured logs; oversize upload → 413, nothing stored; insight
+    claim race → one winner (`claimed 0`, `calls 0`) and one completion; a
+    failed insight batch → `failed` while a completed row keeps its labels;
+    flag-off company → no provider call, no insight rows, V3-shaped analytics;
+    hosted page: the served origin accepted as first-party, three lookalikes
+    (suffix, port +1, `https` upgrade) and a third-party origin all 403,
+    `enforce` mode → `embed_token_required`, disabled site → notice with no
+    widget, unknown/malformed id → 404; CSV contains no session id or contact
+    detail; `/api/widget-config` still exactly 14 keys. Only the successful
+    Notion **import** remains blocked (no integration token, as recorded at
+    V4-3G) — the refusal path was executed live.
+- [x] Both suites + widget suite + build + lint + `trail build`; counts recorded
       from the run.
-- [ ] Docs (README, AGENTS, security, api-v1, this plan) updated **in this
+  - Done: **56 modules / 919 Python tests, OK** (10.1 s); **46 node checks, 46
+    pass / 0 fail** across 8 files; `npm run build` ✓ (2.0 s) and `npm run lint`
+    exit 0; `trail build` exit 0 (215 files parsed, rest replayed from cache).
+- [x] Docs (README, AGENTS, security, api-v1, this plan) updated **in this
       commit**; `grep -c "^- \[ \] \*\*V4-"` = 0.
+  - Done: this section, §12's dashboard (25 / 25, 6 / 6 gates) and §13's ticks;
+    `AGENTS.md`'s V4 paragraph now records the gate and the merge/tag state.
+    `README.md`, `docs/security.md` and `docs/api-v1.md` already carry the V4
+    text written in V4-13, V4-23, V4-33, V4-44, V4-45, V4-50…52; the grep is 0.
 - [ ] Merge the verified commit to `master` (fast-forward), then cut annotated
       tag `v4` **once**, on exactly that commit, and push. The tag is immutable
       from this moment (PLAN_V3 §8 policy applies verbatim); anything committed
       afterwards stays untagged on `master`.
-- [ ] commit `chore(v4): V4-5G gate — hosted page + release`, then tag.
+  - **Not run — awaiting explicit go-ahead.** Per the review-before-release
+    instruction, this gate reports before merging or tagging: `master` has not
+    been fast-forwarded and no `v4` tag exists. Nothing else blocks it.
+- [x] commit `chore(v4): V4-5G gate — hosted page + release`, then tag.
+  - Done: the commit (this one, with `scripts/gate_v4_5g/gate.py`). The tag step
+    is deliberately left to the operator (see the item above).
 
 ---
 
@@ -1722,36 +1795,38 @@ provider absence.
 | 2 — Cost & freshness (F4) | 4 | 4 / 4 | ☑ V4-2G |
 | 3 — Training sources (F3) | 4 | 4 / 4 | ☑ V4-3G |
 | 4 — Conversation insights (F2) | 6 | 6 / 6 | ☑ V4-4G |
-| 5 — Hosted chat page (F5) | 3 | 3 / 3 | ☐ V4-5G |
-| **Total** | **25 tasks + 6 gates** | **25 / 25** | **5 / 6 gates** |
+| 5 — Hosted chat page (F5) | 3 | 3 / 3 | ☑ V4-5G |
+| **Total** | **25 tasks + 6 gates** | **25 / 25** | **6 / 6 gates** |
 
 ---
 
 ## 13. Definition of done — V4
 
-- [ ] All 25 tasks ticked and all 6 gates signed off (blocked items recorded,
+- [x] All 25 tasks ticked and all 6 gates signed off (blocked items recorded,
       not hidden); D1–D9 resolved before their waves; `grep -c "^- \[ \] \*\*V4-"` = 0.
-- [ ] F1–F5 implemented; M10 applied; single head chained from `1c5516fa864d`;
+- [x] F1–F5 implemented; M10 applied; single head chained from `1c5516fa864d`;
       insight claims idempotent and tenant-scoped; the claim race tested.
-- [ ] Zero widget backward-compatibility breaks: a V3 snippet without
+- [x] Zero widget backward-compatibility breaks: a V3 snippet without
       `displayMode` renders the bubble byte-identically; `WIDGET_PUBLIC_KEYS`
       is still exactly 14; every `localStorage` key unchanged.
-- [ ] Digest JSON + HTML byte-identical to tag `v3` for a fixed fixture, with
+- [x] Digest JSON + HTML byte-identical to tag `v3` for a fixed fixture, with
       all V4 flags off **and** with insight/cluster rows present.
-- [ ] Zero `EMBEDDING_DIMENSIONS` change, zero re-ingest; exactly two new
+- [x] Zero `EMBEDDING_DIMENSIONS` change, zero re-ingest; exactly two new
       Python dependencies, zero new JS dependencies.
-- [ ] Every feature off by default; with all V4 flags off, behaviour equals
+- [x] Every feature off by default; with all V4 flags off, behaviour equals
       tag `v3` (chat, ingest, worker loops, analytics shape, digest).
-- [ ] Privacy guarantees hold: erasure/retention leave zero orphan insight rows
+- [x] Privacy guarantees hold: erasure/retention leave zero orphan insight rows
       (database-proven at the gate); the analytics CSV contains no PII and
       neutralizes formula cells; Notion tokens never stored or logged.
-- [ ] K18 remains an accepted residual; the hosted-page origin exception is
+- [x] K18 remains an accepted residual; the hosted-page origin exception is
       documented as first-party convenience, with lookalike refusals tested.
-- [ ] Both suites green (counts recorded from the run at the tag), frontend
+- [x] Both suites green (counts recorded from the run at the tag), frontend
       build + lint green, `trail build` run, docs consistent.
 - [ ] Verified release commit merged to `master`; annotated tag `v4` cut once
       on exactly that commit and pushed; README describes V4 as the current
       version; the tag is never moved afterwards (§8).
+  - **Not run — awaiting explicit go-ahead** (report-before-release). Every
+    other item above was verified by gate `V4-5G` on 2026-11-21.
 
 ---
 
