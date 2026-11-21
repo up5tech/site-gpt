@@ -19,7 +19,7 @@ from uuid import uuid4
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -40,6 +40,7 @@ TABLES = [
     models.HandoffRequest.__table__,
     models.Contact.__table__,
     models.Conversation.__table__,
+    models.ConversationInsight.__table__,
     models.SessionToken.__table__,
     models.Setting.__table__,
     models.DigestLog.__table__,
@@ -53,6 +54,16 @@ TABLES = [
 ]
 
 
+def _sqlite_foreign_keys(connection, _record):
+    """SQLite ignores FKs unless asked; Postgres always enforces them.
+
+    The M10 insight FK carries `ON DELETE CASCADE`, which is the only erasure and
+    retention path for those rows (V4-44). Without this pragma the cascade tests
+    would pass while leaving the child row behind, i.e. they would prove nothing.
+    """
+    connection.execute("PRAGMA foreign_keys=ON")
+
+
 class ConversationTestCase(unittest.TestCase):
     def setUp(self):
         self.engine = create_engine(
@@ -60,6 +71,7 @@ class ConversationTestCase(unittest.TestCase):
             connect_args={"check_same_thread": False},
             poolclass=StaticPool,
         )
+        event.listen(self.engine, "connect", _sqlite_foreign_keys)
         Base.metadata.create_all(self.engine, tables=TABLES)
         self.db = sessionmaker(bind=self.engine)()
         self.company = models.Company(name="Acme")
@@ -394,6 +406,51 @@ class ErasureTests(ConversationTestCase):
         # The owner's lead record is kept by design.
         self.assertEqual(self.db.query(models.Contact).count(), 1)
 
+    def test_the_export_does_not_need_an_insight_section(self):
+        # V4-44 decision: insights are derived labels over the transcript the
+        # export already contains, so the export gains no new section — and a
+        # summary that is not source data must not become an exported record.
+        self._message(self.site, "s1")
+        row = self._conversation(self.site, "s1", state="human")
+        self.db.add(
+            models.ConversationInsight(
+                conversation_id=row.id,
+                status="completed",
+                sentiment="frustrated",
+                resolution="escalated",
+                summary="Derived label marker",
+            )
+        )
+        self.db.commit()
+
+        app = FastAPI()
+        app.include_router(privacy_api.router, prefix="/api/privacy")
+        app.dependency_overrides[get_db] = lambda: self.db
+        app.dependency_overrides[get_admin_user] = lambda: SimpleNamespace(
+            id=uuid4(), company_id=self.company.id
+        )
+        client = TestClient(app)
+
+        response = client.get(
+            "/api/privacy/export", params={"website_id": str(self.site.id)}
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(
+            set(response.json()),
+            {
+                "website_id",
+                "website_name",
+                "generated_at",
+                "chat_messages",
+                "contacts",
+                "chat_feedback",
+                "handoff_requests",
+                "conversations",
+            },
+        )
+        self.assertNotIn("Derived label marker", response.text)
+
     def test_export_lists_the_inbox_state(self):
         self._conversation(self.site, "s1", state="human")
 
@@ -413,6 +470,92 @@ class ErasureTests(ConversationTestCase):
         exported = response.json()["conversations"]
         self.assertEqual([row["session_id"] for row in exported], ["s1"])
         self.assertEqual(exported[0]["state"], "human")
+
+
+class InsightCascadeTests(ConversationTestCase):
+    """V4-44: the insight row dies with its conversation, and only with it.
+
+    There is deliberately no second delete path: `conversation_insights` has a
+    unique `conversation_id` FK with `ON DELETE CASCADE` (M10, invariant 14), so
+    every existing erasure/retention route removes the derived row for free.
+    These tests run with SQLite's `PRAGMA foreign_keys=ON` so they would fail if
+    the cascade were dropped.
+    """
+
+    def _insight(self, conversation, summary="Visitor was charged twice."):
+        row = models.ConversationInsight(
+            conversation_id=conversation.id,
+            status="completed",
+            sentiment="frustrated",
+            resolution="escalated",
+            summary=summary,
+        )
+        self.db.add(row)
+        self.db.commit()
+        return row
+
+    def _orphans(self):
+        """Insight rows whose conversation no longer exists — must always be 0."""
+        return (
+            self.db.query(models.ConversationInsight)
+            .filter(
+                ~models.ConversationInsight.conversation_id.in_(
+                    select(models.Conversation.id)
+                )
+            )
+            .count()
+        )
+
+    def test_erase_session_leaves_no_orphan_insight(self):
+        self._message(self.site, "s1")
+        erased = self._conversation(self.site, "s1", state="closed")
+        self._insight(erased)
+        kept = self._conversation(self.site, "s2", state="human")
+        self._insight(kept, summary="Shipping was answered from the help content.")
+
+        conversations.erase_session(self.db, self.site.id, "s1")
+
+        self.assertEqual(self.db.query(models.ConversationInsight).count(), 1)
+        self.assertEqual(
+            self.db.query(models.ConversationInsight).one().conversation_id,
+            kept.id,
+        )
+        self.assertEqual(self._orphans(), 0)
+
+    def test_delete_conversation_leaves_no_orphan_insight(self):
+        self._message(self.site, "s1")
+        row = self._conversation(self.site, "s1", state="closed")
+        self._insight(row)
+
+        conversations.delete_conversation(self.db, self.site.id, "s1")
+
+        self.assertEqual(self.db.query(models.ConversationInsight).count(), 0)
+        self.assertEqual(self._orphans(), 0)
+
+    def test_retention_expiry_leaves_no_orphan_insight(self):
+        self.db.add(
+            models.Setting(
+                company_id=self.company.id, key="retention_days", value="7"
+            )
+        )
+        self.db.commit()
+        self._message(self.site, "s1", when=NOW - timedelta(days=10))
+        expired = self._conversation(self.site, "s1", last=NOW - timedelta(days=10))
+        self._insight(expired)
+        fresh = self._conversation(self.site, "s2", last=NOW - timedelta(hours=1))
+        self._insight(fresh, summary="Shipping was answered from the help content.")
+
+        result = retention.purge_company(
+            self.db, self.company.id, dry_run=False, now=NOW
+        )
+
+        self.assertEqual(result["deleted"]["conversations"], 1)
+        self.assertEqual(self.db.query(models.ConversationInsight).count(), 1)
+        self.assertEqual(
+            self.db.query(models.ConversationInsight).one().conversation_id,
+            fresh.id,
+        )
+        self.assertEqual(self._orphans(), 0)
 
 
 class RetentionMetadataTests(ConversationTestCase):

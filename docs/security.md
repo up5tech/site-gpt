@@ -241,6 +241,7 @@ an *unclaimed* session is allowed; see §5 for the trade-off.
 | `chat_feedback` | 👍/👎, optional comment, reviewed answer | Yes — the comment is free text |
 | `handoff_requests` | Request message, status, channel | Yes — free text |
 | `conversations` | One inbox row per `(website_id, session_id)`: state (`bot`/`waiting`/`human`/`closed`), the holder while a session is being handled (cleared on release/close, by design), claim/close and last-message timestamps, first-question title from `chat_messages` | Yes — the lasting attribution of who answered is `chat_messages.author_user_id` on the `agent` rows, not the cleared assignee. Expires on `last_message_at` under `retention_days`, and the privacy erasure deletes it with that session's messages |
+| `conversation_insights` | One AI classification per conversation: `status` (`processing`/`completed`/`failed`), `sentiment`, `resolution`, a ≤ 280-character summary and the provider/model pair that produced it | Derived from the transcript, not a second copy of it: the summary is bounded and the prompt forbids names, emails and order numbers, but it can still echo a customer's words. Cascades with its conversation, so erasure and retention never leave it behind (V4 F2) |
 | `documents`, `extra_documents`, `embeddings` | Owner's knowledge base | Usually no; may quote the owner's pages |
 | `users` | Name, email, argon2 password hash, reset tokens | Yes |
 | `api_keys` | Prefix, peppered hash, scopes, timestamps | No raw secret |
@@ -291,6 +292,44 @@ cluster without republishing the conversation. Labels and summaries are generate
 by the configured chat LLM from a bounded sample, so they can still echo a
 customer's wording — treat them as visitor-adjacent data, not as aggregate
 statistics.
+
+**Derived conversation insights (V4 F2).** `conversation_insights` is one row per
+conversation, written only when a company opts in (`conversation_insights_enabled`,
+off by default). It is the same class of derived data as the clusters, with a
+tighter scope:
+
+- **What leaves the deployment.** For each settled conversation, the last
+  `MAX_TRANSCRIPT_MESSAGES` (20) messages with whitespace collapsed and the text
+  truncated to its last `INSIGHT_TRANSCRIPT_CHARS` (4000) characters — the tail,
+  because the outcome of a support chat is at its end. Up to `INSIGHT_BATCH_SIZE`
+  (10) conversations go into one temperature-0 chat call, and a company's run is
+  capped at `INSIGHT_MAX_CONVERSATIONS` (50), so one run is at most five provider
+  calls and **zero** embedding calls. Nothing else is sent: no contact record, no
+  email, no session id, no IP. The transcript can contain anything the visitor
+  typed — including a name or an order number — and it is declared untrusted data
+  in a fixed prompt that forbids following its instructions and requires a JSON
+  reply without repeated personal data. That is a mitigation, not a guarantee: the
+  provider (and the account owner behind it) does see the bounded transcript,
+  under whatever terms that provider is configured with. A company that has not
+  opted in sends nothing.
+- **What is stored.** Only the verdict: the `sentiment`/`resolution` enums, a
+  summary clamped to 280 characters, the `status`, the claim timestamps and the
+  provider/model pair that produced it. The prompt and the transcript are never
+  written to the database or the logs; a provider or parse failure stores `failed`
+  on that batch's rows and keeps any previous labels rather than erasing them.
+- **What cascades.** `conversation_insights.conversation_id` is unique with
+  `ON DELETE CASCADE`, and that FK is the **only** delete path (invariant 14).
+  `DELETE /api/privacy/conversations/{session_id}` (`erase_session`),
+  `delete_conversation` and a `retention_days` purge that expires a conversation on
+  `last_message_at` each remove the insight row with it — there is no separate
+  cleanup and no orphan sweep. The cascade is pinned by tests with SQLite's
+  `PRAGMA foreign_keys=ON` (the same enforcement Postgres applies), and it was
+  replayed on a throwaway Postgres database at `f33497bc1ecd` before gate
+  `V4-4G`.
+- **Export.** The privacy export gains no insight section. Insights are derived
+  labels over the transcript the export already contains, and the summary is not
+  source data a data subject supplied; a summary can echo their words, but the
+  transcript section is the complete record. Erasing the session removes both.
 
 **Delivery rows.** `integration_deliveries` holds a copy of the event payload so a
 failed send can be retried, so it is cleaned on its own schedule

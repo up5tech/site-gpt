@@ -335,7 +335,10 @@ Keys understood by `widget_ui_strings`: `clear`, `send`, `thinking`, `sources`,
   `DELETE /api/privacy/contacts/{sid}` removes the lead and its handoffs.
   A retention policy (`retention_days`) makes the worker delete expired rows and
   their uploaded files daily; `POST /api/privacy/retention` previews the same purge with `dry_run`
-  before anything is removed.
+  before anything is removed. The per-conversation AI insight rows (V4 F2) ride the
+  same two paths: their FK cascades, so erasure and retention remove them with the
+  conversation and there is no separate cleanup step — the details are in
+  [`docs/security.md`](docs/security.md) §4.
   Both are company-scoped and 404 on a foreign website. Consent is recorded per
   contact (`consent_at`) when `require_consent` is on. What is **not** provided is
   stated plainly in [`docs/security.md`](docs/security.md): no SOC 2 Type II, no

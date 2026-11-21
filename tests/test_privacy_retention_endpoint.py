@@ -12,7 +12,7 @@ from uuid import uuid4
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -25,6 +25,16 @@ from site_gpt.app.db.session import get_db
 NOW = datetime.now(UTC)
 
 
+def _sqlite_foreign_keys(connection, _record):
+    """SQLite ignores FKs unless asked; Postgres always enforces them.
+
+    The M10 insight FK's `ON DELETE CASCADE` is what removes the derived row when
+    retention expires its conversation (V4-44), so the test turns the same
+    enforcement on.
+    """
+    connection.execute("PRAGMA foreign_keys=ON")
+
+
 class RetentionEndpointTests(unittest.TestCase):
     def setUp(self):
         self.engine = create_engine(
@@ -32,6 +42,7 @@ class RetentionEndpointTests(unittest.TestCase):
             connect_args={"check_same_thread": False},
             poolclass=StaticPool,
         )
+        event.listen(self.engine, "connect", _sqlite_foreign_keys)
         Base.metadata.create_all(
             self.engine,
             tables=[
@@ -52,6 +63,8 @@ class RetentionEndpointTests(unittest.TestCase):
                 # M9: inbox metadata and the K4 token the erasure path removes.
                 models.Conversation.__table__,
                 models.SessionToken.__table__,
+                # M10: the derived insight row cascades with its conversation.
+                models.ConversationInsight.__table__,
             ],
         )
         self.db = sessionmaker(bind=self.engine)()
@@ -146,6 +159,35 @@ class RetentionEndpointTests(unittest.TestCase):
         self.assertEqual(body["total"], 0)
         self.assertIsNone(body["cutoff"])
         self.assertEqual(self.db.query(models.ChatMessage).count(), 1)
+
+    def test_the_apply_cascades_to_an_expired_conversations_insight(self):
+        expired = models.Conversation(
+            website_id=self.site.id,
+            session_id="s-expired",
+            state="closed",
+            last_message_at=NOW - timedelta(days=40),
+            created_at=NOW - timedelta(days=40),
+            updated_at=NOW - timedelta(days=40),
+        )
+        self.db.add(expired)
+        self.db.commit()
+        self.db.add(
+            models.ConversationInsight(
+                conversation_id=expired.id,
+                status="completed",
+                sentiment="negative",
+                resolution="unresolved",
+                summary="Visitor never got an answer.",
+            )
+        )
+        self.db.commit()
+
+        response = self._post(dry_run=False, retention_days=30)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["deleted"]["conversations"], 1)
+        self.assertEqual(self.db.query(models.Conversation).count(), 0)
+        self.assertEqual(self.db.query(models.ConversationInsight).count(), 0)
 
     def test_negative_days_are_rejected(self):
         response = self._post(dry_run=False, retention_days=-1)
