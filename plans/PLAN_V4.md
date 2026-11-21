@@ -1399,36 +1399,42 @@ and no change to the third-party origin posture. **Entry:** V4-4G.
 
 - [x] **V4-50 · `GET /chat/{website_id}` + widget page mode** — `M`, depends: V4-4G, migration: —
   - Done: new `api/chat_page.py` (`router` wired in `main.py`) serves the one-document page:
-    `window.ChatWidgetConfig = { apiUrl: <request.base_url without trailing />,
+    `window.ChatWidgetConfig = { apiUrl: window.location.origin,
     website_id, displayMode: 'page' }` and `<script src="/widget.js?v=<version>" async>`
+    — the API base is the visitor's own origin, never `request.base_url`, because
+    behind a reverse proxy the Host/scheme this process sees is not the URL the
+    visitor used; an alternate hostname needs no configuration, and a test sends a
+    foreign `Host` and proves no server-derived origin is baked into the document;
     (the same `routes.widget_version()` hash), so there is still no build step. The
     document's `<title>` and `<link rel="icon">` read the same two allowlisted settings
     `widget-config` publishes (`assistant_name` with a `Chat` fallback,
     `widget_logo_url` accepted only as an absolute `https://` URL — a data:/javascript:
     logo is simply omitted) and the head carries `<meta name="robots"
     content="noindex, nofollow">`; both interpolations are escaped. Tenant rule: an
-    unknown **or** malformed id is a 404. `ensure_website_active` runs first, and a
-    disabled website still gets the page (200) on purpose — its own `widget-config`
-    read is refused 403 and the widget paints its existing unavailable state, where
-    raising here would replace that notice with a JSON error. `widget.js` gains only
+    unknown **or** malformed id is a 404.     `ensure_website_active` runs first and actually decides the page: a disabled
+    website gets a 200 with the widget's own `UNAVAILABLE_MESSAGE` rendered
+    server-side (the identical sentence, pinned by a test that reads `widget.js`) and
+    no widget script or config request, instead of the chat or a JSON error. `widget.js` gains only
     the additive `displayMode` key: `DEFAULT_CONFIG` `'bubble'`, `sanitizeConfig`
     accepts exactly `'page'` (a typo, `'PAGE'` or a number keeps the bubble),
     `pageMode` pins the root to the viewport (`inset: 0` instead of the corner offset,
     and the offset is not re-applied after config loads), the box fills 100 % with no
     radius/shadow/margin, and the launcher gets `display: none` — no bubble to close
     back to. Every existing key, `localStorage` key and bubble behaviour is untouched.
-    `tests/test_chat_page.py` (12 cases, real in-memory SQLite) pins the document,
-    same-origin `apiUrl`, the versioned script, title/favicon/noindex, title escaping,
-    the non-https logo, the fallback title, 404 for unknown/malformed ids and the
-    disabled-site 200; `tests/widget_bootstrap.test.mjs` now evaluates the real
+    `tests/test_chat_page.py` (15 cases, real in-memory SQLite) pins the document,
+    the browser-derived `apiUrl` (and that a foreign `Host` never leaks into it), the
+    versioned script, title/favicon/noindex, title escaping, the non-https logo, the
+    fallback title, 404 for unknown/malformed ids and the disabled notice with its
+    chrome; `tests/widget_bootstrap.test.mjs` now evaluates the real
     `DEFAULT_CONFIG` and `sanitizeConfig` and proves a config without the key yields
     exactly the bubble config (sorted-entry equality), plus the four layout pins.
-    Suites from this run: **56 modules / 906 Python tests, OK** (11.2 s) and **46 node
+    Suites from this run: **56 modules / 909 Python tests, OK** (11.0 s) and **46 node
     checks, 46 pass / 0 fail**. Against the real app (`TestClient` on
-    `site_gpt.app.main:app`, dev database untouched and unseeded) the first website id
-    returned **200 `text/html`** with the config block, `displayMode: 'page'`,
-    `/widget.js?v=247dd63a`, `<title>Site GPT</title>` and the noindex meta, while
-    unknown and malformed ids both answered **404**. Not checked: the widget's
+    `site_gpt.app.main:app` with a foreign `Host: bot.customer.example`, dev database
+    untouched and unseeded) the first website id returned **200 `text/html`** with
+    `apiUrl: window.location.origin`, `displayMode: 'page'`,
+    `/widget.js?v=247dd63a` and `<title>Site GPT</title>`, while unknown and malformed
+    ids both answered **404**. Not checked: the widget's
     in-browser page-mode layout was not viewed (no browser pass was requested), so
     "chats end-to-end" is covered only by the unchanged widget request paths and the
     stub-level node checks; the third-party-origin rule is V4-51's task.
