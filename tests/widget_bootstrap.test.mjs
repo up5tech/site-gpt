@@ -234,6 +234,86 @@ check(
   { loadConfig, loadContact },
 );
 
+// --- V4 F5: the hosted page mode --------------------------------------------
+// `displayMode` is optional and additive. Without it the widget must keep the
+// bubble it has always rendered, so the real defaults and the real sanitiser are
+// evaluated here: the config a snippet gets with and without the key must be
+// identical in every field. `'page'` is the only value that changes the layout,
+// and it hides the launcher instead of leaving a close-to-bubble path.
+const configBlock = source.slice(
+  source.indexOf('const DEFAULT_CONFIG'),
+  source.indexOf('// ================= SANITIZE CONFIG'),
+);
+const helperBlock = source.slice(
+  source.indexOf('const HEX_COLOR'),
+  source.indexOf('// ================= UI STRINGS'),
+);
+const defaults = new Function(`${configBlock}\nreturn DEFAULT_CONFIG;`)();
+const sanitizeConfig = new Function(
+  `${configBlock}\n${helperBlock}\nreturn sanitizeConfig;`,
+)();
+
+check(
+  'the default layout is still the bubble',
+  defaults.displayMode === 'bubble',
+  defaults.displayMode,
+);
+
+// Key order is not part of the contract, so compare sorted entries.
+const stable = (obj) =>
+  JSON.stringify(
+    Object.keys(obj)
+      .sort()
+      .map((key) => [key, obj[key]]),
+  );
+const withoutKey = Object.assign({}, defaults);
+delete withoutKey.displayMode;
+check(
+  'a snippet without displayMode renders exactly the bubble config',
+  stable(sanitizeConfig(Object.assign({}, withoutKey))) ===
+    stable(sanitizeConfig(Object.assign({}, defaults))),
+  sanitizeConfig(Object.assign({}, withoutKey)),
+);
+check(
+  "only the lowercase 'page' value switches the layout",
+  sanitizeConfig({ displayMode: 'page' }).displayMode === 'page' &&
+    sanitizeConfig({ displayMode: 'PAGE' }).displayMode === 'bubble' &&
+    sanitizeConfig({ displayMode: 1 }).displayMode === 'bubble' &&
+    sanitizeConfig({ displayMode: 'embedded' }).displayMode === 'bubble',
+  sanitizeConfig({ displayMode: 'PAGE' }),
+);
+
+check(
+  'the root is pinned to the viewport only in page mode',
+  /const pageMode = config\.displayMode === 'page';/.test(source) &&
+    /if \(pageMode\) \{\s*container\.style\.inset = '0';\s*\} else \{\s*container\.style\.bottom = '20px';/.test(
+      source,
+    ),
+  source.slice(
+    source.indexOf('// ================= ROOT'),
+    source.indexOf('// ================= UI'),
+  ),
+);
+check(
+  'page mode hides the launcher',
+  source.includes("display: ${pageMode ? 'none' : 'inline-block'};")
+);
+check(
+  'page mode makes the chat box fill the viewport',
+  source.includes("display: ${pageMode ? 'flex' : 'none'};")
+);
+check(
+  'page mode drops the bubble width, height, radius and shadow',
+  source.includes("width: ${pageMode ? '100%' : config.width};")
+);
+check(
+  'the corner offset is not re-applied after config loads in page mode',
+  /if \(!pageMode\) \{\s*container\.style\[config\.position === 'bottom-left' \? 'left' : 'right'\] =\s*'20px';\s*\}/.test(
+    body(extractFn('loadServerConfig')),
+  ),
+  body(extractFn('loadServerConfig')),
+);
+
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed, ${passed} passed`);
   process.exit(1);

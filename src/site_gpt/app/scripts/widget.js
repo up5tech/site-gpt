@@ -5,6 +5,10 @@
     website_id: '',
     botName: 'Assistant',
     position: 'bottom-right',
+    // V4 F5: `'bubble'` is the embed every snippet has always rendered;
+    // `'page'` is the hosted page (`GET /chat/{website_id}`), which fills the
+    // viewport and shows no launcher. Absent keeps the bubble.
+    displayMode: 'bubble',
     width: '360px',
     height: '480px',
     theme: {
@@ -109,6 +113,9 @@
         500,
       ),
       position: cfg.position === 'bottom-left' ? 'bottom-left' : 'bottom-right',
+      // Only the one documented mode changes the layout; anything else (a typo,
+      // a non-string) keeps the bubble, so no snippet can lose its launcher.
+      displayMode: cfg.displayMode === 'page' ? 'page' : 'bubble',
       // A token is opaque `emb_…` text; `safeText` only trims and caps it, and a
       // non-string (someone setting an object) becomes no token at all.
       embedToken: safeText(cfg.embedToken, '', 200),
@@ -322,12 +329,19 @@
   }
 
   // ================= ROOT =================
+  // V4 F5: the hosted page has no embed chrome, so its root fills the viewport.
+  // A bubble embed keeps the fixed corner it has always had.
+  const pageMode = config.displayMode === 'page';
   const container = document.createElement('div');
   container.style.position = 'fixed';
   container.style.zIndex = '9999';
-  container.style.bottom = '20px';
-  container.style[config.position === 'bottom-left' ? 'left' : 'right'] =
-    '20px';
+  if (pageMode) {
+    container.style.inset = '0';
+  } else {
+    container.style.bottom = '20px';
+    container.style[config.position === 'bottom-left' ? 'left' : 'right'] =
+      '20px';
+  }
   document.body.appendChild(container);
 
   const shadow = container.attachShadow({ mode: 'open' });
@@ -336,6 +350,8 @@
   shadow.innerHTML = `
     <style>
       .chat-toggle {
+        /* Page mode has no launcher at all: nothing to open, nothing to close. */
+        display: ${pageMode ? 'none' : 'inline-block'};
         background: ${config.theme.primaryColor};
         color: white;
         border: none;
@@ -347,15 +363,15 @@
       }
 
       .chat-box {
-        display: none;
+        display: ${pageMode ? 'flex' : 'none'};
         flex-direction: column;
-        width: ${config.width};
-        height: ${config.height};
+        width: ${pageMode ? '100%' : config.width};
+        height: ${pageMode ? '100%' : config.height};
         background: ${config.theme.backgroundColor};
-        border-radius: 12px;
-        box-shadow: 0 6px 18px rgba(0,0,0,0.2);
+        border-radius: ${pageMode ? '0' : '12px'};
+        box-shadow: ${pageMode ? 'none' : '0 6px 18px rgba(0,0,0,0.2)'};
         overflow: hidden;
-        margin-bottom: 10px;
+        margin-bottom: ${pageMode ? '0' : '10px'};
         font-family: Arial, sans-serif;
       }
 
@@ -1606,8 +1622,11 @@
       shadow.querySelector('.chat-input').style.background = config.footerColor;
       inputEl.placeholder = t('placeholder', config.placeholder);
       applyLogo();
-      container.style[config.position === 'bottom-left' ? 'left' : 'right'] =
-        '20px';
+      // Page mode pins the root to the viewport; a corner offset would shrink it.
+      if (!pageMode) {
+        container.style[config.position === 'bottom-left' ? 'left' : 'right'] =
+          '20px';
+      }
     } catch (e) {
       // fall back to ChatWidgetConfig / defaults
     }

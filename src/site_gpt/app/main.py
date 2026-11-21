@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from site_gpt.app.api.api_key import router as api_key_router
+from site_gpt.app.api.chat_page import router as chat_page_router
 from site_gpt.app.api.company import router as company_router
 from site_gpt.app.api.document import router as document_router
 from site_gpt.app.api.extra_document import router as extra_document_router
@@ -94,6 +95,8 @@ app.add_middleware(
 )
 
 app.include_router(router)
+# The hosted chat page (V4 F5) carries its own /chat/{website_id} path.
+app.include_router(chat_page_router)
 app.include_router(company_router, prefix="/api/companies")
 app.include_router(setting_router, prefix="/api/settings")
 app.include_router(document_router, prefix="/api/documents")
