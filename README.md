@@ -275,7 +275,7 @@ same registry are seeded for every company but never published.
 | `retention_days` | **no** | How long visitor data is kept (default `0` = for ever). The worker's daily retention job deletes `chat_messages`, `chat_feedback`, `handoff_requests`, `contacts`, `digest_log`, `conversations` (when the session's newest message is past the cutoff), `attachments` and `extra_documents` rows older than this, per company, in batches of 1000 rows per transaction (a document is kept while anything was attached to it inside the window) — an expired upload takes its file under `uploads/` and its document text plus the embeddings built from it, so an expired source stops answering questions instead of only losing its file. Set it, and press **Preview purge** to see the per-table counts first, in Settings → Privacy; **Apply purge now** does the same call with `dry_run: false` behind a confirmation, for when waiting for the daily worker is not acceptable. The endpoint is `POST /api/privacy/retention` (`dry_run` defaults to `true`). |
 | `session_message_limit` | **no** | V4 (F4) per-visitor-session message cap (`0` = unlimited, the default). Counted in Redis per `(website, session)`, refreshed on every accepted message, and checked **after** the per-IP limiter and **before** the daily quota — a capped refusal is a friendly reply that spends no daily budget, calls no LLM and never resets the session. Falls back to `SESSION_MESSAGE_LIMIT` for an empty or unusable value, and fails open when Redis is down. Admin only — **Settings → Privacy → Message limits** writes it through `PUT /api/settings` |
 | `sitemap_scan_enabled` | **no** | V4 (F4) daily sitemap diff scan for this company's `active` websites (`false` by default). The worker looks every `SITEMAP_SCAN_INTERVAL_SECONDS`, adds new pages up to `SITEMAP_SYNC_MAX_URLS` (the same rule as the **Sync Sitemap** button), and marks vanished pages inactive while deleting **every** document row for their URL — but only after a **fully successful, non-empty** fetch, so a transient error can never wipe a knowledge base. Ingest is queued only when something changed, through the same single-ingest claim |
-| `conversation_insights_enabled` | **no** | V4 (F2) per-conversation AI insights (`false` by default): sentiment, resolution outcome and a ≤ 280-character summary for settled conversations, at bounded provider cost (`INSIGHT_MAX_CONVERSATIONS` per run, `INSIGHT_TRANSCRIPT_CHARS` per conversation, `INSIGHT_BATCH_SIZE` per call). Rows are derived data and cascade with the conversation, so erasure and retention remove them without a second path |
+| `conversation_insights_enabled` | **no** | V4 (F2) per-conversation AI insights (`false` by default): sentiment, resolution outcome and a ≤ 280-character summary for settled conversations, at bounded provider cost (`INSIGHT_MAX_CONVERSATIONS` per run, `INSIGHT_TRANSCRIPT_CHARS` per conversation, `INSIGHT_BATCH_SIZE` per call — ≤ 5 LLM calls per company per run and zero embedding calls; see [Conversation insights (F2)](#conversation-insights-f2)). Rows are derived data and cascade with the conversation, so erasure and retention remove them without a second path |
 | `llm_provider`, `llm_model` | **no** | Chat model pair, written from **Settings → Model**. Only pairs listed in `services/llm.py::ALLOWED_CHAT_MODELS` are honoured (`fast` = GPT-4.1 mini, `accurate` = GPT-4.1, empty = the `LLM_AI` / `LLM_MODEL` defaults); anything else silently falls back to the environment. Embeddings are not switched here. |
 
 Keys understood by `widget_ui_strings`: `clear`, `send`, `thinking`, `sources`,
@@ -499,11 +499,13 @@ tag `v2.1`, JSON and HTML, with cluster rows present or not.
 
 ### V4 (in progress)
 
-Waves 0–2 have landed: the settings/env scaffolding (gate `V4-0G`), advanced
-analytics (F1, gate `V4-1G`) and the cost & freshness pair (F4: a per-session
-message cap and the daily sitemap diff scan), gate `V4-2G` signed off. Wave 3
-(new training sources) is next. The rest of
-[`plans/PLAN_V4.md`](plans/PLAN_V4.md)'s waves are still pending.
+Waves 0–3 have landed and signed off: the settings/env scaffolding (gate
+`V4-0G`), advanced analytics (F1, gate `V4-1G`), the cost & freshness pair (F4:
+a per-session message cap and the daily sitemap diff scan, gate `V4-2G`) and the
+new training sources (F3: `.pptx` uploads plus YouTube and Notion imports, gate
+`V4-3G`). Wave 4 (per-conversation insights, F2) is implemented and awaiting
+gate `V4-4G`; Wave 5 (the hosted chat page, F5) is still pending. Every feature
+is off by default, and with all V4 flags off the deployment behaves as tag `v3`.
 
 #### Advanced analytics (F1)
 
@@ -580,7 +582,47 @@ successful, non-empty fetch**: a failed, timed-out or empty sitemap changes no
 row at all, so a transient error can never wipe a knowledge base. When something
 did change it queues **one** ingest through `claim_ingest`, so a website already
 crawling is skipped instead of double-crawled. Worker job types are therefore
-`ingest`, `digest`, `retention`, `topic_clusters` and `sitemap_scan`.
+`ingest`, `digest`, `retention`, `topic_clusters`, `sitemap_scan` and `insights`.
+
+#### Conversation insights (F2)
+
+`conversation_insights_enabled` (internal key, default `false`) opts a company
+into per-conversation classification. The worker's `insight_loop` checks every
+`INSIGHT_INTERVAL_SECONDS` and queues one `insights` job for each opted-in
+company; the job hands off to `services/insights.run_for_company`, which decides
+what to classify — the loop only decides **whether** to queue.
+
+- **Which conversations.** One with at least one visitor message, settled
+  (`last_message_at` older than `INSIGHT_SETTLE_MINUTES`, 60 by default), and
+  either no row or a `completed` row older than its newest message. A run
+  classifies at most `INSIGHT_MAX_CONVERSATIONS` (50) per company and sends up
+  to `INSIGHT_BATCH_SIZE` (10) conversations per temperature-0 LLM call — so
+  **at most 5 LLM calls per company per run and zero embedding calls**. Each
+  conversation contributes its last ≤ 20 messages, whitespace-collapsed and cut
+  to the last `INSIGHT_TRANSCRIPT_CHARS` (4000) characters; the prompt treats
+  the transcript as untrusted data and asks for a JSON verdict.
+- **Claim and refresh.** The unique `conversation_id` insert **is** the claim: a
+  lost race skips the row instead of classifying twice, and a `processing` row
+  silent for `STALE_CLAIM_AFTER` (30 minutes) is taken over by the next run. A
+  `completed` row is refreshed in place when the conversation grows; a failed
+  batch stays retryable and never clears labels it could not replace.
+- **What is stored.** Only the verdict — `sentiment` (`positive`/`neutral`/
+  `negative`/`frustrated`), `resolution` (`resolved`/`unresolved`/`escalated`/
+  `unknown`), a summary clamped to 280 characters, the status, the claim
+  timestamps and the provider/model pair. The prompt and the transcript are never
+  written down; the values are clamped, and an unusable model answer falls back
+  instead of failing the row.
+- **Where it shows.** `/inbox` puts the sentiment/resolution tags on the queue
+  row and the summary in an "AI insight" alert in the detail pane.
+  `GET /api/analytics/summary` adds `outcomes` (counts of `completed` rows per
+  enum, in the funnel's window) **only** while the flag is on — with it off the
+  key is absent, not null, so the V4-1G payload is byte-identical — and
+  `/analytics` renders it as the "Conversation outcomes" card.
+- **Derived data.** Rows cascade with their conversation: erasure,
+  `delete_conversation` and `retention_days` remove them through the FK, with no
+  second delete path and no orphan rows, and the privacy export gains no section
+  (see [`docs/security.md`](docs/security.md) §4). Turning the flag off stops new
+  classifications; existing rows stay until their conversation goes.
 
 ## Dev commands
 

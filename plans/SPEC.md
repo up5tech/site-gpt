@@ -61,6 +61,18 @@ Legend: ✅ full · ⚠️ partial · ❌ missing · ➖ N/A (not code)
 **Net target:** 15 full, 4 explicitly out-of-scope (14, 15*, 16, 19). `*` = technical
 controls in scope, certification out.
 
+**V4 note — the Scale-tier item.** sitegpt.ai's Scale plan lists "AI-classified
+topics, sentiment, and resolution outcomes for every conversation"; the V2
+baseline above did not have it (V3's topic clusters are weekly aggregates, not
+per-conversation verdicts). V4 F2 closes that parity item as an **opt-in,
+derived** feature: one `conversation_insights` row per conversation with
+`sentiment`/`resolution` enums and a ≤ 280-character summary, off by default,
+classified at a bounded provider cost (≤ 5 LLM calls per company per run, zero
+embedding calls) and cascading with the conversation on erasure/retention. The
+details and the D3 decision are in `plans/PLAN_V4.md` §2–§3 and
+`docs/security.md` §4. No pricing, tier or billing behaviour is implemented, so
+the table above still describes the V2 baseline.
+
 ---
 
 ## 3. Invariants (must not break)

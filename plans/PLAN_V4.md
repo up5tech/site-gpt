@@ -3,7 +3,7 @@
 | | | |
 |---|---|---|
 | Version | **V4** — closes the feature gap against sitegpt.ai recorded in the 2026-11-20 comparison (§2): advanced analytics, per-conversation AI insights, new training sources, per-conversation cost caps + sitemap auto-scan, and a hosted chat page |
-| Status | **In progress — Wave 0 and Wave 1 complete (gates V4-0G and V4-1G signed off): V4-10 done (trend, funnel, top questions), V4-11 done (aggregate CSV export), V4-12 done (analytics page: SVG trend, funnel, top questions, export button), V4-13 done (docs: the analytics surface in README/AGENTS/api-v1); gate V4-1G signed off (both suites, widget suite, build/lint, `trail build`, digest byte-comparison, CSV by way of the API, `/api/v1` summary + foreign-id 404). Wave 2 is under way: V4-20 done (per-session message cap), V4-21 done (Settings field + docs), V4-22 done (daily sitemap diff scan), V4-23 done (docs: caps and freshness); gate V4-2G signed off (both suites, widget suite, build/lint, `trail build`, `alembic current`, the session-cap refusal on the API, and the scan + 500-sitemap hand checks). Wave 3 is under way: V4-30 done (PPTX extraction), V4-31 done (YouTube source provider), V4-32 done (Notion source provider), V4-33 done (frontend buttons + docs for the new sources); gate V4-3G signed off (both suites, widget suite, build/lint, `trail build`, `alembic current`, and the `.pptx` + YouTube end-to-end imports with cited answers plus the three negatives — a successful Notion import stayed **blocked** for lack of an integration token, and the gate found and fixed the `attachments.file_type` length defect that broke `.pptx`/`.docx` uploads). Wave 4 is under way: V4-40 done (M10 `conversation_insights`, plus the `attachments.file_type` widening 50 → 120 that removes the V4-3G truncation clamp), V4-41 done (the insight service: claim/refresh lifecycle, caps, batched classification, failure handling), V4-42 done (the `insights` job type, the opt-in scheduler and the handler), V4-43 done (insight labels on the inbox queue/detail and the flag-gated `outcomes` breakdown in analytics, plus the seeded render check on a throwaway database), V4-44 done (the erasure/retention cascade proof for insight rows and the security §4 insight data flow); Alembic head is `f33497bc1ecd`.** D1–D9 confirmed twice against code anchors (§3) |
+| Status | **In progress — Wave 0 and Wave 1 complete (gates V4-0G and V4-1G signed off): V4-10 done (trend, funnel, top questions), V4-11 done (aggregate CSV export), V4-12 done (analytics page: SVG trend, funnel, top questions, export button), V4-13 done (docs: the analytics surface in README/AGENTS/api-v1); gate V4-1G signed off (both suites, widget suite, build/lint, `trail build`, digest byte-comparison, CSV by way of the API, `/api/v1` summary + foreign-id 404). Wave 2 is under way: V4-20 done (per-session message cap), V4-21 done (Settings field + docs), V4-22 done (daily sitemap diff scan), V4-23 done (docs: caps and freshness); gate V4-2G signed off (both suites, widget suite, build/lint, `trail build`, `alembic current`, the session-cap refusal on the API, and the scan + 500-sitemap hand checks). Wave 3 is under way: V4-30 done (PPTX extraction), V4-31 done (YouTube source provider), V4-32 done (Notion source provider), V4-33 done (frontend buttons + docs for the new sources); gate V4-3G signed off (both suites, widget suite, build/lint, `trail build`, `alembic current`, and the `.pptx` + YouTube end-to-end imports with cited answers plus the three negatives — a successful Notion import stayed **blocked** for lack of an integration token, and the gate found and fixed the `attachments.file_type` length defect that broke `.pptx`/`.docx` uploads). Wave 4 is under way: V4-40 done (M10 `conversation_insights`, plus the `attachments.file_type` widening 50 → 120 that removes the V4-3G truncation clamp), V4-41 done (the insight service: claim/refresh lifecycle, caps, batched classification, failure handling), V4-42 done (the `insights` job type, the opt-in scheduler and the handler), V4-43 done (insight labels on the inbox queue/detail and the flag-gated `outcomes` breakdown in analytics, plus the seeded render check on a throwaway database), V4-44 done (the erasure/retention cascade proof for insight rows and the security §4 insight data flow), V4-45 done (the insights docs: README section, worker job types, SPEC Scale-tier note); Alembic head is `f33497bc1ecd`.** D1–D9 confirmed twice against code anchors (§3) |
 | Created | 2026-11-20 |
 | Derived from | `plans/PLAN_V3.md` (§2 non-goals, §4 invariants, §8 release-tag policy), `plans/SPEC.md`, `README.md` §V3, `docs/security.md` §5 (K18 stays accepted), and the sitegpt.ai feature/pricing comparison of 2026-11-20 (gap list reproduced in §2 so this plan is self-contained) |
 | Baseline | V3 tag `v3` = `2e5ab734b09b4eb229f927a875e737153c544779` (immutable); `master` HEAD `59e0cc2d13c51dacdb05fb3572715d0e5c40d85f` is docs-only after the tag (8 commits, incl. this plan); `feat/v4` branched from it at V4-01; Alembic head `1c5516fa864d`; suite counts are historical (V3-4G recorded 47 modules / 718 Python tests / 46 node checks; the **V4 baseline is 47 / 720 / 46**, recorded in §3's pre-flight block) and **must be re-run at pre-flight, never copied** |
@@ -1292,7 +1292,7 @@ conversation. **Entry:** V4-3G.
     README's privacy bullet points at it. Suite: **894 tests, OK** (11.0 s). No
     migration (head stays `f33497bc1ecd`). `trail build` not rerun — not a gate.
 
-- [ ] **V4-45 · Docs: insights** — `S`, depends: V4-44, migration: —
+- [x] **V4-45 · Docs: insights** — `S`, depends: V4-44, migration: —
   - Files: `README.md` (settings table, env table, worker job types, a
     "Conversation insights (F2)" section), `AGENTS.md` (ownership + migration
     head), `plans/SPEC.md` (note the Scale-tier parity item).
@@ -1301,6 +1301,20 @@ conversation. **Entry:** V4-3G.
     derived-data guarantees. Update the migration-head references.
   - Done when: no doc still says sentiment/resolution is unimplemented, and
     the cost bound in the docs matches the constants in code.
+  - Done: README gains the "Conversation insights (F2)" section — the opt-in,
+    eligibility, the claim/refresh lifecycle (`STALE_CLAIM_AFTER`, 30 min), the
+    exact bound (≤ 50 conversations per run, ≤ 10 per call, last ≤ 20 messages /
+    4000 characters, ≤ 5 LLM calls, zero embeddings), what is stored (enums + a
+    ≤ 280-char summary + the model pair), where it shows and the cascade
+    guarantee — and its worker job list now includes `insights`; the V4 intro no
+    longer says Wave 3 is next. `plans/SPEC.md` records the Scale-tier parity
+    item as V4 F2's opt-in derived feature and leaves the V2 baseline table
+    untouched. `AGENTS.md` gains the `services/insights.py` ownership entry and
+    the migration-head reference is confirmed at `f33497bc1ecd`. Every bound in
+    the docs was checked against `services/insights.py` (50 / 10 / 4000 / 20 /
+    30 min / 280) and `core/config.py` (60-minute settle, 86400-second
+    interval); no doc calls sentiment/resolution unimplemented any more. Docs
+    only — no migration, no suite run (head unchanged).
 
 #### Gate V4-4G
 
@@ -1565,9 +1579,9 @@ provider absence.
 | 1 — Advanced analytics (F1) | 4 | 4 / 4 | ☑ V4-1G |
 | 2 — Cost & freshness (F4) | 4 | 4 / 4 | ☑ V4-2G |
 | 3 — Training sources (F3) | 4 | 4 / 4 | ☑ V4-3G |
-| 4 — Conversation insights (F2) | 6 | 5 / 6 | ☐ V4-4G |
+| 4 — Conversation insights (F2) | 6 | 6 / 6 | ☐ V4-4G |
 | 5 — Hosted chat page (F5) | 3 | 0 / 3 | ☐ V4-5G |
-| **Total** | **25 tasks + 6 gates** | **21 / 25** | **4 / 6 gates** |
+| **Total** | **25 tasks + 6 gates** | **22 / 25** | **4 / 6 gates** |
 
 ---
 
