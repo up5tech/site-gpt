@@ -681,7 +681,9 @@ Run uvicorn behind nginx/Caddy/Traefik terminating **TLS 1.2+**:
 - the public widget endpoints (`/api/chat`, `/api/chat/stream`,
   `GET /api/chat/messages`, `GET /api/chat/messages/stream`, `/api/widget-config`,
   `POST /api/contacts`, `GET /api/contacts/{session_id}`) only serve requests whose
-  `Origin`/`Referer` matches the website's host (or is absent / a localhost demo), so a
+  `Origin`/`Referer` matches the website's host (or is absent / a localhost demo / this
+  API's **own** origin, which is what the hosted page at `GET /chat/{website_id}` sends
+  — compared exactly on scheme, host and port), so a
   `website_id` copied from another customer's page cannot be embedded elsewhere. If you
   embed the widget on a domain different from the website's `url`, update the website URL
   or requests from that domain will get `403`

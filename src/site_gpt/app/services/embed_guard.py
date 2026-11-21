@@ -13,6 +13,13 @@ The check is intentionally soft, because a strict one breaks real embeds:
   ``referrerpolicy="no-referrer"``, ``file://`` demos and non-browser clients
   all send nothing; the widget must keep working for them.
 * **Loopback origins → allowed** so local demo pages keep working.
+* **The API's own origin → allowed** (V4 F5). The hosted page
+  (`GET /chat/{website_id}`) is served by this API and calls it from that same
+  origin, so its requests are first-party even though the origin is not the
+  website's own URL. The comparison is exact scheme+host+port equality with
+  `request.base_url` — a lookalike host, a different port or a scheme downgrade
+  is still refused — and it is a convenience for the page, not origin
+  authentication (K18 stays accepted).
 * **A header that names a foreign site → refused.**
 
 This raises the bar rather than fully closing the hole: a determined attacker
@@ -64,6 +71,53 @@ def _same_site(host: str, allowed: str) -> bool:
     return host == allowed or host.removeprefix("www.") == allowed.removeprefix("www.")
 
 
+def _origin(value: str | None) -> tuple[str, str, int] | None:
+    """(scheme, host, port) for an absolute http(s) URL or origin, else None.
+
+    The default port is filled in, so `https://x` and `https://x:443` are the
+    same origin (they are — a browser cannot tell them apart either).
+    """
+    if not value:
+        return None
+    candidate = str(value).strip()
+    if not candidate:
+        return None
+    try:
+        parsed = urlparse(candidate)
+        port = parsed.port
+    except ValueError:
+        return None  # an unparseable port is not an origin we can trust
+    scheme = (parsed.scheme or "").lower()
+    if scheme not in ("http", "https") or not parsed.hostname:
+        return None
+    if port is None:
+        port = 443 if scheme == "https" else 80
+    return (scheme, parsed.hostname.lower().rstrip("."), port)
+
+
+def request_origin(request) -> tuple[str, str, int] | None:
+    """The origin this request was served from, as the server saw it.
+
+    `request.base_url` follows the `Host` (and proxy) headers, which is the
+    origin a browser on the hosted page puts in `Origin`. A request that cannot
+    produce a usable origin (a stub, a malformed Host) is never first-party.
+    """
+    base_url = getattr(request, "base_url", None)
+    if base_url is None:
+        return None
+    return _origin(str(base_url))
+
+
+def is_first_party_request(request, source: str | None) -> bool:
+    """True when `source` names exactly the origin serving this request.
+
+    Exact scheme+host+port equality, no `www.` or suffix tolerance: this accepts
+    the hosted page's own chat calls, not another site that resembles the API.
+    """
+    own = request_origin(request)
+    return own is not None and own == _origin(source)
+
+
 def allowed_hosts(website) -> list[str]:
     """Hosts a website may be embedded from."""
     hosts: list[str] = []
@@ -88,6 +142,10 @@ def is_allowed_embed_request(request, website) -> bool:
     if host is None:
         return True  # unparseable or opaque: treat as "no referrer"
     if host in LOOPBACK_HOSTS:
+        return True
+    # V4 F5: the hosted page calls the API from the origin it is served on. This
+    # is the only addition for it; every third-party origin below is unchanged.
+    if is_first_party_request(request, source):
         return True
 
     return any(_same_site(host, allowed) for allowed in allowed_hosts(website))
@@ -195,7 +253,9 @@ def ensure_embed_allowed(
     Guards the public widget surface against someone copying a `website_id` and
     embedding another customer's bot from their own site. Shared by every public
     endpoint (chat, stream, contacts, widget config, `/api/v1`), so no caller can
-    forget the check or ship a subtly different version of it.
+    forget the check or ship a subtly different version of it. The one exception
+    for the hosted page is inside `is_allowed_embed_request` (exact equality with
+    this request's own origin), never a second copy of the rule.
 
     `require_embed_token=False` is for callers that already authenticated with a
     secret (`/api/v1`'s `X-API-Key`): the embed token is a *browser* control and

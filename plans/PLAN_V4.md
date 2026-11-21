@@ -1456,7 +1456,30 @@ and no change to the third-party origin posture. **Entry:** V4-4G.
     bubble path is byte-identical without the new key; a disabled website
     shows the unavailable state, not an error bubble.
 
-- [ ] **V4-51 · First-party origin rule in `embed_guard`** — `S`, depends: V4-50, migration: —
+- [x] **V4-51 · First-party origin rule in `embed_guard`** — `S`, depends: V4-50, migration: —
+  - Done: the rule lives **inside** `is_allowed_embed_request` (V4-50's one entry
+    point, reused by every public endpoint) as `_origin()` + `request_origin()` +
+    `is_first_party_request()`: `_origin` normalises an absolute http(s) URL to
+    `(scheme, host, effective port)` (default 443/80 filled in, an unparseable port
+    refused), `request_origin` reads `request.base_url` — the origin the browser on
+    the hosted page sends — and the guard accepts a request whose `Origin`/`Referer`
+    origin equals it **exactly**, no `www.` or suffix tolerance. A stub or malformed
+    request never yields an origin, so it can never become first-party. Third-party
+    matching is untouched, and `ensure_embed_token_allowed` still runs after the
+    origin check, so the hosted page obeys `EMBED_TOKEN_MODE` like an embed.
+    `tests/test_embed_origin.py` gained a `HostedPageOriginTests` endpoint class and
+    six unit cases: same origin allowed (the API origin differs from the website URL
+    in the fixture), a `Referer` with a path allowed, `:443`/`:80` equal to the
+    default, and the lookalikes refused — `api.customer.example.com.evil`,
+    `evil-api.customer.example.com`, a suffix-plus-path variant, `:8443` and an
+    `http` downgrade — at both the unit and the HTTP level (403 with `ask` never
+    called); plus `enforce` refusing the page's tokenless `widget-config` read with
+    `embed_token_required`. `docs/security.md` K18 (the §4 bullet and the §5 table
+    row) now records the exception and keeps K18 **accepted** — no header and forged
+    headers still work, and `enforce` requires the token on the page too; `README.md`'s
+    reverse-proxy bullet lists the API's own origin beside the absent/localhost cases.
+    Docs only beyond the guard and its tests: no migration, no settings key, no change
+    to `WIDGET_PUBLIC_KEYS`.
   - Files: `services/embed_guard.py`, `tests/test_embed_guard.py` (extend),
     `docs/security.md`, `README.md`.
   - Do: extend `ensure_embed_allowed` (never a copy) to accept an

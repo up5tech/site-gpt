@@ -51,7 +51,7 @@ processes.
 | Uploads | Size capped while streaming (`MAX_UPLOAD_MB`, 413 without buffering the body) | `api/upload.py` |
 | Consent | When `require_consent` is on, `POST /api/contacts` refuses without `consent: true` and stamps `contacts.consent_at` | `api/routes.py` |
 | Session reads (K4) | The widget mints a per-session token and sends it as `X-Session-Token` to read its history or contact. Only `sha256(token)` is stored; a token value expires after `SESSION_TOKEN_TTL_SECONDS`, the whole chain dies after `SESSION_TOKEN_MAX_LIFETIME_SECONDS`, and rotation requires holding the current value | `services/session_tokens.py`, `POST /api/session-token` |
-| Embed token (K18) | Optional per-website `X-Embed-Token`. Only `sha256(token)` is stored, the 12-character prefix is the only readable part, one token is active per website (partial unique index) and rotation is a single transaction. `compat` accepts a missing token but refuses an invalid one; `enforce` requires it; a refusal is `403 {detail, reason}` with `invalid_embed_token` / `embed_token_required`. The value is public in the page and replayable, so this is a revocation and compatibility control — not origin authentication | `services/embed_tokens.py`, `services/embed_guard.py`, `api/website.py` |
+| Embed token (K18) | Optional per-website `X-Embed-Token`. Only `sha256(token)` is stored, the 12-character prefix is the only readable part, one token is active per website (partial unique index) and rotation is a single transaction. `compat` accepts a missing token but refuses an invalid one; `enforce` requires it; a refusal is `403 {detail, reason}` with `invalid_embed_token` / `embed_token_required`. The value is public in the page and replayable, so this is a revocation and compatibility control — not origin authentication. V4 also accepts this API's own origin as first-party for the hosted page (`GET /chat/{website_id}`), with exact scheme+host+port equality: a lookalike host, port or scheme is still `403` | `services/embed_tokens.py`, `services/embed_guard.py`, `api/website.py`, `api/chat_page.py` |
 | Export / erasure | Admin-only JSON export per website and hard deletes for a conversation or a contact, both company-scoped | `api/privacy.py` |
 | Retention | `retention_days` per company: the worker's daily job hard-deletes `chat_messages`, `chat_feedback`, `handoff_requests`, `contacts`, `digest_log`, `topic_clusters` and `topic_cluster_runs` rows older than the policy, scoped to that company. `POST /api/privacy/retention` previews it (`dry_run`) or runs it on demand | `services/retention.py`, `api/privacy.py`, `worker.py` |
 | Sitemap scan (V4 F4) | Opt-in per company (`sitemap_scan_enabled`, off by default) and limited to that company's `active` websites. The sitemap is fetched through the SSRF-guarded crawler (`net_guard` rejects non-public hosts on every hop), and the diff — new pages, plus retiring vanished pages and deleting **every** document row for their URL — is applied **only after a fully successful, non-empty fetch**; a failed or empty fetch changes no row | `services/sitemap.py`, `services/crawler.py`, `worker.py` |
@@ -461,7 +461,15 @@ These are known, documented and deliberately deferred. They are not oversights.
 - **K18 — the soft origin check (accepted; V3 F4 does not close it).** The
   `Origin`/`Referer` allowlist still accepts requests that carry neither header
   (non-browser clients, forged headers, `referrerpolicy="no-referrer"`) and always
-  accepts loopback origins so local demos work. V3 adds an optional per-website
+  accepts loopback origins so local demos work. V4 adds one narrow exception for
+  its hosted page: an `Origin`/`Referer` whose scheme, host and port **exactly**
+  equal this API's own request origin (`request.base_url`) is accepted as
+  first-party, because `GET /chat/{website_id}` is served by this API and its
+  calls carry that origin. The equality is exact — a lookalike host
+  (`api.example.com.evil`), a different port or an `http` downgrade is still
+  refused — and it does not close K18: a caller with no header or a forged one is
+  still accepted, and under `EMBED_TOKEN_MODE=enforce` the hosted page must send
+  the embed token exactly like an embed. V3 adds an optional per-website
   `X-Embed-Token` on top: a deployed snippet becomes revocable, the token can be
   made mandatory (`EMBED_TOKEN_MODE=enforce`), and a wrong, revoked or
   another-website token is refused with `invalid_embed_token`. But the token is

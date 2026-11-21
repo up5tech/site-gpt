@@ -103,6 +103,81 @@ class GuardUnitTests(unittest.TestCase):
     def test_file_url_referer_is_allowed(self):
         self.assertTrue(self.check({"referer": "file:///Users/me/_widget-demo.html"}))
 
+    # ---- V4 F5: the hosted page's own origin ------------------------------
+    def check_from(self, base_url, headers):
+        request = MagicMock()
+        request.headers = headers
+        request.base_url = base_url
+        return embed_guard.is_allowed_embed_request(request, self.site)
+
+    def test_the_apis_own_origin_is_first_party(self):
+        # The hosted page is served by this API, so its own origin is allowed
+        # even though it is not the website's URL.
+        self.assertTrue(
+            self.check_from(
+                "https://api.customer.example.com/",
+                {"origin": "https://api.customer.example.com"},
+            )
+        )
+
+    def test_a_referer_on_the_apis_own_origin_is_first_party(self):
+        self.assertTrue(
+            self.check_from(
+                "https://api.customer.example.com/",
+                {"referer": "https://api.customer.example.com/chat/abc?x=1"},
+            )
+        )
+
+    def test_the_default_port_is_the_same_origin(self):
+        self.assertTrue(
+            self.check_from(
+                "https://api.customer.example.com:443",
+                {"origin": "https://api.customer.example.com"},
+            )
+        )
+        self.assertTrue(
+            self.check_from(
+                "http://api.customer.example.com:80",
+                {"origin": "http://api.customer.example.com"},
+            )
+        )
+
+    def test_a_lookalike_first_party_origin_is_refused(self):
+        for origin in (
+            # suffix and prefix lookalikes
+            "https://api.customer.example.com.evil",
+            "https://evil-api.customer.example.com",
+            "https://api.customer.example.com.evil/chat",
+            # port mismatch
+            "https://api.customer.example.com:8443",
+            # scheme mismatch (a downgrade is not the same origin)
+            "http://api.customer.example.com",
+        ):
+            with self.subTest(origin=origin):
+                self.assertFalse(
+                    self.check_from(
+                        "https://api.customer.example.com", {"origin": origin}
+                    ),
+                    origin,
+                )
+
+    def test_the_website_url_is_still_checked_on_its_own(self):
+        # A first-party request does not make the website's own domain the only
+        # allowed one, nor the page's origin allowed for a different host.
+        self.assertFalse(
+            self.check_from(
+                "https://api.customer.example.com",
+                {"origin": "https://attacker.example.net"},
+            )
+        )
+
+    def test_a_request_without_a_usable_origin_is_never_first_party(self):
+        self.assertFalse(
+            self.check_from("not-an-origin", {"origin": "not-an-origin"})
+        )
+        # A stub request (no usable base_url) must never become first-party.
+        self.assertFalse(self.check({"origin": "https://attacker.example.net"}))
+
     def test_website_without_url_does_not_crash(self):
         site = website()
         site.url = None
@@ -498,6 +573,92 @@ class EmbedTokenEndpointTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.db.commit.assert_called()
         self.assertIsNotNone(row.last_used_at)
+
+
+class HostedPageOriginTests(unittest.TestCase):
+    """V4 F5: `GET /chat/{website_id}` may chat from the API's own origin.
+
+    The page is served by this API, so a browser on it sends that origin; every
+    third-party origin keeps the V3 rules, lookalikes included.
+    """
+
+    API_ORIGIN = "https://api.customer.example.com"
+
+    def setUp(self):
+        self.site = website()
+
+        def query(model):
+            if model is routes.models.Website:
+                return FakeQuery(self.site)
+            if model is routes.models.Setting:
+                return FakeQuery([])
+            return FakeQuery(None)
+
+        self.db = MagicMock()
+        self.db.query.side_effect = query
+
+        app = FastAPI()
+        app.include_router(routes.router)
+        app.add_exception_handler(
+            embed_guard.EmbedTokenRefused, embed_guard.embed_token_error_response
+        )
+        app.dependency_overrides[get_db] = lambda: self.db
+        self.client = TestClient(app, base_url=self.API_ORIGIN)
+
+        from site_gpt.app.services import ratelimit
+
+        hits = getattr(ratelimit, "_hits", None)
+        if isinstance(hits, dict):
+            hits.clear()
+
+    def chat(self, origin):
+        with patch.object(
+            routes, "ask", return_value={"answer": "hi", "sources": []}
+        ) as ask:
+            response = self.client.post(
+                "/api/chat",
+                json={"website_id": WEBSITE_ID, "session_id": "s1", "question": "hi"},
+                headers={"Origin": origin},
+            )
+        return response, ask
+
+    def test_a_chat_from_the_hosted_page_is_allowed(self):
+        response, ask = self.chat(self.API_ORIGIN)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        ask.assert_called_once()
+
+    def test_widget_config_from_the_hosted_page_is_allowed(self):
+        response = self.client.get(
+            "/api/widget-config",
+            params={"website_id": WEBSITE_ID},
+            headers={"Origin": self.API_ORIGIN},
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+
+    def test_a_lookalike_origin_is_still_refused_on_the_endpoint(self):
+        for origin in (
+            "https://api.customer.example.com.evil",
+            "https://api.customer.example.com:8443",
+            "http://api.customer.example.com",
+        ):
+            with self.subTest(origin=origin):
+                response, ask = self.chat(origin)
+                self.assertEqual(response.status_code, 403, response.text)
+                ask.assert_not_called()
+
+    def test_the_embed_token_rules_apply_to_the_hosted_page(self):
+        # D8: the hosted page is an embed for the token gate, not an exemption.
+        with patch.object(embed_guard, "EMBED_TOKEN_MODE", "enforce"):
+            response = self.client.get(
+                "/api/widget-config",
+                params={"website_id": WEBSITE_ID},
+                headers={"Origin": self.API_ORIGIN},
+            )
+
+        self.assertEqual(response.status_code, 403, response.text)
+        self.assertEqual(response.json()["reason"], "embed_token_required")
 
 
 class CorsPreflightTests(unittest.TestCase):
