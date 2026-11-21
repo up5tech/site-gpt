@@ -3,7 +3,7 @@
 | | | |
 |---|---|---|
 | Version | **V4** — closes the feature gap against sitegpt.ai recorded in the 2026-11-20 comparison (§2): advanced analytics, per-conversation AI insights, new training sources, per-conversation cost caps + sitemap auto-scan, and a hosted chat page |
-| Status | **In progress — Wave 0 and Wave 1 complete (gates V4-0G and V4-1G signed off): V4-10 done (trend, funnel, top questions), V4-11 done (aggregate CSV export), V4-12 done (analytics page: SVG trend, funnel, top questions, export button), V4-13 done (docs: the analytics surface in README/AGENTS/api-v1); gate V4-1G signed off (both suites, widget suite, build/lint, `trail build`, digest byte-comparison, CSV by way of the API, `/api/v1` summary + foreign-id 404). Wave 2 is under way: V4-20 done (per-session message cap), V4-21 done (Settings field + docs), V4-22 done (daily sitemap diff scan), V4-23 done (docs: caps and freshness); gate V4-2G signed off (both suites, widget suite, build/lint, `trail build`, `alembic current`, the session-cap refusal on the API, and the scan + 500-sitemap hand checks). Wave 3 is under way: V4-30 done (PPTX extraction), V4-31 done (YouTube source provider), V4-32 done (Notion source provider), V4-33 done (frontend buttons + docs for the new sources); gate V4-3G signed off (both suites, widget suite, build/lint, `trail build`, `alembic current`, and the `.pptx` + YouTube end-to-end imports with cited answers plus the three negatives — a successful Notion import stayed **blocked** for lack of an integration token, and the gate found and fixed the `attachments.file_type` length defect that broke `.pptx`/`.docx` uploads). Wave 4 is under way: V4-40 done (M10 `conversation_insights`, plus the `attachments.file_type` widening 50 → 120 that removes the V4-3G truncation clamp), V4-41 done (the insight service: claim/refresh lifecycle, caps, batched classification, failure handling), V4-42 done (the `insights` job type, the opt-in scheduler and the handler), V4-43 done (insight labels on the inbox queue/detail and the flag-gated `outcomes` breakdown in analytics, plus the seeded render check on a throwaway database), V4-44 done (the erasure/retention cascade proof for insight rows and the security §4 insight data flow), V4-45 done (the insights docs: README section, worker job types, SPEC Scale-tier note); gate V4-4G signed off (M10 replayed from an empty Postgres 16.13 + pgvector 0.8.2 with its downgrade, both suites + widget suite + build/lint + `trail build`, the flag-off digest and analytics-summary byte comparisons against `v3` and V4-1G, the stubbed claim/retry matrix with a real live-provider classification, and the erasure/retention cascade with zero orphan rows on the throwaway database). Wave 5 is done: V4-50 (hosted page + `displayMode: 'page'`), V4-51 (the first-party origin rule) and V4-52 (release docs + the Settings hosted link); gate V4-5G is signed off (the §9 runbook on a throwaway database: 81/81 checks, 0 blocked, all suites/build/lint/`trail build` green) and **only the merge to `master` and the `v4` tag remain, awaiting go-ahead**. Alembic head is `f33497bc1ecd`.** D1–D9 confirmed twice against code anchors (§3) |
+| Status | **In progress — Wave 0 and Wave 1 complete (gates V4-0G and V4-1G signed off): V4-10 done (trend, funnel, top questions), V4-11 done (aggregate CSV export), V4-12 done (analytics page: SVG trend, funnel, top questions, export button), V4-13 done (docs: the analytics surface in README/AGENTS/api-v1); gate V4-1G signed off (both suites, widget suite, build/lint, `trail build`, digest byte-comparison, CSV by way of the API, `/api/v1` summary + foreign-id 404). Wave 2 is under way: V4-20 done (per-session message cap), V4-21 done (Settings field + docs), V4-22 done (daily sitemap diff scan), V4-23 done (docs: caps and freshness); gate V4-2G signed off (both suites, widget suite, build/lint, `trail build`, `alembic current`, the session-cap refusal on the API, and the scan + 500-sitemap hand checks). Wave 3 is under way: V4-30 done (PPTX extraction), V4-31 done (YouTube source provider), V4-32 done (Notion source provider), V4-33 done (frontend buttons + docs for the new sources); gate V4-3G signed off (both suites, widget suite, build/lint, `trail build`, `alembic current`, and the `.pptx` + YouTube end-to-end imports with cited answers plus the three negatives — a successful Notion import stayed **blocked** for lack of an integration token, and the gate found and fixed the `attachments.file_type` length defect that broke `.pptx`/`.docx` uploads). Wave 4 is under way: V4-40 done (M10 `conversation_insights`, plus the `attachments.file_type` widening 50 → 120 that removes the V4-3G truncation clamp), V4-41 done (the insight service: claim/refresh lifecycle, caps, batched classification, failure handling), V4-42 done (the `insights` job type, the opt-in scheduler and the handler), V4-43 done (insight labels on the inbox queue/detail and the flag-gated `outcomes` breakdown in analytics, plus the seeded render check on a throwaway database), V4-44 done (the erasure/retention cascade proof for insight rows and the security §4 insight data flow), V4-45 done (the insights docs: README section, worker job types, SPEC Scale-tier note); gate V4-4G signed off (M10 replayed from an empty Postgres 16.13 + pgvector 0.8.2 with its downgrade, both suites + widget suite + build/lint + `trail build`, the flag-off digest and analytics-summary byte comparisons against `v3` and V4-1G, the stubbed claim/retry matrix with a real live-provider classification, and the erasure/retention cascade with zero orphan rows on the throwaway database). Wave 5 is done: V4-50 (hosted page + `displayMode: 'page'`), V4-51 (the first-party origin rule) and V4-52 (release docs + the Settings hosted link); gate V4-5G is signed off (the §9 runbook on a throwaway database: 81/81 checks, 0 blocked, all suites/build/lint/`trail build` green) and **V4 is released: `master` was fast-forwarded to `bc8aef8` and annotated tag `v4` was cut once on exactly that commit and pushed**. Alembic head is `f33497bc1ecd`.** D1–D9 confirmed twice against code anchors (§3) |
 | Created | 2026-11-20 |
 | Derived from | `plans/PLAN_V3.md` (§2 non-goals, §4 invariants, §8 release-tag policy), `plans/SPEC.md`, `README.md` §V3, `docs/security.md` §5 (K18 stays accepted), and the sitegpt.ai feature/pricing comparison of 2026-11-20 (gap list reproduced in §2 so this plan is self-contained) |
 | Baseline | V3 tag `v3` = `2e5ab734b09b4eb229f927a875e737153c544779` (immutable); `master` HEAD `59e0cc2d13c51dacdb05fb3572715d0e5c40d85f` is docs-only after the tag (8 commits, incl. this plan); `feat/v4` branched from it at V4-01; Alembic head `1c5516fa864d`; suite counts are historical (V3-4G recorded 47 modules / 718 Python tests / 46 node checks; the **V4 baseline is 47 / 720 / 46**, recorded in §3's pre-flight block) and **must be re-run at pre-flight, never copied** |
@@ -1607,16 +1607,21 @@ and no change to the third-party origin posture. **Entry:** V4-4G.
     `AGENTS.md`'s V4 paragraph now records the gate and the merge/tag state.
     `README.md`, `docs/security.md` and `docs/api-v1.md` already carry the V4
     text written in V4-13, V4-23, V4-33, V4-44, V4-45, V4-50…52; the grep is 0.
-- [ ] Merge the verified commit to `master` (fast-forward), then cut annotated
+- [x] Merge the verified commit to `master` (fast-forward), then cut annotated
       tag `v4` **once**, on exactly that commit, and push. The tag is immutable
       from this moment (PLAN_V3 §8 policy applies verbatim); anything committed
       afterwards stays untagged on `master`.
-  - **Not run — awaiting explicit go-ahead.** Per the review-before-release
-    instruction, this gate reports before merging or tagging: `master` has not
-    been fast-forwarded and no `v4` tag exists. Nothing else blocks it.
+  - Done, on the operator's go-ahead after the gate report: `master` was
+    fast-forwarded `59e0cc2 → bc8aef8` (`git merge --ff-only`), annotated tag
+    `v4` was cut once on exactly `bc8aef8` (`refs/tags/v4^{}` = `bc8aef8`, tag
+    object `4f03487`) and both were pushed — `origin/master` and
+    `origin refs/tags/v4^{}` both read `bc8aef8`. The tag is now immutable: the
+    tick recorded here lands *after* it, on `master` only, exactly as V3's
+    recording docs did above `2e5ab73`.
 - [x] commit `chore(v4): V4-5G gate — hosted page + release`, then tag.
-  - Done: the commit (this one, with `scripts/gate_v4_5g/gate.py`). The tag step
-    is deliberately left to the operator (see the item above).
+  - Done: `bc8aef8` (with `scripts/gate_v4_5g/gate.py`), the commit the tag
+    points at; the release-tag items above were ticked in a later docs-only
+    commit that stays untagged.
 
 ---
 
@@ -1822,11 +1827,14 @@ provider absence.
       documented as first-party convenience, with lookalike refusals tested.
 - [x] Both suites green (counts recorded from the run at the tag), frontend
       build + lint green, `trail build` run, docs consistent.
-- [ ] Verified release commit merged to `master`; annotated tag `v4` cut once
+- [x] Verified release commit merged to `master`; annotated tag `v4` cut once
       on exactly that commit and pushed; README describes V4 as the current
       version; the tag is never moved afterwards (§8).
-  - **Not run — awaiting explicit go-ahead** (report-before-release). Every
-    other item above was verified by gate `V4-5G` on 2026-11-21.
+  - Done: `master` fast-forwarded to `bc8aef8`, annotated tag `v4` cut once on
+    that commit and pushed (verified with `git ls-remote`); `README.md` reads
+    "the release is V4 (tag `v4`)" and its V4 section already described the tag
+    as cut once on this commit. Every item above was verified by gate `V4-5G`
+    on 2026-11-21.
 
 ---
 
