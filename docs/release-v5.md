@@ -8,7 +8,9 @@ legal copy or named owners.
 
 Current state (2026-11-22):
 
-- `feat/v5` carries Waves 1–5 engineering; the latest released tag remains `v4`.
+- Waves 1–5 engineering are merged to `master` (`028fdee`, fast-forward,
+  2026-11-22) but unreleased; the latest released tag remains `v4` and no `v5`
+  tag exists.
 - Alembic head is `0b22b30bf930` (M12: owners, audit, catalog, prices,
   settings).
 - `BILLING_ENABLED=false` and `PLATFORM_CONSOLE_ENABLED=false` are the only

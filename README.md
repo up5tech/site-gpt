@@ -834,8 +834,9 @@ cd frontend && npm run build && npm run lint
 
 ## Deploying
 
-SiteGPT is self-hosted; the latest released tag is `v4`. The V5 work on
-`feat/v5` is **not released** and paid billing is not approved; follow
+SiteGPT is self-hosted; the latest released tag is `v4`. The V5 engineering is
+merged to `master` but **not released** (there is no `v5` tag) and paid billing
+is not approved; follow
 [`docs/release-v5.md`](docs/release-v5.md) before any launch. None of the dev
 defaults below should survive into production.
 
