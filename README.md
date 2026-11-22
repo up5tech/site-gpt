@@ -6,36 +6,52 @@ Turn any company website + extra documents into an embeddable AI chat bot (RAG).
 
 <table>
   <tr>
-    <td width="50%"><img src="./screenshots/02-dashboard.png" alt="Admin dashboard with stat cards, recent conversations, websites and team members"></td>
-    <td width="50%"><img src="./screenshots/12-widget-open.png" alt="Embeddable chat widget opened on a host website"></td>
+    <td width="50%"><img src="./screenshots/13-landing.png" alt="Public landing page describing the support chatbot"></td>
+    <td width="50%"><img src="./screenshots/02-dashboard.png" alt="Admin dashboard with usage, recent conversations, websites and team members"></td>
   </tr>
   <tr>
-    <td align="center"><b>Dashboard</b> — stat cards, recent conversations, sites &amp; team</td>
-    <td align="center"><b>Embeddable widget</b> — drops onto any site with two lines of HTML</td>
+    <td align="center"><b>Landing</b> — public marketing shell; the console lives at <code>/app</code></td>
+    <td align="center"><b>Dashboard</b> — usage, recent conversations, sites &amp; team</td>
+  </tr>
+  <tr>
+    <td><img src="./screenshots/14-analytics.png" alt="Analytics page with daily activity, engagement funnel, conversation outcomes and top questions"></td>
+    <td><img src="./screenshots/15-inbox.png" alt="Live-agent inbox with the queue, AI insight and transcript"></td>
+  </tr>
+  <tr>
+    <td align="center"><b>Analytics</b> — daily trend, funnel, conversation outcomes &amp; top questions</td>
+    <td align="center"><b>Inbox</b> — live-agent queue with AI insight &amp; transcript</td>
   </tr>
   <tr>
     <td><img src="./screenshots/03-websites.png" alt="Websites list"></td>
-    <td><img src="./screenshots/04-website-detail.png" alt="Website detail with crawled pages, sync sitemap and run ingest"></td>
+    <td><img src="./screenshots/04-website-detail.png" alt="Website detail with crawled pages, embed token, sitemap sync and run ingest"></td>
   </tr>
   <tr>
     <td align="center"><b>Websites</b> — manage crawled sources</td>
-    <td align="center"><b>Website detail</b> — pages, sync sitemap, run ingest</td>
+    <td align="center"><b>Website detail</b> — pages, embed token, sitemap sync, run ingest</td>
   </tr>
   <tr>
-    <td><img src="./screenshots/05-extra-documents.png" alt="Extra documents (uploaded PDFs and files)"></td>
-    <td><img src="./screenshots/10-playground.png" alt="Playground for trying the bot before embedding"></td>
+    <td><img src="./screenshots/05-extra-documents.png" alt="Extra documents (uploaded files and imports)"></td>
+    <td><img src="./screenshots/10-playground.png" alt="Playground for trying the bot before embedding it"></td>
   </tr>
   <tr>
-    <td align="center"><b>Extra documents</b> — uploads join the knowledge base</td>
-    <td align="center"><b>Playground</b> — test answers with citations &amp; feedback</td>
+    <td align="center"><b>Documents</b> — uploads and imports join the knowledge base</td>
+    <td align="center"><b>Playground</b> — test answers with citations &amp; ratings</td>
   </tr>
   <tr>
-    <td><img src="./screenshots/09-settings-appearance.png" alt="Widget appearance settings"></td>
+    <td><img src="./screenshots/09-settings-appearance.png" alt="Widget appearance settings with live preview"></td>
     <td><img src="./screenshots/06-users.png" alt="Team members"></td>
   </tr>
   <tr>
-    <td align="center"><b>Settings · Appearance</b> — colors, greeting &amp; suggested questions (fetched by the widget)</td>
+    <td align="center"><b>Settings · Appearance</b> — look, greeting &amp; suggested questions (fetched by the widget)</td>
     <td align="center"><b>Users</b> — manage team &amp; roles</td>
+  </tr>
+  <tr>
+    <td><img src="./screenshots/11-widget-closed.png" alt="Embeddable chat widget launcher on a host website"></td>
+    <td><img src="./screenshots/12-widget-open.png" alt="Embeddable chat widget opened on a host website"></td>
+  </tr>
+  <tr>
+    <td align="center"><b>Embeddable widget</b> — the launcher drops onto any site with two lines of HTML</td>
+    <td align="center"><b>Widget open</b> — greeting and colors come from Settings</td>
   </tr>
 </table>
 
