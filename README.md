@@ -50,7 +50,7 @@ Turn any company website + extra documents into an embeddable AI chat bot (RAG).
 
 ## Tech stack
 
-- **Backend:** FastAPI, SQLAlchemy, Alembic, pgvector, Redis (job queue, daily + per-session message counters, shared rate-limit windows, inbox pub/sub), JWT (`python-jose`), multi-LLM via LangChain (`ollama` / `openai` / `custom_openai` / `gemini` / `groq` / `openrouter`)
+- **Backend:** FastAPI, SQLAlchemy, Alembic, pgvector, Redis (job queue, daily + per-session message counters, shared rate-limit windows, inbox pub/sub), JWT (`python-jose`), multi-LLM via LangChain (`ollama` / `openai` / `custom_openai` / `gemini` / `groq` / `openrouter`), optional Stripe billing (`stripe` SDK, off by default)
 - **Frontend:** React 18 + Vite + TypeScript + Ant Design + axios + react-router
 - **Infra:** PostgreSQL + pgvector, Redis, Ollama (default local LLM)
 
@@ -58,20 +58,42 @@ Turn any company website + extra documents into an embeddable AI chat bot (RAG).
 
 ```
 src/site_gpt/app/
-  main.py              # FastAPI app + router wiring
-  api/                 # routes.py (auth/chat/ingest/widget), company, user, website, document, extra_document, setting, upload
-  models.py            # Company, User, Setting, Website, WebsitePage, Document, ExtraDocument, Attachment, Embedding, ChatMessage, ChatFeedback, Contact
+  main.py              # FastAPI app + CORS + router wiring
+  api/                 # routes.py (auth/chat/session/widget) plus one module per resource:
+                       # company, user, website, document, extra_document, upload, setting,
+                       # api_key, plan, billing, platform, public_config, analytics, digest,
+                       # feedback, handoff, inbox, integration, privacy, chat_page, v1
+  models.py            # Company, User, Setting, Website, WebsitePage, Document, ExtraDocument,
+                       # Attachment, Embedding, ChatMessage, Conversation, ConversationInsight,
+                       # ChatFeedback, HandoffRequest, DigestLog, TopicCluster, TopicClusterRun,
+                       # Integration, IntegrationDelivery, SessionToken, EmbedToken, ApiKey, Contact,
+                       # Subscription, BillingEvent, PlatformOwner, PlatformAuditLog, CatalogPlan,
+                       # PlanPrice, PlatformSetting
   schemas/             # Pydantic request/response per resource
-  services/            # llm.py, rag.py, ingest.py, crawler.py, parse.py, sources.py, ratelimit.py, redis.py, mail.py
+  services/            # llm, rag, ingest, ingest_claim, crawler, sitemap, parse, sources,
+                       # ratelimit, quota, redis, mail, analytics, digest, topics, conversations,
+                       # inbox, insights, entitlements, billing, plan_catalog, platform,
+                       # platform_ops, platform_settings, integrations, retention, qa_training,
+                       # embed_guard, embed_tokens, session_tokens, api_keys, website_state,
+                       # model_settings, company_settings, net_guard
   core/                # config.py (env), auth.py (hash/JWT)
   db/                  # session.py, base.py
   scripts/widget.js    # embeddable chat widget (window.ChatWidgetConfig)
-  worker.py            # Redis queue consumer (ingest and scheduled jobs)
+  worker.py            # Redis queue consumer (ingest, digest, retention, topics, sitemap,
+                       # insights, integration retries)
 frontend/src/
-  pages/ (Dashboard, Websites, WebsiteDetail, ExtraDocuments, Playground, Contacts, Handoffs, Inbox, Users, Settings, Login, Register)
-  components/ (Layout, Chat, WidgetPreview, ProtectedRoute, WebsiteTable, CompanyTable, UserTable)
-  context/ (AuthContext, ChatContext), utils/api.ts, types/api.ts
+  pages/ (Landing, Pricing, Login, Register, Dashboard, Websites, WebsiteDetail, ExtraDocuments,
+          Playground, Contacts, Handoffs, Inbox, Integrations, Training, Analytics, Users, Settings,
+          Billing, platform/*)
+  components/ (Layout, PublicLayout, Chat, WidgetPreview, ProtectedRoute, ApiKeysPanel,
+               WebsiteTable, CompanyTable, UserTable)
+  context/ (AuthContext, ChatContext), utils/ (api.ts, widgetSnippet.ts, useDocumentTitle.ts),
+  types/api.ts
 alembic/                # DB migrations
+docs/                   # api-v1, billing, platform, release-v5, security
+plans/                  # version plans (V1–V5) and the V2 spec
+scripts/                # gate_v3_4g … gate_v5_5g verification scripts, platform_owner.py
+tests/                  # unittest suite + node --test checks for widget.js
 uploads/                # uploaded attachment storage
 ```
 
@@ -179,6 +201,9 @@ npm install && npm run dev   # :5173
 - `GET /api/widget-config?website_id=` — public widget appearance/config (assistant name, colors, greeting, placeholder, position, suggested questions)
 - `POST /api/v1/ingest?website_id=` — API-key ingest for scripts/CI (`X-API-Key`); admins mint and revoke keys at `/api/api-keys` (the raw key is returned once)
 - `GET /api/plans` — **public**, read-only plan catalog (V5 F1): code, name, description, integer minor-unit price, currency, interval, features, machine-readable limits and `self_serve_checkout`. No auth, no database, no Stripe identifiers; empty until the approved catalog lands
+- `GET /api/public/config` — **public** display values from the platform settings: the optional status banner message and support contact address
+- `/api/billing/status`, `/subscription`, `/usage`, `POST /checkout`, `POST /portal`, `POST /webhook` — V5 Wave 2 Stripe billing; everything but `status` is a 404 while `BILLING_ENABLED=false` (see [Billing](#billing-v5-wave-2))
+- `/api/platform` (+`/companies`, `/subscriptions`, `/plans`, `/settings`, `/audit`) — V5 Wave 4 platform-owner console; the whole surface is a 404 while `PLATFORM_CONSOLE_ENABLED=false` and every route is operator-only (see [Platform owner console](#platform-owner-console-v5-wave-4)). Operator grants are created only out of band with `scripts/platform_owner.py`
 - `GET /health`
 - `POST /api/session-token` — public; mints (or rotates) the widget's per-session read token. A refusal carries `{"detail": ..., "reason": ...}`, where `session_expired` means the session must start over and `session_claimed` means another tab holds it (the widget only resets on the first)
 - `GET /api/conversations` (+`/{sid}`, `DELETE /{sid}`) — history, admin-scoped; the `/{sid}` read
@@ -805,9 +830,11 @@ Do not enable the switch in production until D10's strong-auth or private-networ
 
 V5 is **not released**: the catalog, prices, trial/grace/refund policy, legal
 copy and support owner are unapproved, no Stripe test account exists and D10's
-operator strong auth is not in place. `BILLING_ENABLED=false` and
-`PLATFORM_CONSOLE_ENABLED=false` stay the production defaults until those
-sign-offs are recorded.
+operator strong auth is not in place. The annotated `v5` tag exists on `master`
+(cut and pushed 2026-11-22) but it marks the **engineering merge only** — its
+gates are unsigned and it is not a release; `v4` remains the latest released
+version. `BILLING_ENABLED=false` and `PLATFORM_CONSOLE_ENABLED=false` stay the
+production defaults until those sign-offs are recorded.
 
 The provider-free release gate replays the paid-account and platform-owner
 journeys on a throwaway database, with a local Stripe fixture standing in for
@@ -835,8 +862,9 @@ cd frontend && npm run build && npm run lint
 ## Deploying
 
 SiteGPT is self-hosted; the latest released tag is `v4`. The V5 engineering is
-merged to `master` but **not released** (there is no `v5` tag) and paid billing
-is not approved; follow
+merged to `master` and carries an annotated `v5` tag, but that tag is an
+**engineering marker, not a release** (its gates are unsigned and paid billing
+is not approved); follow
 [`docs/release-v5.md`](docs/release-v5.md) before any launch. None of the dev
 defaults below should survive into production.
 
@@ -922,19 +950,22 @@ list with the residual risk spelled out:
 Also note `/docs` and `/openapi.json` are enabled and unauthenticated (FastAPI default) —
 restrict them at the proxy if that matters to you.
 
-## Upgrading from V1 (V2, V2.1 and V3)
+## Upgrading from V1 (V2 → V5)
 
 1. `uv run alembic upgrade head` — the V2/V2.1 chain adds 15 revisions on top of
-   the V1 head, ending at `c9d3e5a71b28`, and V3 adds three more, so a V1
-   database ends at the single head `1c5516fa864d` (`plans/PLAN_V3.md` §7):
-   `07f83918a289 → c41d7e8a9f20 (api_keys) → 2f95a35b9d5d → 5fe07e597f12 → bebd929605ed → 94ca756068a7 (V2) → 5fbe6ce28d9b (session tokens) → b7d41c9e2f10 (deliveries) → d2f5a81c9b74 → e7b3c94a1d52 → a4c1e9d7f320 → c3f8a2b91d47 → d5b9c4e2a87f → e2a7c5d913f6 → f7c1d84b2e39 → c9d3e5a71b28 → 76f46b510350 (M7 embed tokens) → afef1e91e0b5 (M8 topic clusters) → 1c5516fa864d (M9 conversations + agent author) → f33497bc1ecd (V4 M10 conversation insights + a wider `attachments.file_type`)`.
+   the V1 head, ending at `c9d3e5a71b28`; V3 adds three more (M7–M9), V4 adds
+   M10 and V5 adds M11–M12, so a V1 database ends at the single head
+   `0b22b30bf930` (`plans/PLAN_V3.md` §7, `plans/PLAN_V5.md`):
+   `07f83918a289 → c41d7e8a9f20 (api_keys) → 2f95a35b9d5d → 5fe07e597f12 → bebd929605ed → 94ca756068a7 (V2) → 5fbe6ce28d9b (session tokens) → b7d41c9e2f10 (deliveries) → d2f5a81c9b74 → e7b3c94a1d52 → a4c1e9d7f320 → c3f8a2b91d47 → d5b9c4e2a87f → e2a7c5d913f6 → f7c1d84b2e39 → c9d3e5a71b28 → 76f46b510350 (M7 embed tokens) → afef1e91e0b5 (M8 topic clusters) → 1c5516fa864d (M9 conversations + agent author) → f33497bc1ecd (V4 M10 conversation insights + a wider `attachments.file_type`) → a7c41d9e6b52 (V5 M11 subscriptions + billing events) → 0b22b30bf930 (V5 M12 platform owners/audit, catalog + prices, platform settings)`.
    V3 only adds tables, a nullable column, an index and a foreign key; no data
    migration and **no re-ingest** (the embedded `EMBEDDING_DIMENSIONS` is
    unchanged). The index revisions build `CONCURRENTLY`, so they are not
    atomic — an interrupted build leaves an invalid index: drop it with
    `DROP INDEX CONCURRENTLY` and re-run (`AGENTS.md`). M9 adds its foreign key
    `NOT VALID` and then validates it, so the upgrade does not block writes to
-   `chat_messages`.
+   `chat_messages`. M10–M12 only add tables (and widen one column), so they are
+   transactional; their new tables stay empty until V4/V5 features are switched
+   on, and the downgrades discard billing/operator state — export first.
 2. Set `API_KEY_PEPPER` before minting any key, `INTEGRATION_WEBHOOK_SECRET`
    before enabling a webhook, and `JWT_SECRET_KEY` + `CORS_ORIGINS` as before —
    see [`docs/security.md`](docs/security.md). Leave `SESSION_TOKEN_MODE` at
@@ -946,14 +977,19 @@ restrict them at the proxy if that matters to you.
    embed tokens, and keep Redis reachable before switching either of those or
    the live inbox on — the job queue, the shared rate-limit windows, the inbox
    stream and presence all need it (`/health` reports `redis` and
-   `rate_limiter.degraded`).
-3. Every V2 **and V3** feature is off by default (a `settings` row or an env
-   flag), so an untouched deployment behaves as it did on `v2.1` — and like V1
-   where the V2 features were never enabled. V3's per-company flags are
+   `rate_limiter.degraded`). V4 adds none either. V5 adds none: `STRIPE_*` is
+   needed only when you deliberately set `BILLING_ENABLED=true`, and
+   `PLATFORM_CONSOLE_ENABLED` stays `false` until the operator boundary is
+   approved.
+3. Every V2, V3, V4 and V5 feature is off by default (a `settings` row or an
+   env flag), so an untouched deployment behaves as it did on `v2.1` — and like
+   V1 where the V2 features were never enabled. V3's per-company flags are
    `topic_clustering_enabled` and `live_inbox_enabled` (both `false`), and its
-   env defaults (`memory`, `compat`) keep the pre-V3 code path. The one
-   deliberate exception remains the V2 prompt's reply-in-the-question's-language
-   rule.
+   env defaults (`memory`, `compat`) keep the pre-V3 code path. V4's are
+   `sitemap_scan_enabled` and `conversation_insights_enabled` (both `false`)
+   plus `session_message_limit=0`; V5 keeps `BILLING_ENABLED=false` and
+   `PLATFORM_CONSOLE_ENABLED=false`. The one deliberate exception remains the
+   V2 prompt's reply-in-the-question's-language rule.
 4. Existing companies get the new settings rows when an admin saves the widget
    tab once; until then the server-side defaults apply (consent off, no logo).
 
