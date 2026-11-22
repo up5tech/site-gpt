@@ -9,8 +9,10 @@ legal copy or named owners.
 Current state (2026-11-22):
 
 - Waves 1–5 engineering are merged to `master` (`028fdee`, fast-forward,
-  2026-11-22) but unreleased; the latest released tag remains `v4` and no `v5`
-  tag exists.
+  2026-11-22) but unreleased; the latest released tag remains `v4`. The
+  annotated `v5` tag on `bfe81f5` (pushed 2026-11-22) is an **engineering
+  marker only** — it is not a release and does not satisfy V5-53, which asks for
+  a tag on the V5-5G-verified commit.
 - Alembic head is `0b22b30bf930` (M12: owners, audit, catalog, prices,
   settings).
 - `BILLING_ENABLED=false` and `PLATFORM_CONSOLE_ENABLED=false` are the only
@@ -124,9 +126,12 @@ keys or real cards.
 | Provider-free gate | engineering | 72/72, 2 blocked | PASS (with external blocks) |
 | Browser journey | unassigned | manual Wave 4 pass only | Pending deployment repeat |
 
-Do not create the `v5` tag, publish prices or enable live billing while any
-row reads **NO-GO**. A release tag is cut once, on the exact commit the release
-gate verified, and is never moved (`PLAN_V3.md` §8).
+Do not move the `v5` tag, publish prices or enable live billing while any row
+reads **NO-GO**. The existing annotated tag marks the engineering merge only; it
+is immutable. A release tag is cut once, on the exact commit its release gate
+verified, and is never moved (`PLAN_V3.md` §8) — because `v5` already marks a
+non-verified commit, any future release needs its own new tag rather than moving
+this one.
 
 ## 7. Rollback
 
