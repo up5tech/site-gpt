@@ -45,6 +45,7 @@ from site_gpt.app.services import billing, plan_catalog
 TABLES = [
     models.Company.__table__,
     models.User.__table__,
+    models.Website.__table__,
     models.Subscription.__table__,
     models.BillingEvent.__table__,
 ]
@@ -442,6 +443,36 @@ class PortalAndSummaryTests(BillingTestCase):
         self.assertIsNotNone(payload["current_period_end"])
         self.assertNotIn("cus_acme", json.dumps(payload))
 
+    def test_usage_reports_counts_and_the_granted_ceiling(self):
+        self._subscription(customer="cus_acme", status="active")
+        self.db.add(
+            models.Website(
+                name="Site",
+                url="https://acme.test",
+                site_map_url="",
+                company_id=self.company.id,
+            )
+        )
+        self.db.commit()
+
+        payload = self.client.get("/api/billing/usage").json()
+
+        self.assertEqual(payload["plan_code"], "starter")
+        self.assertTrue(payload["enforced"])
+        self.assertEqual(
+            payload["websites"], {"key": "websites", "used": 1, "limit": 1}
+        )
+        # Acme has its admin and its member; the other company's admin is not a
+        # seat here.
+        self.assertEqual(payload["seats"], {"key": "seats", "used": 2, "limit": None})
+
+    def test_usage_has_no_ceiling_before_a_subscription_is_confirmed(self):
+        payload = self.client.get("/api/billing/usage").json()
+
+        self.assertIsNone(payload["plan_code"])
+        self.assertFalse(payload["enforced"])
+        self.assertIsNone(payload["websites"]["limit"])
+
     def test_summary_is_scoped_to_the_signed_in_company(self):
         self._subscription(customer="cus_acme", plan_code="starter")
         self._subscription(
@@ -785,6 +816,7 @@ class BillingDisabledTests(BillingTestCase):
             404,
         )
         self.assertEqual(self.client.post("/api/billing/portal").status_code, 404)
+        self.assertEqual(self.client.get("/api/billing/usage").status_code, 404)
         self.assertEqual(
             self.client.post(
                 "/api/billing/webhook",
