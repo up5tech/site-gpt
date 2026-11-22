@@ -44,6 +44,10 @@ M10_REVISION = "f33497bc1ecd"
 M10_PATH = (
     ROOT / "alembic" / "versions" / f"{M10_REVISION}_v4_m10_conversation_insights.py"
 )
+M11_REVISION = "a7c41d9e6b52"
+M11_PATH = (
+    ROOT / "alembic" / "versions" / f"{M11_REVISION}_v5_m11_subscriptions.py"
+)
 ACTIVE_INDEX = "uq_embed_tokens_website_id_active"
 
 
@@ -170,7 +174,7 @@ class EmbedTokenMigrationTests(unittest.TestCase):
         # Each migration must stay exactly one step behind the next one and the
         # chain must still start at the V2 head, or a later one was rebased onto
         # the wrong parent.
-        self.assertEqual(script.get_heads(), [M10_REVISION])
+        self.assertEqual(script.get_heads(), [M11_REVISION])
         self.assertEqual(script.get_revision(M9_REVISION).down_revision, M8_REVISION)
         self.assertEqual(script.get_revision(M8_REVISION).down_revision, M7_REVISION)
         self.assertEqual(script.get_revision(M7_REVISION).down_revision, M7_PARENT)
@@ -327,7 +331,7 @@ class TopicClusterMigrationTests(unittest.TestCase):
         config.set_main_option("script_location", str(ROOT / "alembic"))
         script = ScriptDirectory.from_config(config)
 
-        self.assertEqual(script.get_heads(), [M10_REVISION])
+        self.assertEqual(script.get_heads(), [M11_REVISION])
         self.assertEqual(script.get_revision(M8_REVISION).down_revision, M7_REVISION)
 
 
@@ -490,6 +494,177 @@ class ConversationInsightMigrationTests(unittest.TestCase):
         self.assertIn("left(file_type", downgrade)
         self.assertIn("OLD_FILE_TYPE_WIDTH = 50", self.source)
         self.assertIn("drop_table('conversation_insights')", downgrade)
+
+
+class SubscriptionSchemaTests(unittest.TestCase):
+    """M11: one current subscription per company, mapped only to its tenant."""
+
+    def test_one_subscription_per_company(self):
+        self.assertIn(
+            ("company_id",), _unique_column_sets(models.Subscription)
+        )
+
+    def test_provider_ids_are_unique_per_tenant(self):
+        uniques = _unique_column_sets(models.Subscription)
+
+        self.assertIn(("stripe_customer_id",), uniques)
+        self.assertIn(("stripe_subscription_id",), uniques)
+
+    def test_company_fk_cascades(self):
+        column = models.Subscription.__table__.columns["company_id"]
+        foreign_key = next(iter(column.foreign_keys))
+
+        self.assertEqual(foreign_key.column.table.name, "companies")
+        self.assertEqual(foreign_key.ondelete, "CASCADE")
+        self.assertFalse(column.nullable)
+
+    def test_status_and_interval_are_bounded_by_the_database(self):
+        checks = {
+            constraint.name: str(constraint.sqltext)
+            for constraint in models.Subscription.__table__.constraints
+            if constraint.__class__.__name__ == "CheckConstraint"
+        }
+
+        self.assertIn("ck_subscriptions_status", checks)
+        for status in (
+            "incomplete",
+            "trialing",
+            "active",
+            "past_due",
+            "unpaid",
+            "canceled",
+            "paused",
+        ):
+            self.assertIn(status, checks["ck_subscriptions_status"])
+        self.assertIn("ck_subscriptions_interval", checks)
+        self.assertIn("month", checks["ck_subscriptions_interval"])
+        self.assertIn("year", checks["ck_subscriptions_interval"])
+
+    def test_the_renewal_index_is_status_then_period_end(self):
+        index = next(
+            item
+            for item in models.Subscription.__table__.indexes
+            if item.name == "idx_subscriptions_status_current_period_end"
+        )
+
+        self.assertEqual(
+            [column.name for column in index.columns],
+            ["status", "current_period_end"],
+        )
+        self.assertFalse(index.unique)
+
+    def test_lifecycle_timestamps_are_timezone_aware(self):
+        table = models.Subscription.__table__
+
+        for name in (
+            "current_period_start",
+            "current_period_end",
+            "canceled_at",
+            "last_event_at",
+        ):
+            self.assertTrue(table.columns[name].type.timezone, name)
+            self.assertTrue(table.columns[name].nullable, name)
+
+    def test_no_card_data_or_raw_provider_payload_is_stored(self):
+        columns = set(models.Subscription.__table__.columns.keys())
+
+        self.assertFalse(
+            {"card", "pan", "cvc", "payload", "raw_event", "price_id"}
+            & columns
+        )
+
+    def test_the_company_owns_its_subscription(self):
+        relationship = models.Company.__mapper__.relationships["subscription"]
+
+        self.assertEqual(relationship.mapper.class_.__name__, "Subscription")
+        self.assertFalse(relationship.uselist)
+        self.assertTrue(relationship.passive_deletes)
+
+
+class BillingEventSchemaTests(unittest.TestCase):
+    """M11: the unique event receipt is the webhook replay lock."""
+
+    def test_the_stripe_event_id_is_unique(self):
+        self.assertIn(
+            ("stripe_event_id",), _unique_column_sets(models.BillingEvent)
+        )
+
+    def test_it_carries_no_payload(self):
+        self.assertEqual(
+            set(models.BillingEvent.__table__.columns.keys()),
+            {
+                "stripe_event_id",
+                "type",
+                "stripe_created_at",
+                "processed_at",
+                "id",
+                "created_at",
+                "updated_at",
+            },
+        )
+
+    def test_creation_time_is_timezone_aware(self):
+        column = models.BillingEvent.__table__.columns["stripe_created_at"]
+
+        self.assertTrue(column.type.timezone)
+        self.assertFalse(column.nullable)
+
+    def test_receipts_have_a_retention_index(self):
+        names = {index.name for index in models.BillingEvent.__table__.indexes}
+
+        self.assertIn("idx_billing_events_created_at", names)
+
+
+class SubscriptionMigrationTests(unittest.TestCase):
+    """M11 chains from M10, keeps only its two tables, and undoes them."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.source = M11_PATH.read_text()
+
+    def test_m11_chains_from_m10(self):
+        self.assertTrue(M11_PATH.exists(), f"missing migration {M11_PATH.name}")
+        self.assertIn(
+            "down_revision: Union[str, Sequence[str], None] = 'f33497bc1ecd'",
+            self.source,
+        )
+
+    def test_m11_is_the_single_head(self):
+        config = Config(str(ROOT / "alembic.ini"))
+        config.set_main_option("script_location", str(ROOT / "alembic"))
+        script = ScriptDirectory.from_config(config)
+
+        self.assertEqual(script.get_heads(), [M11_REVISION])
+        self.assertEqual(
+            script.get_revision(M11_REVISION).down_revision, M10_REVISION
+        )
+
+    def test_migration_creates_both_tables_and_their_identities(self):
+        self.assertIn("create_table(\n        'subscriptions',", self.source)
+        self.assertIn("create_table(\n        'billing_events',", self.source)
+        self.assertIn("sa.UniqueConstraint('company_id')", self.source)
+        self.assertIn("sa.UniqueConstraint('stripe_event_id')", self.source)
+        self.assertIn("ondelete='CASCADE'", self.source)
+        self.assertIn("name='ck_subscriptions_status'", self.source)
+        self.assertIn("name='ck_subscriptions_interval'", self.source)
+
+    def test_the_known_drift_was_not_taken(self):
+        code = self.source.split('"""', 2)[2]
+
+        self.assertNotIn("alter_column", code)
+        self.assertNotIn("drop_constraint", code)
+
+    def test_new_table_indexes_are_built_transactionally(self):
+        self.assertNotIn("autocommit_block()", self.source)
+        self.assertNotIn("postgresql_concurrently=True", self.source)
+
+    def test_downgrade_removes_both_tables_and_their_indexes(self):
+        downgrade = self.source.split("def downgrade()", 1)[1]
+
+        self.assertIn("drop_table('billing_events')", downgrade)
+        self.assertIn("drop_table('subscriptions')", downgrade)
+        self.assertIn("idx_billing_events_created_at", downgrade)
+        self.assertIn("idx_subscriptions_status_current_period_end", downgrade)
 
 
 if __name__ == "__main__":
