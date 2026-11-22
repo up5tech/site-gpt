@@ -1,3 +1,29 @@
+/** One entitlement of a public plan, as `GET /api/plans` returns it (V5-11). */
+export interface PlanLimit {
+  key: string;
+  value: number;
+}
+
+/**
+ * One plan from the server-owned catalog. Prices arrive as integer minor units
+ * plus a currency code; there is deliberately no Stripe Price ID here.
+ */
+export interface PublicPlan {
+  code: string;
+  name: string;
+  description: string;
+  price_minor: number;
+  currency: string;
+  interval: string;
+  features: string[];
+  limits: PlanLimit[];
+  self_serve_checkout: boolean;
+}
+
+export interface PublicPlanList {
+  plans: PublicPlan[];
+}
+
 export interface Company {
   id: string;
   name: string;

@@ -206,7 +206,7 @@ export function Dashboard() {
           </Text>
         </Col>
         <Col>
-          <Link to='/websites'>
+          <Link to='/app/websites'>
             <Button type='primary' icon={<PlusOutlined />}>
               Add Website
             </Button>
@@ -231,7 +231,7 @@ export function Dashboard() {
             chipBg='#111827'
             chipFg='#ffffff'
             loading={loadingStats}
-            to='/websites'
+            to='/app/websites'
           />
         </div>
         <div style={{ flex: '1 1 200px', minWidth: 200 }}>
@@ -242,7 +242,7 @@ export function Dashboard() {
             chipBg='#ecfdf5'
             chipFg='#10b981'
             loading={loadingStats}
-            to='/websites'
+            to='/app/websites'
           />
         </div>
         <div style={{ flex: '1 1 200px', minWidth: 200 }}>
@@ -253,7 +253,7 @@ export function Dashboard() {
             chipBg='#fffbeb'
             chipFg='#d97706'
             loading={loadingStats}
-            to='/websites'
+            to='/app/websites'
           />
         </div>
         <div style={{ flex: '1 1 200px', minWidth: 200 }}>
@@ -264,7 +264,7 @@ export function Dashboard() {
             chipBg='#eff6ff'
             chipFg='#3b82f6'
             loading={loadingStats}
-            to='/playground?focus=latest'
+            to='/app/playground?focus=latest'
           />
         </div>
         <div style={{ flex: '1 1 200px', minWidth: 200 }}>
@@ -275,7 +275,7 @@ export function Dashboard() {
             chipBg='#eef2ff'
             chipFg='#6366f1'
             loading={loadingStats}
-            to='/users'
+            to='/app/users'
           />
         </div>
       </div>
@@ -376,7 +376,7 @@ export function Dashboard() {
               </span>
             }
             extra={
-              <Link to='/playground?focus=latest'>
+              <Link to='/app/playground?focus=latest'>
                 <Text type='secondary' style={{ fontSize: 14 }}>
                   View all
                 </Text>
@@ -445,7 +445,7 @@ export function Dashboard() {
               </span>
             }
             extra={
-              <Link to='/websites'>
+              <Link to='/app/websites'>
                 <Text type='secondary' style={{ fontSize: 14 }}>
                   View all
                 </Text>
@@ -470,7 +470,7 @@ export function Dashboard() {
               </span>
             }
             extra={
-              <Link to='/users'>
+              <Link to='/app/users'>
                 <Text type='secondary' style={{ fontSize: 14 }}>
                   View all
                 </Text>

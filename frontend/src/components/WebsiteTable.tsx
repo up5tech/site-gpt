@@ -86,7 +86,7 @@ export function WebsiteTable() {
       rowKey='id'
       size='middle'
       onRow={(record) => ({
-        onClick: () => navigate(`/websites/${record.id}`),
+        onClick: () => navigate(`/app/websites/${record.id}`),
         style: { cursor: 'pointer' },
       })}
     />

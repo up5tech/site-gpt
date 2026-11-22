@@ -1,5 +1,5 @@
 import axios, { AxiosInstance } from 'axios';
-import type { AnalyticsSummary, ApiKeyCreated, ApiKeyItem, ApiKeyPayload, ChatResponse, ContactList, ConversationList, ConversationMessages, DashboardStats, DeliveryAttempt, DeliveryList, DeliveryStatus, DigestPreview, DigestSendResult, FeedbackItem, FeedbackList, FeedbackRequest, FeedbackReview, HandoffList, HandoffUpdate, InboxConversation, InboxConversationDetail, InboxList, InboxMessage, InboxPresence, InboxState, InboxStatus, IntegrationItem, IntegrationPayload, IntegrationTestResult, LoginResponse, RecentConversations, RegisterRequest, RetentionPurgeResult, Setting, Website, WebsiteQuota, WidgetConfig } from '../types/api';
+import type { AnalyticsSummary, ApiKeyCreated, ApiKeyItem, ApiKeyPayload, ChatResponse, ContactList, ConversationList, ConversationMessages, DashboardStats, DeliveryAttempt, DeliveryList, DeliveryStatus, DigestPreview, DigestSendResult, FeedbackItem, FeedbackList, FeedbackRequest, FeedbackReview, HandoffList, HandoffUpdate, InboxConversation, InboxConversationDetail, InboxList, InboxMessage, InboxPresence, InboxState, InboxStatus, IntegrationItem, IntegrationPayload, IntegrationTestResult, LoginResponse, PublicPlanList, RecentConversations, RegisterRequest, RetentionPurgeResult, Setting, Website, WebsiteQuota, WidgetConfig } from '../types/api';
 
 // Base API instance with proxy /api -> backend
 const api: AxiosInstance = axios.create({
@@ -315,3 +315,7 @@ export const getWebsiteQuota = (websiteId: string) =>
   api.get<WebsiteQuota>(`/websites/${websiteId}/quota`);
 
 export type { LoginResponse } from '../types/api';
+
+// Public plan catalog (V5-11). Unauthenticated and read-only: the pricing page
+// renders exactly what the server publishes, prices included.
+export const getPlans = () => api.get<PublicPlanList>('/plans');

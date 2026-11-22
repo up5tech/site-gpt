@@ -99,7 +99,7 @@ export function Websites() {
           <Button
             type='text'
             icon={<EyeOutlined />}
-            onClick={() => navigate(`/websites/${record.id}`)}
+            onClick={() => navigate(`/app/websites/${record.id}`)}
           />
           <Button
             type='link'

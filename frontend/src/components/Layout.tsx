@@ -5,18 +5,27 @@ import {
 } from '@ant-design/icons';
 import { Dropdown, Layout, MenuProps, Space, Typography } from 'antd';
 import { useEffect, useState } from 'react';
-import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { getInboxStatus, INBOX_STATUS_CHANGED } from '../utils/api';
+import { useDocumentTitle } from '../utils/useDocumentTitle';
 
 const { Header, Content } = Layout;
 const { Text } = Typography;
 
 interface Props {
-  children: React.ReactNode;
+  children?: React.ReactNode;
 }
 
+/**
+ * The authenticated console shell (V5-10). It renders `/app` routes through an
+ * `<Outlet />` and is deliberately not the public marketing shell: an anonymous
+ * visitor never sees this navigation, and the console keeps its own layout.
+ */
 export function LayoutComponent({ children }: Props) {
+  // The marketing shell owns the descriptive <title> in `index.html`; every
+  // console page resets it to the app name instead of advertising copy.
+  useDocumentTitle('Site GPT');
   const { isAuthenticated, user, logout } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
@@ -53,17 +62,17 @@ export function LayoutComponent({ children }: Props) {
   }, [isAuthenticated, inboxStatusRefresh]);
 
   const menuItems = [
-    { key: '/', label: 'Dashboard' },
-    { key: '/websites', label: 'Websites' },
-    { key: '/playground', label: 'Playground' },
-    { key: '/contacts', label: 'Contacts' },
-    { key: '/users', label: 'Users' },
-    { key: '/documents', label: 'Documents' },
-    { key: '/training', label: 'Training' },
-    { key: '/handoffs', label: 'Handoffs' },
-    ...(inboxEnabled ? [{ key: '/inbox', label: 'Inbox' }] : []),
-    { key: '/analytics', label: 'Analytics' },
-    { key: '/integrations', label: 'Integrations' },
+    { key: '/app', label: 'Dashboard' },
+    { key: '/app/websites', label: 'Websites' },
+    { key: '/app/playground', label: 'Playground' },
+    { key: '/app/contacts', label: 'Contacts' },
+    { key: '/app/users', label: 'Users' },
+    { key: '/app/documents', label: 'Documents' },
+    { key: '/app/training', label: 'Training' },
+    { key: '/app/handoffs', label: 'Handoffs' },
+    ...(inboxEnabled ? [{ key: '/app/inbox', label: 'Inbox' }] : []),
+    { key: '/app/analytics', label: 'Analytics' },
+    { key: '/app/integrations', label: 'Integrations' },
   ];
 
   const dropdownItems: MenuProps['items'] = [
@@ -71,7 +80,7 @@ export function LayoutComponent({ children }: Props) {
       key: 'settings',
       label: 'Settings',
       icon: <SettingOutlined />,
-      onClick: () => navigate('/settings'),
+      onClick: () => navigate('/app/settings'),
     },
     {
       key: 'logout',
@@ -173,7 +182,7 @@ export function LayoutComponent({ children }: Props) {
           width: '100%',
         }}
       >
-        {children}
+        {children ?? <Outlet />}
       </Content>
     </Layout>
   );

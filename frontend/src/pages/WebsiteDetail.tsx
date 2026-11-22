@@ -294,7 +294,7 @@ export function WebsiteDetail() {
       <Breadcrumb
         style={{ marginBottom: 16 }}
         items={[
-          { title: <a onClick={() => navigate('/websites')}>Websites</a> },
+          { title: <a onClick={() => navigate('/app/websites')}>Websites</a> },
           { title: website?.name || 'Detail' },
         ]}
       />
@@ -311,7 +311,7 @@ export function WebsiteDetail() {
           <Space>
             <Button
               icon={<ArrowLeftOutlined />}
-              onClick={() => navigate('/websites')}
+              onClick={() => navigate('/app/websites')}
               type='text'
             />
             <Title level={2} style={{ margin: 0 }}>

@@ -4,17 +4,21 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import type { Location } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { getApiErrorMessage, login, setAuthToken } from '../utils/api';
+import { useDocumentTitle } from '../utils/useDocumentTitle';
 
 const { Title, Text } = Typography;
 
 export function Login() {
+  useDocumentTitle('Sign in — Site GPT');
   const { message } = App.useApp();
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
   const { login: setToken, isAuthenticated } = useAuth();
 
-  const from = (location.state as { from?: Location })?.from?.pathname ?? '/';
+  // The console lives under `/app` (V5-10); a visitor who arrived without a
+  // saved destination lands on the dashboard there, not on the marketing page.
+  const from = (location.state as { from?: Location })?.from?.pathname ?? '/app';
 
   if (isAuthenticated) {
     navigate(from, { replace: true });
