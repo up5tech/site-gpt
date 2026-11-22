@@ -11,7 +11,8 @@ safe:
 * only a signature-verified webhook changes state; the Checkout return URL is
   never read;
 * one event id is applied once, and a delayed older event cannot restore a
-  state Stripe has moved past;
+  state Stripe has moved past; a failed apply rolls its receipt back so the
+  Stripe retry is not mistaken for a duplicate;
 * another tenant's customer id, or a mismatched metadata company, changes
   nothing;
 * with billing off, no route but `status` exists and no Stripe call is made.
@@ -462,11 +463,11 @@ class WebhookTests(BillingTestCase):
             "data": {"object": obj},
         }
 
-    def _deliver(self, event, signature="t=1,v1=signature"):
+    def _deliver(self, event, signature="t=1,v1=signature", client=None):
         with patch.object(
             billing.stripe.Webhook, "construct_event", return_value=event
         ):
-            return self.client.post(
+            return (client or self.client).post(
                 "/api/billing/webhook",
                 content=json.dumps(event),
                 headers={"stripe-signature": signature},
@@ -545,6 +546,39 @@ class WebhookTests(BillingTestCase):
         self.assertTrue(second.json()["duplicate"])
         self.assertEqual(self._receipts(), 1)
         self.assertEqual(self._row().status, "active")
+
+    def test_a_failed_apply_leaves_no_receipt_so_the_retry_applies_once(self):
+        # V5-22: a receipt that survived a failed apply would make Stripe's
+        # retry look like a duplicate, so the paid state would never land.
+        self._subscription(customer="cus_1", status="incomplete")
+        event = self._event(
+            "evt_retry",
+            "customer.subscription.updated",
+            {"id": "sub_1", "customer": "cus_1", "status": "active"},
+        )
+
+        # The event is verified and receipted, then the apply step fails.
+        # Stripe sees 500 and will redeliver the same event id.
+        failing = TestClient(self.app, raise_server_exceptions=False)
+        with patch.object(
+            billing, "_apply", side_effect=RuntimeError("apply failed")
+        ):
+            failed = self._deliver(event, client=failing)
+
+        self.assertEqual(failed.status_code, 500)
+        self.assertEqual(self._receipts(), 0)
+        self.assertEqual(self._row().status, "incomplete")
+
+        retried = self._deliver(event)
+
+        self.assertEqual(retried.status_code, 200)
+        self.assertFalse(retried.json()["duplicate"])
+        self.assertEqual(self._row().status, "active")
+        self.assertEqual(self._receipts(), 1)
+
+        # The retry was the apply; a further delivery is the duplicate no-op.
+        self.assertTrue(self._deliver(event).json()["duplicate"])
+        self.assertEqual(self._receipts(), 1)
 
     def test_a_delayed_older_event_cannot_restore_stale_state(self):
         self._subscription(
