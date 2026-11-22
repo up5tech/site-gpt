@@ -48,7 +48,7 @@ from site_gpt.app.schemas.session_token import (
     SessionTokenResponse,
 )
 from site_gpt.app.schemas.user import UserLogin
-from site_gpt.app.services import rag
+from site_gpt.app.services import entitlements, rag
 from site_gpt.app.services.conversations import (
     agent_engaged,
     delete_conversation,
@@ -136,19 +136,28 @@ async def chat(
         return await asyncio.to_thread(
             rag.queue_visitor_message, db, website.id, body.session_id, body.question
         )
+    # One snapshot for the whole request: both ceilings below describe the same
+    # plan state, so a message reads the subscription once, not twice.
+    snapshot = entitlements.resolve(db, website.company_id)
     # Per-session ceiling (V4 F4, D6): the daily cap bounds a website's spend, this
     # one bounds one visitor's conversation. It runs first so a refused message
     # spends no daily budget, and it stores nothing.
     if not await consume_session_message(
         website.id,
         body.session_id,
-        limit=company_session_message_limit(db, website.company_id),
+        limit=entitlements.session_message_limit(
+            snapshot, company_session_message_limit(db, website.company_id)
+        ),
     ):
         return {"answer": SESSION_CAP_MESSAGE, "sources": []}
     # Daily per-website ceiling: per-IP limits do not bound a viral embed. The
-    # company's own setting wins; without one the env default applies.
+    # company's own setting wins; without one the env default applies. A paid
+    # plan is a ceiling on top of that, never a way to raise it (V5-31).
     if not await consume_message(
-        website.id, limit=company_daily_message_limit(db, website.company_id)
+        website.id,
+        limit=entitlements.daily_message_limit(
+            snapshot, company_daily_message_limit(db, website.company_id)
+        ),
     ):
         return {"answer": QUOTA_MESSAGE, "sources": []}
     # `ask` does blocking I/O (embedding, pgvector, LLM); keep it off the loop,
@@ -545,11 +554,16 @@ async def chat_stream(
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
+    # One snapshot for the whole request: both ceilings below describe the same
+    # plan state, so a message reads the subscription once, not twice.
+    snapshot = entitlements.resolve(db, website.company_id)
     # Same order as the sync handler (D6): session cap, then the daily ceiling.
     if not await consume_session_message(
         website.id,
         body.session_id,
-        limit=company_session_message_limit(db, website.company_id),
+        limit=entitlements.session_message_limit(
+            snapshot, company_session_message_limit(db, website.company_id)
+        ),
     ):
         return StreamingResponse(
             quota_sse_events(SESSION_CAP_MESSAGE),
@@ -557,7 +571,10 @@ async def chat_stream(
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
     if not await consume_message(
-        website.id, limit=company_daily_message_limit(db, website.company_id)
+        website.id,
+        limit=entitlements.daily_message_limit(
+            snapshot, company_daily_message_limit(db, website.company_id)
+        ),
     ):
         return StreamingResponse(
             quota_sse_events(),

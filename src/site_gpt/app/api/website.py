@@ -22,7 +22,7 @@ from site_gpt.app.schemas.website_page import (
     WebsitePageRes,
     WebsitePageUpdate,
 )
-from site_gpt.app.services import embed_tokens
+from site_gpt.app.services import embed_tokens, entitlements
 from site_gpt.app.services import sitemap as sitemap_service
 from site_gpt.app.services.crawler import extract_urls_from_sitemap
 from site_gpt.app.services.net_guard import UnsafeUrl
@@ -211,6 +211,18 @@ def create_website(
     db: Session = Depends(get_db),
     user: models.User = Depends(get_manager_user),
 ):
+    # The plan's website ceiling (V5-31). Checked before the insert and outside
+    # the try/except below, whose 500 would otherwise swallow the refusal; an
+    # existing company over its ceiling keeps every website it already has.
+    existing = (
+        db.query(models.Website)
+        .filter(models.Website.company_id == user.company_id)
+        .count()
+    )
+    try:
+        entitlements.enforce_count(db, user.company_id, "websites", existing)
+    except entitlements.PlanLimitError as exc:
+        raise HTTPException(status_code=403, detail=exc.detail) from exc
     try:
         website = Website(
             url=website_in.url,

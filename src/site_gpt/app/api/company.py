@@ -14,6 +14,7 @@ from site_gpt.app.db.session import get_db
 from site_gpt.app.schemas.app import PaginatedResponse
 from site_gpt.app.schemas.company import CompanyRes, CompanyUpdate
 from site_gpt.app.schemas.user import UserCreate, UserRes, UserUpdate
+from site_gpt.app.services import entitlements
 
 router = APIRouter()
 
@@ -105,6 +106,14 @@ def create_user(
     db: Session = Depends(get_db),
     user=Depends(get_manager_user),
 ):
+    # The plan's seat ceiling (V5-31), before the insert and outside the
+    # try/except whose 500 would swallow the refusal. Only active users hold a
+    # seat, so a deactivated account never blocks a new invite.
+    seats = entitlements.seat_count(db, user.company_id)
+    try:
+        entitlements.enforce_count(db, user.company_id, "seats", seats)
+    except entitlements.PlanLimitError as exc:
+        raise HTTPException(status_code=403, detail=exc.detail) from exc
     try:
         hashed_password = hash_password(user_in.password)
         user = models.User(

@@ -34,7 +34,7 @@ from site_gpt.app.schemas.chat import (
 from site_gpt.app.schemas.contact import ContactListResponse, ContactRes
 from site_gpt.app.schemas.digest import AnalyticsSummary
 from site_gpt.app.schemas.setting import SettingRes
-from site_gpt.app.services import analytics
+from site_gpt.app.services import analytics, entitlements
 from site_gpt.app.services.conversations import list_conversations
 from site_gpt.app.services.digest import build_digest
 from site_gpt.app.services.embed_guard import ensure_embed_allowed
@@ -213,17 +213,25 @@ async def chat_v1(
     # daily ceiling, so a capped conversation spends no daily budget. A key
     # caller gets the friendly answer (200) rather than a 429 — the session is
     # capped, not the website.
+    # One snapshot for the whole request, shared by both ceilings below.
+    snapshot = entitlements.resolve(db, website.company_id)
     if not await consume_session_message(
         website.id,
         body.session_id,
-        limit=company_session_message_limit(db, website.company_id),
+        limit=entitlements.session_message_limit(
+            snapshot, company_session_message_limit(db, website.company_id)
+        ),
     ):
         return {"answer": SESSION_CAP_MESSAGE, "sources": [], "message_id": None}
 
     # The company's daily ceiling still applies: a key must not be a way to spend
-    # past the limit the owner set for their websites.
+    # past the limit the owner set for their websites, and the plan ceiling
+    # applies here exactly as it does to the widget (V5-31).
     if not await consume_message(
-        website.id, limit=company_daily_message_limit(db, website.company_id)
+        website.id,
+        limit=entitlements.daily_message_limit(
+            snapshot, company_daily_message_limit(db, website.company_id)
+        ),
     ):
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
