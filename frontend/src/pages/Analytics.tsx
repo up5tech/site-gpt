@@ -466,7 +466,11 @@ export function Analytics() {
       key: 'open',
       width: 100,
       render: (_, item) => (
-        <Link to={`/chat?website=${item.website_id}&focus=${item.session_id}`}>
+        <Link
+          to={`/app/playground?website=${item.website_id}&focus=${encodeURIComponent(
+            item.session_id,
+          )}`}
+        >
           Transcript
         </Link>
       ),

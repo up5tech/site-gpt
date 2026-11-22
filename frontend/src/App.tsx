@@ -1,5 +1,6 @@
-import { App as AntdApp } from 'antd';
+import { App as AntdApp, Button, Result } from 'antd';
 import {
+  Link,
   Navigate,
   Route,
   Routes,
@@ -9,7 +10,7 @@ import './App.less';
 import { LayoutComponent } from './components/Layout';
 import { PublicLayout } from './components/PublicLayout';
 import { ProtectedRoute } from './components/ProtectedRoute';
-import AuthProvider from './context/AuthContext';
+import AuthProvider, { useAuth } from './context/AuthContext';
 import { ChatProvider } from './context/ChatContext';
 import { Contacts } from './pages/Contacts';
 import { Dashboard } from './pages/Dashboard';
@@ -49,6 +50,47 @@ const CONSOLE_PATHS = [
   'training',
   'settings',
 ];
+
+/**
+ * The console's own 404, rendered inside the admin shell (V5-10). A mistyped
+ * `/app/...` URL keeps its path so the typo is visible, and the visitor keeps
+ * the console navigation instead of being thrown out to the marketing site.
+ */
+function ConsoleNotFound() {
+  const location = useLocation();
+  return (
+    <Result
+      status='404'
+      title='Page not found'
+      subTitle={`${location.pathname} is not a console page.`}
+      extra={
+        <Link to='/app'>
+          <Button type='primary'>Back to dashboard</Button>
+        </Link>
+      }
+    />
+  );
+}
+
+/**
+ * The global catch-all. A signed-in visitor who mistypes a console URL is sent
+ * into the console (keeping the path, so `/app/<typo>` shows the console's 404)
+ * rather than being silently dropped on the marketing landing page; an
+ * anonymous visitor still lands on the public home page.
+ */
+function NotFoundRedirect() {
+  const { isAuthenticated } = useAuth();
+  const location = useLocation();
+  if (isAuthenticated) {
+    return (
+      <Navigate
+        to={`/app${location.pathname}${location.search}${location.hash}`}
+        replace
+      />
+    );
+  }
+  return <Navigate to='/' replace />;
+}
 
 function LegacyConsoleRedirect() {
   const location = useLocation();
@@ -96,6 +138,8 @@ function App() {
               <Route path='inbox' element={<Inbox />} />
               <Route path='training' element={<Training />} />
               <Route path='settings' element={<Settings />} />
+              {/* Unknown `/app/...` paths stay in the console shell. */}
+              <Route path='*' element={<ConsoleNotFound />} />
             </Route>
 
             {/* Old console paths, kept working. */}
@@ -107,7 +151,7 @@ function App() {
               />
             ))}
 
-            <Route path='*' element={<Navigate to='/' replace />} />
+            <Route path='*' element={<NotFoundRedirect />} />
           </Routes>
         </ChatProvider>
       </AuthProvider>

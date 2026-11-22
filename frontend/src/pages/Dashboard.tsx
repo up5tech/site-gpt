@@ -396,7 +396,7 @@ export function Dashboard() {
                   <List.Item
                     style={{ cursor: 'pointer', padding: '10px 4px' }}
                     onClick={() =>
-                      (window.location.href = `/playground?website=${c.website_id}&focus=${encodeURIComponent(c.session_id)}`)
+                      (window.location.href = `/app/playground?website=${c.website_id}&focus=${encodeURIComponent(c.session_id)}`)
                     }
                   >
                     <div style={{ width: '100%' }}>
