@@ -48,6 +48,10 @@ M11_REVISION = "a7c41d9e6b52"
 M11_PATH = (
     ROOT / "alembic" / "versions" / f"{M11_REVISION}_v5_m11_subscriptions.py"
 )
+M12_REVISION = "0b22b30bf930"
+M12_PATH = (
+    ROOT / "alembic" / "versions" / f"{M12_REVISION}_v5_m12_platform_owner_and_audit.py"
+)
 ACTIVE_INDEX = "uq_embed_tokens_website_id_active"
 
 
@@ -174,7 +178,7 @@ class EmbedTokenMigrationTests(unittest.TestCase):
         # Each migration must stay exactly one step behind the next one and the
         # chain must still start at the V2 head, or a later one was rebased onto
         # the wrong parent.
-        self.assertEqual(script.get_heads(), [M11_REVISION])
+        self.assertEqual(script.get_heads(), [M12_REVISION])
         self.assertEqual(script.get_revision(M9_REVISION).down_revision, M8_REVISION)
         self.assertEqual(script.get_revision(M8_REVISION).down_revision, M7_REVISION)
         self.assertEqual(script.get_revision(M7_REVISION).down_revision, M7_PARENT)
@@ -331,7 +335,7 @@ class TopicClusterMigrationTests(unittest.TestCase):
         config.set_main_option("script_location", str(ROOT / "alembic"))
         script = ScriptDirectory.from_config(config)
 
-        self.assertEqual(script.get_heads(), [M11_REVISION])
+        self.assertEqual(script.get_heads(), [M12_REVISION])
         self.assertEqual(script.get_revision(M8_REVISION).down_revision, M7_REVISION)
 
 
@@ -634,7 +638,7 @@ class SubscriptionMigrationTests(unittest.TestCase):
         config.set_main_option("script_location", str(ROOT / "alembic"))
         script = ScriptDirectory.from_config(config)
 
-        self.assertEqual(script.get_heads(), [M11_REVISION])
+        self.assertEqual(script.get_heads(), [M12_REVISION])
         self.assertEqual(
             script.get_revision(M11_REVISION).down_revision, M10_REVISION
         )
@@ -669,3 +673,128 @@ class SubscriptionMigrationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PlatformOwnerSchemaTests(unittest.TestCase):
+    """M12 (V5-40): one *active* operator grant per user, and an audit trail."""
+
+    def test_the_active_grant_index_is_partial(self):
+        index = next(
+            item
+            for item in models.PlatformOwner.__table__.indexes
+            if item.name == "uq_platform_owners_user_id_active"
+        )
+        compiled = str(
+            CreateIndex(index).compile(dialect=postgresql.dialect())
+        )
+
+        self.assertTrue(index.unique)
+        self.assertIn("WHERE revoked_at IS NULL", compiled)
+        # A plain unique index on user_id would reject the revoked history that
+        # re-granting writes, so the predicate is the guarantee, not a detail.
+        self.assertNotIn("WHERE revoked_at IS NOT NULL", compiled)
+
+    def test_a_grant_belongs_to_a_user_and_cascades(self):
+        column = models.PlatformOwner.__table__.columns["user_id"]
+        fk = next(iter(column.foreign_keys))
+
+        self.assertEqual(fk.target_fullname, "users.id")
+        self.assertEqual(fk.ondelete, "CASCADE")
+        self.assertFalse(column.nullable)
+
+    def test_revocation_is_a_timestamp_not_a_delete(self):
+        column = models.PlatformOwner.__table__.columns["revoked_at"]
+
+        self.assertTrue(column.nullable)
+        self.assertTrue(column.type.timezone)
+
+    def test_the_audit_table_keeps_no_payload_or_credential_column(self):
+        columns = set(models.PlatformAuditLog.__table__.columns.keys())
+
+        self.assertEqual(
+            columns,
+            {
+                "id",
+                "created_at",
+                "updated_at",
+                "actor_user_id",
+                "actor_label",
+                "action",
+                "target_type",
+                "target_id",
+                "detail",
+            },
+        )
+        self.assertEqual(
+            models.PlatformAuditLog.__table__.columns["detail"].type.__class__,
+            type(models.PlatformAuditLog.__table__.columns["detail"].type),
+        )
+
+    def test_the_actor_does_not_take_the_audit_row_with_them(self):
+        column = models.PlatformAuditLog.__table__.columns["actor_user_id"]
+        fk = next(iter(column.foreign_keys))
+
+        self.assertEqual(fk.ondelete, "SET NULL")
+        self.assertTrue(column.nullable)
+        self.assertEqual(
+            models.PlatformAuditLog.__table__.columns["action"].type.length, 64
+        )
+
+    def test_reads_have_an_ordering_and_target_index(self):
+        names = {index.name for index in models.PlatformAuditLog.__table__.indexes}
+
+        self.assertIn("idx_platform_audit_logs_created_at", names)
+        self.assertIn("idx_platform_audit_logs_target", names)
+
+
+class PlatformMigrationTests(unittest.TestCase):
+    """M12 chains from M11, carries the partial index, and undoes both tables."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.source = M12_PATH.read_text()
+
+    def test_m12_chains_from_m11(self):
+        self.assertTrue(M12_PATH.exists(), f"missing migration {M12_PATH.name}")
+        self.assertIn(
+            'down_revision: Union[str, Sequence[str], None] = "a7c41d9e6b52"',
+            self.source,
+        )
+
+    def test_m12_is_the_single_head(self):
+        config = Config(str(ROOT / "alembic.ini"))
+        config.set_main_option("script_location", str(ROOT / "alembic"))
+        script = ScriptDirectory.from_config(config)
+
+        self.assertEqual(script.get_heads(), [M12_REVISION])
+        self.assertEqual(
+            script.get_revision(M12_REVISION).down_revision, M11_REVISION
+        )
+
+    def test_migration_creates_both_tables_and_the_partial_index(self):
+        self.assertIn("create_table(\n        \"platform_owners\",", self.source)
+        self.assertIn(
+            "create_table(\n        \"platform_audit_logs\",", self.source
+        )
+        self.assertIn('"uq_platform_owners_user_id_active"', self.source)
+        self.assertIn('postgresql_where=sa.text("revoked_at IS NULL")', self.source)
+        self.assertIn("ondelete=\"CASCADE\"", self.source)
+        self.assertIn("ondelete=\"SET NULL\"", self.source)
+
+    def test_the_known_drift_was_not_taken(self):
+        code = self.source.split('"""', 2)[2]
+
+        self.assertNotIn("alter_column", code)
+        self.assertNotIn("drop_constraint", code)
+        self.assertNotIn("chat_feedback", code)
+
+    def test_new_table_indexes_are_built_transactionally(self):
+        self.assertNotIn("autocommit_block()", self.source)
+        self.assertNotIn("postgresql_concurrently=True", self.source)
+
+    def test_downgrade_removes_both_tables(self):
+        downgrade = self.source.split("def downgrade()", 1)[1]
+
+        self.assertIn('drop_table("platform_owners")', downgrade)
+        self.assertIn('drop_table("platform_audit_logs")', downgrade)
+        self.assertIn("uq_platform_owners_user_id_active", downgrade)

@@ -279,3 +279,14 @@ GOOGLE_DRIVE_ENABLED = os.getenv("GOOGLE_DRIVE_ENABLED", "false").lower() in (
     "on",
 )
 GOOGLE_DRIVE_CLIENT_ID = os.getenv("GOOGLE_DRIVE_CLIENT_ID")
+
+# The platform-owner console (V5 Wave 4). Off by default: the surface is the
+# operator control plane, not a tenant feature, and D10 requires approved strong
+# auth or a private-network restriction before it is reachable in production.
+# While it stays false every /api/platform route answers 404.
+PLATFORM_CONSOLE_ENABLED = os.getenv("PLATFORM_CONSOLE_ENABLED", "false").lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)

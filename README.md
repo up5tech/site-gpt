@@ -776,6 +776,17 @@ Still blocked externally: Stripe test-mode Checkout (D3), the approved catalog
 and lifecycle/grace policy (V5-01 / D2/D4/D5/D7) and legal copy (D8). No plan
 limit is enforced while the catalog is empty.
 
+## Platform owner console (V5 Wave 4)
+
+The operator control plane is **not** a tenant feature and is **off by default**. `PLATFORM_CONSOLE_ENABLED=false` makes every `/api/platform/*` path a 404, and no route can grant operator access: a grant is created only out of band with
+
+```bash
+uv run python scripts/platform_owner.py grant --email ops@example.com \
+    --actor "on-call SRE (OPS-12)" --note "primary operator"
+```
+
+and revoked the same way (`revoke`), effective on the very next request while the grant row stays as history. A tenant `admin` is not an operator. With the switch on, the only surface as yet is the owner-only `GET /api/platform/session` and `GET /api/platform/audit` (append-only, secrets redacted at write time); subscription operations, catalog editing and the `/platform` UI are V5-41…V5-43. Do not enable the switch in production until D10's strong-auth or private-network requirement is approved. Full procedure, audit fields and the M12 migration notes: `docs/platform.md`.
+
 ## Dev commands
 
 ```bash

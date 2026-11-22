@@ -9,6 +9,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    JSON,
     String,
     Text,
     UniqueConstraint,
@@ -868,3 +869,76 @@ class BillingEvent(BaseModel):
     processed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+
+
+class PlatformOwner(BaseModel):
+    """One out-of-band operator grant bound to an existing user (M12, V5-40).
+
+    This is the **operator** boundary, deliberately separate from every tenant
+    role: `users.role='admin'` never implies it, and no company endpoint can
+    grant or revoke it. A grant is created out of band
+    (`scripts/platform_owner.py`) and revoked by stamping `revoked_at`, so the
+    history of who held operator access survives while only one grant per user
+    can be active.
+
+    The partial unique index is the whole invariant: a user has at most one
+    **active** grant, so a revoked row stays as history and a re-grant inserts a
+    fresh one. Revocation is a timestamp, never a delete.
+    """
+
+    __tablename__ = "platform_owners"
+
+    __table_args__ = (
+        Index(
+            "uq_platform_owners_user_id_active",
+            "user_id",
+            unique=True,
+            postgresql_where=text("revoked_at IS NULL"),
+            # The suite runs on SQLite; without the predicate there a plain
+            # unique index would reject the revoked history re-granting needs.
+            sqlite_where=text("revoked_at IS NULL"),
+        ),
+        Index("idx_platform_owners_revoked_at", "revoked_at"),
+    )
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # Free-text operator note ("on-call SRE, ticket OPS-12"). Never a secret.
+    note: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    user = relationship("User", passive_deletes=True)
+
+
+class PlatformAuditLog(BaseModel):
+    """An append-only record of a platform-owner action (M12, V5-40).
+
+    `actor_user_id` covers an action taken through the API; `actor_label` covers
+    the out-of-band CLI, which has no authenticated session but still has to say
+    who ran it. `detail` is JSON already redacted by the writer, and the table
+    carries no raw request body, token or credential column at all.
+    """
+
+    __tablename__ = "platform_audit_logs"
+
+    __table_args__ = (
+        # Newest-first console reads: the only query shape this table has.
+        Index("idx_platform_audit_logs_created_at", "created_at"),
+        Index("idx_platform_audit_logs_target", "target_type", "target_id"),
+    )
+
+    actor_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    # Operator identity for an out-of-band action (CLI `--actor`), e.g. an email
+    # or a ticket handle. Not a credential and never checked as one.
+    actor_label: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    action: Mapped[str] = mapped_column(String(64), nullable=False)
+    target_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    target_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    detail: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+    actor = relationship("User", passive_deletes=True)

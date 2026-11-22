@@ -16,6 +16,7 @@ from site_gpt.app.api.handoff import router as handoff_router
 from site_gpt.app.api.inbox import router as inbox_router
 from site_gpt.app.api.integration import router as integration_router
 from site_gpt.app.api.plan import router as plan_router
+from site_gpt.app.api.platform import router as platform_router
 from site_gpt.app.api.privacy import router as privacy_router
 from site_gpt.app.api.routes import router
 from site_gpt.app.api.setting import router as setting_router
@@ -134,6 +135,10 @@ app.include_router(plan_router)
 # and the signature-verified Stripe webhook. Everything but `status` answers 404
 # while BILLING_ENABLED is false.
 app.include_router(billing_router)
+# The platform-owner surface (V5-40) owns /api/platform/*: who the operator
+# is and the audit trail. 404 for the whole surface unless
+# PLATFORM_CONSOLE_ENABLED is true, and owner-only when it is.
+app.include_router(platform_router)
 app.include_router(v1_router, prefix="/api/v1")
 
 

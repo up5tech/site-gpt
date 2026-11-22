@@ -9,6 +9,7 @@ import site_gpt.app.models as models
 from site_gpt.app.core.config import JWT_ALGORITHM, JWT_SECRET_KEY
 from site_gpt.app.db.session import get_db
 from site_gpt.app.services.api_keys import find_api_key, scopes_of
+from site_gpt.app.services import platform as platform_service
 
 
 pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
@@ -135,3 +136,22 @@ def require_scope(key, scope: str) -> None:
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"API key is missing the '{scope}' scope",
         )
+
+
+def require_platform_owner(
+    user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """The operator boundary (V5-40, D10).
+
+    Deliberately stricter than `get_admin_user` and independent of it: a tenant
+    `admin` is not an operator, and the grant this reads can only be created out
+    of band by `scripts/platform_owner.py`. Revocation is a timestamp, so the
+    very next request after `revoke_owner` is refused.
+    """
+    if not platform_service.is_owner(db, user.id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not enough permissions",
+        )
+    return user

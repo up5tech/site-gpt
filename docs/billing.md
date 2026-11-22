@@ -146,10 +146,11 @@ D5.
 
 ## 7. Rendering check with throwaway data (2026-11-22)
 
-The console page had never been rendered, so it was driven once locally with
-dummy configuration and a temporary plan. This is a **rendering** check only:
-no Stripe key, Checkout redirect, Portal session or webhook delivery was
-involved, and no limit became enforceable.
+The console page had never been rendered, so it was driven locally — three
+times, on the same throwaway setup — with dummy configuration and a temporary
+plan. This is a **rendering** check only: no Stripe key, Checkout redirect,
+Portal session or webhook delivery was involved, and no limit became
+enforceable.
 
 **Setup (temporary, reverted afterwards).** A throwaway Postgres database
 (`site_gpt_billing_demo`, created and dropped with the compose `postgres16`
@@ -160,25 +161,29 @@ second port pointed at it with `VITE_BACKEND_URL`. A wrapper module patched
 `plan_catalog.PLANS` in memory with one published `starter` plan (websites 1,
 seats 2, daily 500, session 40) so the catalog file itself never changed, a
 company/admin was registered through `POST /api/register`, and the mirrored
-`subscriptions` row was seeded directly per state. All of it was removed
-afterwards: temp scripts deleted, both servers stopped, the database dropped,
-and `plan_catalog.PLANS` is still empty.
+`subscriptions` row was seeded directly per state. A second pass reused the same
+database and ports with `BILLING_ENABLED=false`, no Stripe variables at all and
+no seeded plan, only a registered admin. A third registered a second user with
+`role: "user"` through `POST /api/companies/users` and signed in as that member
+against the seeded active plan. All of it was removed afterwards: temp scripts
+deleted, both servers stopped, the database dropped, and `plan_catalog.PLANS` is
+still empty.
 
 **Observed (viewport 1280 × 900, header 64 px, no overlap or horizontal
-overflow, no console errors):**
+overflow, and no page errors — the member session's only console errors were two
+`403`s from `/api/inbox/status`, a manager-only surface unrelated to this page):**
 
 | State | What the page showed |
 |---|---|
 | No subscription | "No subscription yet" info alert ("This company has no billing account…"), **Manage in Stripe** disabled, a "Choose a plan" card listing Starter with an enabled **Select**, and usage reading `0 used` / `1 used` with no progress bars and "No plan ceiling is being enforced right now, so your existing limits apply." |
 | `past_due` | Plan `starter (monthly)`, an orange **Payment past due** tag, "Renews / ends" date, **Manage in Stripe** enabled, and "Change plan" with Starter marked **Current** and its Select disabled (the current plan cannot be re-bought). Usage still renders counts-only: a past-due row grants no ceiling, exactly as the resolver policy says. |
 | Active + `?checkout=success` | The info alert "Confirming your payment with Stripe" appears above the cards, but the state below it still comes from the mirrored row — the page never treats the query string as proof of payment. Status tag is green **Active**, usage reads `0 of 1` / `1 of 2` with 0 % and 50 % progress bars, and the note "Ceilings are the stricter of your plan and your own settings." |
+| Non-admin member (active plan) | The Plan card shows the mirrored `starter (monthly)`, a green **Active** tag and the period end, but instead of a **Manage in Stripe** button it ends with the plain sentence "A company admin manages the subscription." There is **no** button anywhere on the page (no portal, no Select) and no Change-plan/Choose-a-plan card, while Usage still renders `0 of 1` / `2 of 2` with the ceiling note — so a member sees what the plan includes without any way to change it. The Billing nav link is visible to them too, because the navigation gates on `GET /api/billing/status`, not on role; the server refuses the mutations regardless (`POST /api/billing/checkout` and `/portal` answer 403 "Not enough permissions" for that session, and it made no such request). |
+| Billing off (`BILLING_ENABLED=false`) | Heading "Billing" and one info alert, "Billing is not enabled for this deployment" / "This instance does not use paid subscriptions. Plans, checkout and the billing portal are unavailable, and your current limits are unchanged." — no Plan, Change-plan or Usage card at all. The console navigation has ten links and **no** Billing entry (`GET /api/billing/status` answers `{"enabled":false}`), and reaching `/app/billing` directly renders only that alert rather than a 404 or an empty page. The page made no `/api/billing/usage` or `/subscription` request, and both answer 404 by design. |
 
 **Not observed (still unverified):** a real Checkout redirect or Billing Portal
 session (needs D3 merchant credentials), any webhook-driven state change, the
-non-admin view (a member sees the read-only wording), the narrow/mobile layout,
-and the billing-off alert — that last one needs `BILLING_ENABLED=false`, where
-the page renders its "Billing is not enabled for this deployment" state instead
-of the cards.
+narrow/mobile layout.
 
 **Worth deciding later.** A `past_due` subscription is signalled only by the
 orange tag: there is no dunning banner or payment-failure guidance, because that
