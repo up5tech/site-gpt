@@ -17,11 +17,13 @@ These are service/API tests against a real SQLite database; Stripe is never
 called (the resolver reads only the mirrored row).
 """
 
+import asyncio
 import inspect
+import json
 import unittest
 from unittest.mock import patch
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -36,6 +38,7 @@ from site_gpt.app.core import config
 from site_gpt.app.core.auth import get_manager_user
 from site_gpt.app.db.base import Base
 from site_gpt.app.db.session import get_db
+from site_gpt.app.schemas.chat import ChatRequest
 from site_gpt.app.services import entitlements, plan_catalog
 
 TABLES = [
@@ -427,6 +430,146 @@ class ChatBoundaryTests(unittest.TestCase):
                 source.index("entitlements.daily_message_limit"),
                 path,
             )
+
+
+class ChatSnapshotTests(EntitlementTestBase):
+    """One snapshot per chat message, proved by driving the handlers (V5-31).
+
+    `ChatBoundaryTests` only pins the call shape in source. These cases run the
+    real handlers against a real subscription row, so a second resolution shows
+    up as a second subscription read, and the limits handed to the session cap
+    and the daily quota are checked against the plan's own numbers (2 and 5, so
+    a mixed-up key or a duplicated read cannot pass).
+    """
+
+    PLAN = plan_catalog.Plan(
+        code="starter",
+        name="Starter",
+        description="Chat ceilings.",
+        price_minor=2900,
+        currency="usd",
+        interval="month",
+        limits={"session_messages": 2, "daily_messages": 5},
+        published=True,
+    )
+
+    def setUp(self):
+        super().setUp()
+        # The handlers read the company's own caps too; no row means the env
+        # default (`0` for the session cap, 1000 daily), so the plan decides.
+        Base.metadata.create_all(self.engine, tables=[models.Setting.__table__])
+        self.site = self._website()
+        self._subscription(status="active")
+        plans = patch.object(plan_catalog, "PLANS", (self.PLAN,))
+        plans.start()
+        self.addCleanup(plans.stop)
+        self.body = ChatRequest(
+            website_id=self.site.id,
+            session_id="s-1",
+            question="What do you sell?",
+        )
+        self.request = Request(
+            {
+                "type": "http",
+                "method": "POST",
+                "path": "/api/chat",
+                "headers": [],
+                "query_string": b"",
+                "client": ("127.0.0.1", 1234),
+                "server": ("testserver", 80),
+                "scheme": "http",
+            }
+        )
+        self.api_key = models.ApiKey(
+            company_id=self.company.id,
+            name="snapshot-test",
+            key_prefix="sk_test",
+            scopes=json.dumps(["chat:write"]),
+        )
+
+    def _drive(self, module, call):
+        """Run one handler and report the reads and the caps it passed."""
+        session_limits: list[int] = []
+        daily_limits: list[int] = []
+
+        async def session_cap(website_id, session_id, *, limit):
+            session_limits.append(limit)
+            return True
+
+        async def daily_quota(website_id, *, limit):
+            daily_limits.append(limit)
+            return True
+
+        reads: list = []
+        real_subscription = entitlements.billing.company_subscription
+
+        def counted(db, company_id):
+            reads.append(company_id)
+            return real_subscription(db, company_id)
+
+        with patch.object(
+            entitlements.billing, "company_subscription", side_effect=counted
+        ), patch.object(
+            module, "consume_session_message", new=session_cap
+        ), patch.object(module, "consume_message", new=daily_quota):
+            result = call()
+
+        return reads, session_limits, daily_limits, result
+
+    def test_widget_chat_reads_the_subscription_once_and_uses_its_ceilings(self):
+        with patch.object(
+            widget_routes, "human_handling", return_value=False
+        ), patch.object(
+            widget_routes,
+            "ask",
+            return_value={"answer": "hi", "sources": []},
+        ):
+            reads, session_limits, daily_limits, result = self._drive(
+                widget_routes,
+                lambda: asyncio.run(
+                    widget_routes.chat(self.body, self.request, self.db, None)
+                ),
+            )
+
+        # One message, one subscription read — not one per cap helper.
+        self.assertEqual(reads, [self.company.id])
+        self.assertEqual(session_limits, [2])
+        self.assertEqual(daily_limits, [5])
+        self.assertEqual(result["answer"], "hi")
+
+    def test_stream_chat_reads_the_subscription_once_and_uses_its_ceilings(self):
+        with patch.object(
+            widget_routes, "human_handling", return_value=False
+        ), patch.object(widget_routes, "ask_stream", return_value=iter(())):
+            reads, session_limits, daily_limits, response = self._drive(
+                widget_routes,
+                lambda: asyncio.run(
+                    widget_routes.chat_stream(self.body, self.request, self.db, None)
+                ),
+            )
+
+        self.assertEqual(reads, [self.company.id])
+        self.assertEqual(session_limits, [2])
+        self.assertEqual(daily_limits, [5])
+        self.assertEqual(response.media_type, "text/event-stream")
+
+    def test_v1_chat_reads_the_subscription_once_and_uses_its_ceilings(self):
+        with patch.object(
+            v1_routes,
+            "ask",
+            return_value={"answer": "hi", "sources": [], "message_id": None},
+        ):
+            reads, session_limits, daily_limits, result = self._drive(
+                v1_routes,
+                lambda: asyncio.run(
+                    v1_routes.chat_v1(self.body, self.db, self.api_key)
+                ),
+            )
+
+        self.assertEqual(reads, [self.company.id])
+        self.assertEqual(session_limits, [2])
+        self.assertEqual(daily_limits, [5])
+        self.assertEqual(result["answer"], "hi")
 
 
 class PlanLimitErrorTests(unittest.TestCase):
