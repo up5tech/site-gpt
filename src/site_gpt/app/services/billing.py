@@ -179,19 +179,30 @@ def price_ids(raw: str | None = None) -> dict[str, str]:
     return mapping
 
 
-def price_id_for(plan: plan_catalog.Plan) -> str | None:
-    """The private Stripe Price ID for a published plan, if configured."""
+def price_id_for(
+    plan: plan_catalog.Plan, db: Session | None = None
+) -> str | None:
+    """The private Stripe Price ID for a published plan, if configured.
+
+    The durable catalog's active price is authoritative (V5-42); the env
+    `STRIPE_PRICE_IDS` mapping remains the fallback for a deployment that has
+    not moved its prices into the owner console yet.
+    """
+    if db is not None:
+        stored = plan_catalog.stored_price_id(db, plan)
+        if stored:
+            return stored
     key = f"{plan.code.strip().lower()}:{plan.interval}"
     return price_ids().get(key)
 
 
-def _checkout_plan(code: str) -> tuple[plan_catalog.Plan, str]:
-    plan = plan_catalog.find_plan(code)
+def _checkout_plan(db: Session, code: str) -> tuple[plan_catalog.Plan, str]:
+    plan = plan_catalog.find_plan(code, db)
     if plan is None:
         raise BillingError(400, "Unknown plan")
     if not plan.self_serve_checkout:
         raise BillingError(409, "This plan is not available for self-serve checkout.")
-    price_id = price_id_for(plan)
+    price_id = price_id_for(plan, db)
     if price_id is None:
         raise BillingError(409, "This plan is not configured for checkout.")
     return plan, price_id
@@ -297,7 +308,7 @@ def start_checkout(db: Session, company_id: UUID, plan_code: str) -> str:
     if company is None:
         raise BillingError(404, "Company not found")
 
-    plan, price_id = _checkout_plan(plan_code)
+    plan, price_id = _checkout_plan(db, plan_code)
     customer_id = _ensure_customer(db, company, plan)
     metadata = {
         "company_id": str(company.id),

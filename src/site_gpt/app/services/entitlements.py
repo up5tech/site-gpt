@@ -119,7 +119,7 @@ def resolve(db: Session, company_id: UUID) -> Snapshot:
     if row is None:
         return _empty(True)
 
-    plan = plan_catalog.find_plan(row.plan_code)
+    plan = plan_catalog.find_plan(row.plan_code, db)
     status = row.status
     if status not in billing.ACTIVE_STATUSES or plan is None:
         return _empty(True, status)

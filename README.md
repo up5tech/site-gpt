@@ -118,7 +118,8 @@ npm install && npm run dev   # :5173
 | `BILLING_ENABLED` | `false` | V5 Stripe billing master switch; off preserves current/self-hosted behavior and requires no Stripe credentials |
 | `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` | — | backend-only Stripe API and webhook signing secrets; required only when billing is explicitly enabled; never use `VITE_*` |
 | `STRIPE_API_VERSION` | `2026-11-18.endive` | explicit Stripe API version used for SDK/webhook requests; review/pin against the installed Stripe SDK before enabling billing |
-| `STRIPE_PRICE_IDS` | *(empty)* | private plan-code → Stripe Price ID mapping (`code:interval=price_...` or JSON); a plan without one cannot be bought. Never expose it to the frontend |
+| `STRIPE_PRICE_IDS` | *(empty)* | optional legacy private plan-code → Stripe Price ID fallback (`code:interval=price_...` or JSON); the platform catalog's active `PlanPrice.stripe_price_id` wins, and a plan with neither cannot be bought. Never expose it to the frontend |
+| `PLATFORM_CONSOLE_ENABLED` | `false` | V5 operator-console master switch; off makes every `/api/platform/*` path a 404. Keep false until D10 strong auth/private network is approved |
 | `DIGEST_ENABLED` | `false` | global switch for the worker's weekly-digest loop (each company also needs its `digest_enabled` setting) |
 | `DIGEST_CHECK_SECONDS` | `3600` | how often the digest loop looks for companies whose send hour has come |
 | `DELIVERY_CHECK_SECONDS` | `60` | how often the worker retries integration deliveries whose backoff has elapsed |
@@ -708,12 +709,13 @@ call is made, no Stripe credential is needed, and every route except
 | `POST /api/billing/webhook` | Stripe only | signature-verified lifecycle events |
 
 **Checkout trusts only the server.** The request body carries a plan *code*;
-the server resolves it against the published catalog and then to a private
-Stripe Price ID from `STRIPE_PRICE_IDS`, and it builds the success/cancel/return
-URLs from `FRONTEND_URL`. A client-posted amount, currency, customer, Price ID
-or URL is ignored, and an unknown, contact-sales or unmapped plan is refused
-with no Stripe call. One company has one subscription row (`M11`,
-`alembic head a7c41d9e6b52`), created `incomplete` when Checkout starts.
+the server resolves it against the published durable catalog (the
+`PlanPrice.stripe_price_id` of its active price, with `STRIPE_PRICE_IDS` as the
+pre-cutover fallback), and it builds the success/cancel/return URLs from
+`FRONTEND_URL`. A client-posted amount, currency, customer, Price ID or URL is
+ignored, and an unknown, contact-sales or unmapped plan is refused with no
+Stripe call. One company has one subscription row (`M11`), created `incomplete`
+when Checkout starts; the catalog and price records are M12 (`0b22b30bf930`).
 
 **Only a signed webhook confirms payment.** `POST /api/billing/webhook` reads
 the raw body, verifies `Stripe-Signature` with `STRIPE_WEBHOOK_SECRET` before
@@ -729,11 +731,13 @@ metadata, change no rows. A failed apply rolls the receipt back and answers
 non-2xx so Stripe retries. No raw event payload, card data or payment method is
 stored.
 
-**Not yet exercised externally:** a real Stripe test-mode Checkout/webhook needs
-merchant test credentials (decision D3), which have not been supplied, and the
-catalog stays empty until D2 approval. The SDK calls, signature verification,
+**Not yet exercised externally:** a real Stripe test-mode Checkout/Portal/webhook
+needs merchant test credentials (decision D3), which have not been supplied, and
+the catalog stays empty until D2 approval. The SDK calls, signature verification,
 idempotency, ordering and tenant-scope negatives are covered by mocked tests in
-`tests/test_billing.py`; live Checkout is blocked and unexecuted.
+`tests/test_billing.py`, and `bash scripts/gate_v5_5g/run_all.sh` replays the whole
+chain over HTTP with a local Stripe fixture (**72/72**, live test mode blocked).
+See `docs/release-v5.md` for the launch checklist.
 
 ## Plans, entitlements and the billing page (V5 Wave 3)
 
@@ -785,7 +789,39 @@ uv run python scripts/platform_owner.py grant --email ops@example.com \
     --actor "on-call SRE (OPS-12)" --note "primary operator"
 ```
 
-and revoked the same way (`revoke`), effective on the very next request while the grant row stays as history. A tenant `admin` is not an operator. With the switch on, the only surface as yet is the owner-only `GET /api/platform/session` and `GET /api/platform/audit` (append-only, secrets redacted at write time); subscription operations, catalog editing and the `/platform` UI are V5-41…V5-43. Do not enable the switch in production until D10's strong-auth or private-network requirement is approved. Full procedure, audit fields and the M12 migration notes: `docs/platform.md`.
+and revoked the same way (`revoke`), effective on the very next request while the grant row stays as history. A tenant `admin` is not an operator.
+
+With the switch on, `/platform` (a separate shell, not `/app`) and the owner-only API offer:
+
+- **Overview / companies / subscriptions** — cross-company counts, searchable paginated company and subscription lists with mirrored plan/status/period and opaque Stripe references.
+- **Approved subscription actions** — request reconciliation (audit only) and cancel at period end. Cancellation calls Stripe and never edits the local mirror; only a verified webhook changes state. There is no “mark paid” action.
+- **Durable catalog** — draft/edit/publish/archive plans and immutable price records. A price change archives the old row; existing Stripe subscribers keep their Price. Publishing needs a usable price and, with billing on, a `price_…` mapping. The public `GET /api/plans` contract is unchanged and never carries Stripe IDs.
+- **Typed global settings** — only `public_status_message` and `support_contact_email`, validated, previewable, audited, and exposed anonymously through `GET /api/public/config`. No environment, auth, secret, network or retention key is editable here.
+- **Audit** — append-only reads; every grant/revoke, action (including failures), plan change and setting change records actor, action, target, time and redacted detail.
+
+Do not enable the switch in production until D10's strong-auth or private-network requirement is approved. Full authorization matrix, recovery/break-glass and audit-retention guidance: `docs/platform.md`.
+
+## V5 launch readiness
+
+V5 is **not released**: the catalog, prices, trial/grace/refund policy, legal
+copy and support owner are unapproved, no Stripe test account exists and D10's
+operator strong auth is not in place. `BILLING_ENABLED=false` and
+`PLATFORM_CONSOLE_ENABLED=false` stay the production defaults until those
+sign-offs are recorded.
+
+The provider-free release gate replays the paid-account and platform-owner
+journeys on a throwaway database, with a local Stripe fixture standing in for
+the merchant account:
+
+```bash
+bash scripts/gate_v5_5g/run_all.sh   # 72/72 checks, 2 blocked (live Stripe, browser)
+```
+
+Live Stripe test-mode Checkout/Portal/webhook delivery and the browser journey
+are **blocked**, not passed. The deployment checklist, prerequisite owners,
+go/no-go table and rollback steps are in [`docs/release-v5.md`](docs/release-v5.md);
+billing operations are in [`docs/billing.md`](docs/billing.md) and the operator
+boundary in [`docs/platform.md`](docs/platform.md).
 
 ## Dev commands
 
@@ -798,7 +834,10 @@ cd frontend && npm run build && npm run lint
 
 ## Deploying
 
-SiteGPT is self-hosted; the release is V4 (tag `v4`). None of the dev defaults below should survive into production.
+SiteGPT is self-hosted; the latest released tag is `v4`. The V5 work on
+`feat/v5` is **not released** and paid billing is not approved; follow
+[`docs/release-v5.md`](docs/release-v5.md) before any launch. None of the dev
+defaults below should survive into production.
 
 > **Full checklist:** [`docs/security.md`](docs/security.md) lists every control
 the code enforces, every control it cannot (TLS, encryption at rest, backups,
@@ -856,8 +895,13 @@ Run uvicorn behind nginx/Caddy/Traefik terminating **TLS 1.2+**:
 ```bash
 # fresh database: create it and install the extension first
 # CREATE EXTENSION IF NOT EXISTS vector;
-uv run alembic upgrade head      # head is f33497bc1ecd (V4 M10 conversation_insights)
+uv run alembic upgrade head      # head is 0b22b30bf930 (V5 M12 platform owner/catalog/settings)
 ```
+
+M11 adds Stripe subscription state and the event receipt; M12 adds operator
+grants/audit, the durable catalog (plans + immutable prices) and the typed
+display-settings table. Both chain linearly from V4's `f33497bc1ecd`; the
+downgrades discard billing/operator state, so export first.
 
 The migration chain is linear from that head; never edit an already-applied revision.
 

@@ -48,6 +48,8 @@ TABLES = [
     models.Website.__table__,
     models.Subscription.__table__,
     models.BillingEvent.__table__,
+    models.CatalogPlan.__table__,
+    models.PlanPrice.__table__,
 ]
 
 PLAN = plan_catalog.Plan(

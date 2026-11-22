@@ -214,11 +214,13 @@ class AuthorizationTests(PlatformTestBase):
         )
         self.assertEqual(self._get("/api/platform/session", self.owner).status_code, 403)
 
-    def test_there_is_no_platform_route_beyond_the_two_reads(self):
-        # No grant/revoke endpoint exists at all, so a tenant admin cannot
-        # promote itself: provisioning is the out-of-band CLI's job alone.
+    def test_no_platform_route_can_grant_or_revoke_ownership(self):
+        # Catalog and settings mutations exist, but no route can mint the
+        # operator grant itself: provisioning is the out-of-band CLI's job.
         for route in platform_api.router.routes:
-            self.assertTrue(set(route.methods or ()) <= {"GET", "HEAD"})
+            self.assertNotIn("owner", getattr(route, "path", "").lower())
+            self.assertNotIn("grant", getattr(route, "path", "").lower())
+            self.assertNotIn("revoke", getattr(route, "path", "").lower())
 
 
 class GrantLifecycleTests(PlatformTestBase):

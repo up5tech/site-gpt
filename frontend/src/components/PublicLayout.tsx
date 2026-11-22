@@ -1,6 +1,9 @@
-import { Button } from 'antd';
+import { Alert, Button } from 'antd';
+import { useEffect, useState } from 'react';
 import { Link, Outlet, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import type { PublicConfig } from '../types/api';
+import { getPublicConfig } from '../utils/api';
 import './PublicLayout.less';
 
 const NAV = [
@@ -20,12 +23,38 @@ export function PublicLayout() {
   const { isAuthenticated } = useAuth();
   const location = useLocation();
   const year = new Date().getFullYear();
+  // Operator-set display values only (V5-43); a failed read simply hides them.
+  const [config, setConfig] = useState<PublicConfig | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    getPublicConfig()
+      .then((response) => {
+        if (!cancelled) setConfig(response.data);
+      })
+      .catch(() => {
+        if (!cancelled) setConfig(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   return (
     <div className='marketing'>
       <a className='marketing-skip-link' href='#main'>
         Skip to content
       </a>
+      {config?.status_message && (
+        <div className='marketing-banner' role='status'>
+          <Alert
+            type='info'
+            showIcon
+            style={{ marginTop: 16 }}
+            message={config.status_message}
+          />
+        </div>
+      )}
       <header className='marketing-header'>
         <Link to='/' className='marketing-brand' aria-label='Site GPT home'>
           Site GPT
@@ -65,7 +94,17 @@ export function PublicLayout() {
       </main>
 
       <footer className='marketing-footer'>
-        <span>© {year} Site GPT</span>
+        <span>
+          © {year} Site GPT
+          {config?.support_email && (
+            <>
+              {' · '}
+              <a href={`mailto:${config.support_email}`}>
+                {config.support_email}
+              </a>
+            </>
+          )}
+        </span>
         <nav className='marketing-footer-nav' aria-label='Footer'>
           <Link to='/'>Product</Link>
           <Link to='/pricing'>Pricing</Link>

@@ -38,6 +38,9 @@ processes.
 | Tenant isolation | Every admin query filters on the caller's `company_id`; a foreign id answers 404, not 403, so ids cannot be probed | `api/*`, `api/privacy.py` |
 | API keys | Only `sha256(pepper + raw)` is stored; comparison uses `hmac.compare_digest`; keys carry scopes, a prefix for identification and a `revoked_at`; the raw value is returned once | `services/api_keys.py`, `api/api_key.py` |
 | Public config | `GET /api/widget-config` returns an explicit allowlist of 14 widget keys, never a table dump | `api/setting.py` (`WIDGET_PUBLIC_KEYS`), `api/routes.py` |
+| Public display config (V5-43) | `GET /api/public/config` returns only `status_message` and `support_email`, both display strings from the operator allowlist; it reads no tenant data and no environment value | `api/public_config.py`, `services/platform_settings.py` |
+| Platform operator boundary (V5-40…44) | A separate out-of-band grant, never `users.role`; `PLATFORM_CONSOLE_ENABLED=false` makes the surface a 404, and `require_platform_owner` re-reads the active grant on every request, so revocation is immediate. Tenant admin/member, anonymous and API-key callers are refused; no route mints a grant or impersonates a tenant | `core/auth.py`, `api/platform.py`, `services/platform.py`, `scripts/platform_owner.py` |
+| Platform mutations | Only allowlisted actions: audited company/subscription reads, reconciliation (no state change), cancel-at-period-end (Stripe call, local mirror written only by a verified webhook), catalog draft/edit/price/publish/archive (prices immutable, one active per plan) and the two typed display settings. No `mark_paid`, no environment editor, no secret/card read; every change writes an append-only audit row with secret-shaped detail redacted | `api/platform.py`, `services/platform_ops.py`, `services/plan_catalog.py`, `services/platform_settings.py` |
 | Inbox stream | `GET /api/inbox/events` checks the JWT, manager+ and `live_inbox_enabled` **before** the response starts (a 404 or 503, never an open stream), subscribes to one pub/sub channel per company (`inbox:<company_id>`) and derives nothing from the request, so a foreign conversation id cannot be read or announced | `api/inbox.py`, `services/inbox.py`, `services/redis.py` |
 | Inbox access | Every `/api/inbox` route except `GET /status` requires manager+ **and** the company's `live_inbox_enabled`; with the flag off the surface is a 404, so an installation without a console does not advertise one. A conversation is resolved by UUID through a join on that company's websites, so a foreign id is a 404, never a cross-tenant read | `api/inbox.py`, `services/inbox.py` |
 | Inbox transcripts | A manager/admin of the company can read the transcript of any of its conversations — the same messages `GET /api/privacy/export` returns, including teammates' agent replies. There is no per-conversation grant and no per-read audit log: the company is the boundary, and `live_inbox_enabled` only decides whether the console exists | `api/inbox.py`, `services/inbox.py` |
@@ -110,6 +113,37 @@ These are listed because the code cannot enforce them and because the defaults i
   and refuses with `409` while no agent handles the session), and
   `GET /api/inbox/events` still needs `proxy_read_timeout` above the heartbeat.
 
+### Platform owner console
+
+- Keep `PLATFORM_CONSOLE_ENABLED=false` until D10's requirement — approved
+  MFA/SSO **or** a private operator-only network — is in place. The switch is a
+  404 gate, not an authentication control; the grant check is the authorization
+  control.
+- Provision grants only with `scripts/platform_owner.py` from a host holding the
+  deployment `DATABASE_URL`. Treat database write access as operator access.
+- Grant the application role no `UPDATE`/`DELETE` on `platform_audit_logs` if the
+  database supports it; the append-only guarantee is currently at the
+  application boundary. Export audit rows before any downgrade of M12.
+- The audit `detail` redactor removes secret-shaped keys, but it is a whitelist of
+  shape, not a content guarantee: never pass a credential to an audit writer.
+- CSRF is not applicable to the bearer-JWT API; the trade-off is that an XSS can
+  read the token in `localStorage`. Keep the frontend free of untrusted HTML.
+
+### Stripe billing
+
+- Keep `BILLING_ENABLED=false` until D2/D3/D5/D8 are approved. With it off no
+  Stripe credential is read and no provider call is made; `/api/billing/*` is a
+  404 except `status`.
+- The webhook endpoint must be HTTPS-reachable and verify `Stripe-Signature`
+  over the raw body. Do not put it behind a body-rewriting proxy; a changed body
+  fails verification by design.
+- SiteGPT stores Stripe customer/subscription identifiers, mirrored lifecycle
+  state and one event-id receipt. It never stores card data or a raw webhook
+  payload. Company deletion cascades these rows; cancel the Stripe subscription
+  first or it keeps billing.
+- Live keys and real cards are never used in tests. The release gate uses a
+  local fixture and test-only values; a real test-mode run needs D3.
+
 ### Secrets
 
 | Variable | Requirement |
@@ -118,6 +152,9 @@ These are listed because the code cannot enforce them and because the defaults i
 | `API_KEY_PEPPER` | Required in production. Rotating it invalidates every issued `/api/v1` key, which must then be re-minted. |
 | `INTEGRATION_WEBHOOK_SECRET` | Required for the webhook integration. Without it the signature is not verifiable; rotating it requires the receiver to update its copy. |
 | `MAIL_*`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `OPEN_ROUTER_API_KEY`, `GROQ_API_KEY`, `OLLAMA_PASSWORD`, `REDIS_PASSWORD` | Provider credentials. Keep them out of the repository, out of the frontend bundle and out of chat transcripts; use the platform's secret store or a root-owned `.env`. |
+| `STRIPE_SECRET_KEY` | Required only when `BILLING_ENABLED=true`. Use a restricted key (Customers, Checkout Sessions, Billing Portal Sessions, Subscriptions), backend-only. Rotate by swapping the value and restarting; no stored row changes. |
+| `STRIPE_WEBHOOK_SECRET` | The endpoint signing secret. Rotate in Stripe, set the new value, restart; old signatures are then refused with `400` and Stripe retries. A missing secret answers `503`. |
+| `STRIPE_PRICE_IDS` | Private fallback mapping only; the durable catalog's `PlanPrice.stripe_price_id` is authoritative. Never return a Price ID or secret to the browser. |
 
 `.env` must not be committed, and `load_dotenv()` reads it from the process's
 working directory at startup only.

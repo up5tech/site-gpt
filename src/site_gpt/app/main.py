@@ -18,6 +18,7 @@ from site_gpt.app.api.integration import router as integration_router
 from site_gpt.app.api.plan import router as plan_router
 from site_gpt.app.api.platform import router as platform_router
 from site_gpt.app.api.privacy import router as privacy_router
+from site_gpt.app.api.public_config import router as public_config_router
 from site_gpt.app.api.routes import router
 from site_gpt.app.api.setting import router as setting_router
 from site_gpt.app.api.upload import router as upload_router
@@ -131,6 +132,9 @@ app.include_router(privacy_router, prefix="/api/privacy")
 # The public plan catalog (V5 F1) carries its own /api/plans path and needs no
 # authentication: it is what the marketing pricing page reads.
 app.include_router(plan_router)
+# Public display configuration (V5-43): the operator-set status message and
+# support address only, safe to read without auth.
+app.include_router(public_config_router)
 # Billing (V5 F2) owns /api/billing/*: status, summary, Checkout, Billing Portal
 # and the signature-verified Stripe webhook. Everything but `status` answers 404
 # while BILLING_ENABLED is false.

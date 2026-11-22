@@ -21,6 +21,29 @@ Both are deleted with their company (`ON DELETE CASCADE`). Downgrading M11
 discards billing state: it is a disposable-database operation, not a production
 rollback.
 
+### 1.1 Data flow
+
+```
+browser ──POST /api/billing/checkout {plan_code}──► API
+                                                     │ plan_code → published catalog plan
+                                                     │ plan → active PlanPrice.stripe_price_id
+                                                     │ company → Stripe Customer (server metadata)
+                                                     ▼
+                                              Stripe Checkout (hosted card entry)
+                                                     │ browser returns to FRONTEND_URL
+                                                     │   ?checkout=success (informational only)
+                                                     ▼
+Stripe ──signed webhook──► POST /api/billing/webhook
+                              │ verify Stripe-Signature over the raw body
+                              │ receipt unique event id (billing_events)
+                              │ apply to subscriptions (last_event_at ordering)
+                              ▼
+                      entitlements.resolve → website/seat/chat boundaries
+```
+
+No PAN/CVC, price object or raw webhook payload is stored. The browser's return
+URL is never read as payment evidence.
+
 ## 2. Billing off (the default)
 
 With `BILLING_ENABLED=false`:
@@ -117,10 +140,50 @@ keeps its V4 ceilings.
 ### Cancellation
 
 Cancellation is at period end by default and is driven by Stripe's Billing
-Portal. `customer.subscription.deleted` sets `status='canceled'` and
+Portal or the platform console's audited **cancel at period end** action. The
+console action calls Stripe and does **not** write the mirror;
+`customer.subscription.deleted` sets `status='canceled'` and
 `cancel_at_period_end=true`; a later `invoice.paid` never revives it (only a
 new subscription event does). Refunds and reactivation wording are blocked on
 D5.
+
+### Subscription deletion
+
+Deleting a company row cascades its `subscriptions` and `billing_events` rows;
+nothing about the Stripe objects is deleted by SiteGPT. Before deleting a
+tenant, cancel the Stripe subscription and confirm the customer/company mapping
+— an orphaned Stripe subscription continues to bill. A canceled mirror row is
+kept (not deleted) so support can still read what happened.
+
+### Key and webhook-secret rotation
+
+- **Webhook signing secret:** create the new endpoint secret in Stripe, set
+  `STRIPE_WEBHOOK_SECRET` and restart. Deliveries signed with the old secret are
+  then refused (`400 Invalid Stripe signature`) and Stripe retries them with the
+  new one. Rotate during a quiet window; a missing secret answers `503`.
+- **Secret key:** issue a new restricted key with only the permissions the
+  integration uses (Customers, Checkout Sessions, Billing Portal Sessions,
+  Subscriptions), swap `STRIPE_SECRET_KEY`, restart, then revoke the old key. No
+  stored row changes.
+- **Price IDs:** never edit a Stripe Price. Create a new one, map it through the
+  platform catalog's immutable price record, and publish the new active price;
+  existing subscribers stay on the Price they bought.
+- **API version:** `STRIPE_API_VERSION` is pinned; review it and the SDK before
+  changing either.
+
+### Reconciling from the platform console
+
+An owner can request reconciliation for a company, which writes one audit row
+and changes nothing, then compares the console subscription view with the Stripe
+Dashboard. Fix Stripe if Stripe is wrong and resend the newest event; never edit
+`subscriptions` to grant access. The console has no “mark paid” or amount entry.
+
+### Global settings are not billing controls
+
+The platform settings allowlist (`public_status_message`, `support_contact_email`)
+is display-only. Plan limits, enforcement, billing on/off and Stripe credentials
+stay in the catalog or deployment configuration; no browser form can change
+them.
 
 ## 5. Rollback
 
@@ -141,8 +204,13 @@ D5.
   grace period or refund policy exists yet, so no limit is enforced by default.
 - **Legal and support copy** (D8): no cancellation/refund wording, support
   contact or approved claim is in the product.
-- **Platform-owner console** (Wave 4): reconciliation tooling is the Stripe
-  Dashboard and this runbook.
+- **Platform-owner console** (Wave 4): it can request reconciliation and cancel
+  at period end with an audit trail, but the Stripe Dashboard remains the
+  canonical investigation tool.
+- **Live test-mode run** (Wave 5): `scripts/gate_v5_5g/gate.py` exercises the
+  whole chain with a local Stripe fixture (72/72 checks, 2 blocked); a real
+  Stripe test-mode Checkout/Portal/webhook delivery still needs D3 credentials.
+  See `docs/release-v5.md`.
 
 ## 7. Rendering check with throwaway data (2026-11-22)
 

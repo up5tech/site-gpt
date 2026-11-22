@@ -8,10 +8,14 @@ unique constraint. `platform_audit_logs` is the append-only trail: actor, action
 target, time and an already-redacted JSON detail, with no payload/credential
 column.
 
-Both tables are new, so their indexes are built transactionally (no
-`CONCURRENTLY`). V5-42/V5-43 extend this unapplied revision with the catalog and
-global-settings tables while Wave 4 is still in flight; it must stay the sole
-head chained from M11.
+Wave 4 extends the same still-unapplied revision (V5-42/V5-43): `catalog_plans`
+and `plan_prices` carry the durable operator-managed catalog, and
+`platform_settings` stores only the typed, non-secret allowlist overrides. Price
+rows are immutable and one per plan is active (partial unique index), which is
+what a checkout resolves against.
+
+All five tables are new, so their indexes are built transactionally (no
+`CONCURRENTLY`), and this stays the sole head chained from M11.
 
 Revision ID: 0b22b30bf930
 Revises: a7c41d9e6b52
@@ -107,6 +111,107 @@ def upgrade() -> None:
         postgresql_where=sa.text("revoked_at IS NULL"),
         sqlite_where=sa.text("revoked_at IS NULL"),
     )
+    op.create_table(
+        "catalog_plans",
+        sa.Column("code", sa.String(length=64), nullable=False),
+        sa.Column("name", sa.String(length=255), nullable=False),
+        sa.Column("description", sa.Text(), nullable=False),
+        sa.Column("features", sa.JSON(), nullable=False),
+        sa.Column("limits", sa.JSON(), nullable=False),
+        sa.Column("self_serve_checkout", sa.Boolean(), nullable=False),
+        sa.Column("status", sa.String(length=16), nullable=False),
+        sa.Column("id", sa.Uuid(), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.CheckConstraint(
+            "status IN ('draft', 'published', 'archived')",
+            name="ck_catalog_plans_status",
+        ),
+        sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint("code"),
+    )
+    op.create_index(
+        "idx_catalog_plans_status", "catalog_plans", ["status"], unique=False
+    )
+    op.create_table(
+        "plan_prices",
+        sa.Column("plan_id", sa.Uuid(), nullable=False),
+        sa.Column("interval", sa.String(length=16), nullable=False),
+        sa.Column("currency", sa.String(length=3), nullable=False),
+        sa.Column("price_minor", sa.Integer(), nullable=False),
+        sa.Column("stripe_price_id", sa.String(length=255), nullable=True),
+        sa.Column("active", sa.Boolean(), nullable=False),
+        sa.Column("id", sa.Uuid(), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.CheckConstraint(
+            "interval IN ('month', 'year')", name="ck_plan_prices_interval"
+        ),
+        sa.CheckConstraint(
+            "price_minor >= 0", name="ck_plan_prices_price_minor"
+        ),
+        sa.ForeignKeyConstraint(
+            ["plan_id"], ["catalog_plans.id"], ondelete="CASCADE"
+        ),
+        sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint("stripe_price_id"),
+    )
+    op.create_index(
+        "idx_plan_prices_plan_id", "plan_prices", ["plan_id"], unique=False
+    )
+    # One active price per plan; archived rows remain as price history.
+    op.create_index(
+        "uq_plan_prices_active_plan",
+        "plan_prices",
+        ["plan_id"],
+        unique=True,
+        postgresql_where=sa.text("active"),
+        sqlite_where=sa.text("active"),
+    )
+    op.create_table(
+        "platform_settings",
+        sa.Column("key", sa.String(length=64), nullable=False),
+        sa.Column("value", sa.JSON(), nullable=False),
+        sa.Column("updated_by_user_id", sa.Uuid(), nullable=True),
+        sa.Column("id", sa.Uuid(), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.ForeignKeyConstraint(
+            ["updated_by_user_id"], ["users.id"], ondelete="SET NULL"
+        ),
+        sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint("key"),
+    )
 
 
 def downgrade() -> None:
@@ -116,6 +221,12 @@ def downgrade() -> None:
     grant is disposable deployment state, but losing the audit rows is not
     recoverable, so export them first if a downgrade is ever required.
     """
+    op.drop_table("platform_settings")
+    op.drop_index("uq_plan_prices_active_plan", table_name="plan_prices")
+    op.drop_index("idx_plan_prices_plan_id", table_name="plan_prices")
+    op.drop_table("plan_prices")
+    op.drop_index("idx_catalog_plans_status", table_name="catalog_plans")
+    op.drop_table("catalog_plans")
     op.drop_index(
         "uq_platform_owners_user_id_active",
         table_name="platform_owners",

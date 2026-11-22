@@ -613,3 +613,140 @@ export interface LoginResponse {
   access_token: string;
   token_type: string;
 }
+
+// -- Platform owner console (V5 Wave 4) -------------------------------------
+
+/** The signed-in operator, resolved through an out-of-band grant. */
+export interface PlatformSession {
+  user_id: string;
+  email: string;
+  granted_at: string;
+}
+
+export interface PlatformOverview {
+  companies: number;
+  websites: number;
+  active_users: number;
+  published_plans: number;
+  subscriptions: Record<string, number>;
+}
+
+export interface PlatformCompany {
+  id: string;
+  name: string;
+  created_at: string;
+  websites: number;
+  active_users: number;
+  plan_code: string | null;
+  status: string | null;
+  interval: string | null;
+  current_period_end: string | null;
+  cancel_at_period_end: boolean;
+}
+
+export interface PlatformCompanyList {
+  total: number;
+  page: number;
+  page_size: number;
+  items: PlatformCompany[];
+}
+
+export interface PlatformSubscription {
+  company_id: string;
+  company_name: string;
+  plan_code: string;
+  status: string;
+  interval: string | null;
+  current_period_start: string | null;
+  current_period_end: string | null;
+  cancel_at_period_end: boolean;
+  stripe_customer_id: string | null;
+  stripe_subscription_id: string | null;
+  last_event_at: string | null;
+}
+
+export interface PlatformSubscriptionList {
+  total: number;
+  page: number;
+  page_size: number;
+  items: PlatformSubscription[];
+}
+
+export type PlatformSubscriptionAction =
+  | 'cancel_at_period_end'
+  | 'request_reconciliation';
+
+export interface PlatformActionResult {
+  action: string;
+  company_id: string;
+  status: string;
+  stripe_updated: boolean;
+}
+
+export interface PlatformPrice {
+  id: string;
+  interval: string;
+  currency: string;
+  price_minor: number;
+  stripe_price_id: string | null;
+  active: boolean;
+  created_at: string;
+}
+
+export interface PlatformPlan {
+  id: string;
+  code: string;
+  name: string;
+  description: string;
+  features: string[];
+  limits: Record<string, number>;
+  self_serve_checkout: boolean;
+  status: 'draft' | 'published' | 'archived';
+  prices: PlatformPrice[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PlatformPlanList {
+  plans: PlatformPlan[];
+}
+
+/** One allowlisted display setting. Values are never secrets. */
+export interface PlatformSetting {
+  key: string;
+  label: string;
+  description: string;
+  kind: string;
+  max_length: number;
+  default: string;
+  value: string;
+  is_override: boolean;
+  high_impact: boolean;
+  updated_at: string | null;
+  updated_by_user_id: string | null;
+}
+
+export interface PlatformSettingList {
+  settings: PlatformSetting[];
+}
+
+export interface PlatformAuditEvent {
+  id: string;
+  created_at: string;
+  action: string;
+  target_type: string;
+  target_id: string | null;
+  actor_user_id: string | null;
+  actor_label: string | null;
+  detail: Record<string, unknown> | null;
+}
+
+export interface PlatformAuditList {
+  events: PlatformAuditEvent[];
+}
+
+/** Anonymous display values for the marketing shell. */
+export interface PublicConfig {
+  status_message: string;
+  support_email: string;
+}

@@ -75,5 +75,32 @@ class GateScriptInventoryTests(unittest.TestCase):
         self.assertEqual(missing, [], f"run_all.sh never runs {missing}")
 
 
+V5_GATE = ROOT / "scripts" / "gate_v5_5g"
+V5_PLAN = ROOT / "plans" / "PLAN_V5.md"
+
+
+class V5GateScriptTests(unittest.TestCase):
+    """The V5 gate must never be able to target a real database."""
+
+    def test_the_gate_refuses_a_non_gate_database_name(self):
+        source = (V5_GATE / "gate.py").read_text(encoding="utf-8")
+
+        self.assertIn('name.startswith("v5_gate_5g")', source)
+        self.assertIn("refusing a database name", source)
+
+    def test_the_gate_documents_its_blocked_externals(self):
+        readme = (V5_GATE / "README.md").read_text(encoding="utf-8")
+
+        self.assertIn("Blocked, not skipped", readme)
+        self.assertIn("Live Stripe test-mode", readme)
+        self.assertIn("Browser journey", readme)
+
+    def test_the_plan_names_the_runnable_gate(self):
+        plan = V5_PLAN.read_text(encoding="utf-8")
+
+        self.assertIn("scripts/gate_v5_5g/run_all.sh", plan)
+        self.assertIn("72/72", plan)
+
+
 if __name__ == "__main__":
     unittest.main()

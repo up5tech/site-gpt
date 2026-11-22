@@ -798,3 +798,84 @@ class PlatformMigrationTests(unittest.TestCase):
         self.assertIn('drop_table("platform_owners")', downgrade)
         self.assertIn('drop_table("platform_audit_logs")', downgrade)
         self.assertIn("uq_platform_owners_user_id_active", downgrade)
+
+
+class CatalogSchemaTests(unittest.TestCase):
+    """M12 (V5-42): a durable catalog with immutable price history."""
+
+    def test_plan_codes_are_unique_and_lifecycle_is_constrained(self):
+        table = models.CatalogPlan.__table__
+
+        self.assertTrue(table.columns["code"].unique)
+        checks = {
+            item.name: str(item.sqltext)
+            for item in table.constraints
+            if item.__class__.__name__ == "CheckConstraint"
+        }
+        self.assertIn("ck_catalog_plans_status", checks)
+        for value in ("draft", "published", "archived"):
+            self.assertIn(value, checks["ck_catalog_plans_status"])
+
+    def test_only_one_price_per_plan_is_active(self):
+        index = next(
+            item
+            for item in models.PlanPrice.__table__.indexes
+            if item.name == "uq_plan_prices_active_plan"
+        )
+        compiled = str(CreateIndex(index).compile(dialect=postgresql.dialect()))
+
+        self.assertTrue(index.unique)
+        self.assertIn("WHERE active", compiled)
+        self.assertEqual([column.name for column in index.columns], ["plan_id"])
+
+    def test_prices_cascade_and_stay_positive(self):
+        column = models.PlanPrice.__table__.columns["plan_id"]
+        fk = next(iter(column.foreign_keys))
+
+        self.assertEqual(fk.target_fullname, "catalog_plans.id")
+        self.assertEqual(fk.ondelete, "CASCADE")
+        names = {
+            item.name
+            for item in models.PlanPrice.__table__.constraints
+            if item.__class__.__name__ == "CheckConstraint"
+        }
+        self.assertIn("ck_plan_prices_interval", names)
+        self.assertIn("ck_plan_prices_price_minor", names)
+        unique = {
+            tuple(constraint.columns.keys())
+            for constraint in models.PlanPrice.__table__.constraints
+            if constraint.__class__.__name__ == "UniqueConstraint"
+        }
+        self.assertIn(("stripe_price_id",), unique)
+
+    def test_settings_are_keyed_and_the_actor_is_not_deleted_with_the_row(self):
+        table = models.PlatformSetting.__table__
+        self.assertTrue(table.columns["key"].unique)
+        fk = next(iter(table.columns["updated_by_user_id"].foreign_keys))
+
+        self.assertEqual(fk.target_fullname, "users.id")
+        self.assertEqual(fk.ondelete, "SET NULL")
+
+
+class CatalogMigrationTests(unittest.TestCase):
+    """The same M12 revision carries the catalog and the settings table."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.source = M12_PATH.read_text()
+
+    def test_m12_creates_the_new_tables_and_partial_index(self):
+        self.assertIn('create_table(\n        "catalog_plans",', self.source)
+        self.assertIn('create_table(\n        "plan_prices",', self.source)
+        self.assertIn('create_table(\n        "platform_settings",', self.source)
+        self.assertIn('"uq_plan_prices_active_plan"', self.source)
+        self.assertIn('postgresql_where=sa.text("active")', self.source)
+        self.assertIn('"ck_catalog_plans_status"', self.source)
+
+    def test_downgrade_removes_the_new_tables(self):
+        downgrade = self.source.split("def downgrade()", 1)[1]
+
+        self.assertIn('drop_table("platform_settings")', downgrade)
+        self.assertIn('drop_table("plan_prices")', downgrade)
+        self.assertIn('drop_table("catalog_plans")', downgrade)
+        self.assertIn("uq_plan_prices_active_plan", downgrade)

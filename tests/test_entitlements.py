@@ -46,6 +46,8 @@ TABLES = [
     models.User.__table__,
     models.Website.__table__,
     models.Subscription.__table__,
+    models.CatalogPlan.__table__,
+    models.PlanPrice.__table__,
 ]
 
 STARTER = plan_catalog.Plan(

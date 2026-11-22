@@ -942,3 +942,124 @@ class PlatformAuditLog(BaseModel):
     detail: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     actor = relationship("User", passive_deletes=True)
+
+
+class CatalogPlan(BaseModel):
+    """A durable, operator-managed plan definition (M12, V5-42).
+
+    The catalog is the *server's* record of what may be sold. It starts empty
+    (V5-01 is unapproved) and, once an operator publishes a row, it replaces the
+    static `services.plan_catalog.PLANS` fallback as the source `GET /api/plans`,
+    Checkout and the entitlement resolver read.
+
+    `status` is the lifecycle: `draft` (editable, invisible), `published`
+    (public and buyable) and `archived` (immutable history, invisible). A plan
+    code is immutable once created and unique table-wide, because it is also the
+    key a subscription row stores.
+    """
+
+    __tablename__ = "catalog_plans"
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('draft', 'published', 'archived')",
+            name="ck_catalog_plans_status",
+        ),
+        Index("idx_catalog_plans_status", "status"),
+    )
+
+    code: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # Display copy and the entitlement map the resolver reads. Never prices or
+    # Stripe identifiers: those live on `PlanPrice`, and no provider id is ever
+    # public.
+    features: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    limits: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    self_serve_checkout: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True
+    )
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="draft"
+    )
+
+    prices = relationship(
+        "PlanPrice",
+        back_populates="plan",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="PlanPrice.created_at.desc()",
+    )
+
+    def active_price(self) -> "PlanPrice | None":
+        """The one price a published plan is currently sold at."""
+        return next((price for price in self.prices if price.active), None)
+
+
+class PlanPrice(BaseModel):
+    """One immutable price record for a catalog plan (M12, V5-42).
+
+    Stripe Prices cannot be edited in place, so neither can this row: a price
+    change archives the current record and inserts a new one. Existing Stripe
+    subscribers keep the Price they bought; only new Checkout sessions see the
+    new active row. At most one row per plan is active (partial unique index),
+    which is the invariant a checkout resolves against.
+    """
+
+    __tablename__ = "plan_prices"
+
+    __table_args__ = (
+        CheckConstraint(
+            "interval IN ('month', 'year')", name="ck_plan_prices_interval"
+        ),
+        CheckConstraint("price_minor >= 0", name="ck_plan_prices_price_minor"),
+        UniqueConstraint("stripe_price_id"),
+        # One active price per plan. Like `platform_owners`, the predicate is
+        # the guarantee: archived rows stay as price history.
+        Index(
+            "uq_plan_prices_active_plan",
+            "plan_id",
+            unique=True,
+            postgresql_where=text("active"),
+            sqlite_where=text("active"),
+        ),
+        Index("idx_plan_prices_plan_id", "plan_id"),
+    )
+
+    plan_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("catalog_plans.id", ondelete="CASCADE"), nullable=False
+    )
+    interval: Mapped[str] = mapped_column(String(16), nullable=False, default="month")
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    # Integer minor units (e.g. cents), so no float ever reaches a price.
+    price_minor: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Private server mapping. Never included in a public payload.
+    stripe_price_id: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+    plan = relationship(
+        "CatalogPlan", back_populates="prices", passive_deletes=True
+    )
+
+
+class PlatformSetting(BaseModel):
+    """One allowlisted global runtime override (M12, V5-43, D12).
+
+    Only keys in `services.platform_settings.REGISTRY` can be written; the
+    service validates the type and range before the row exists. A row overrides
+    a safe default for a display-only value — never an auth, network or secret
+    setting, which stay in deployment configuration. Every write is audited by
+    the caller.
+    """
+
+    __tablename__ = "platform_settings"
+
+    key: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    value: Mapped[object] = mapped_column(JSON, nullable=False)
+    updated_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+
+    updated_by = relationship("User", passive_deletes=True)

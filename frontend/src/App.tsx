@@ -30,6 +30,7 @@ import { Users } from './pages/Users';
 import { WebsiteDetail } from './pages/WebsiteDetail';
 import { Websites } from './pages/Websites';
 import { Playground } from './pages/Playground';
+import { PlatformConsole } from './pages/platform/PlatformConsole';
 
 /**
  * Console pages keep their old top-level paths as redirects into `/app`
@@ -117,6 +118,18 @@ function App() {
               <Route path='/register' element={<Register />} />
               <Route path='/login' element={<Login />} />
             </Route>
+
+            {/* Operator control plane (V5 F5): a separate shell, not /app.
+                Anonymous visitors sign in; a signed-in tenant admin is refused
+                by the server session check. */}
+            <Route
+              path='/platform'
+              element={
+                <ProtectedRoute>
+                  <PlatformConsole />
+                </ProtectedRoute>
+              }
+            />
 
             {/* Authenticated console. */}
             <Route

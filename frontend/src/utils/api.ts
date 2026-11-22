@@ -338,3 +338,85 @@ export const openBillingPortal = () =>
 // Read-only and company-scoped; only admins may change billing.
 export const getBillingUsage = () => api.get<BillingUsage>('/billing/usage');
 
+
+// -- Platform owner console (V5 Wave 4). Every route answers 404 while
+// PLATFORM_CONSOLE_ENABLED is false and 403 for anyone without an active grant.
+
+export const getPlatformSession = () =>
+  api.get<import('../types/api').PlatformSession>('/platform/session');
+
+export const getPlatformOverview = () =>
+  api.get<import('../types/api').PlatformOverview>('/platform/overview');
+
+export const getPlatformCompanies = (params: {
+  search?: string;
+  page?: number;
+  page_size?: number;
+}) => api.get<import('../types/api').PlatformCompanyList>('/platform/companies', { params });
+
+export const getPlatformSubscriptions = (params: {
+  status?: string;
+  search?: string;
+  page?: number;
+  page_size?: number;
+}) => api.get<import('../types/api').PlatformSubscriptionList>('/platform/subscriptions', { params });
+
+export const runPlatformSubscriptionAction = (
+  companyId: string,
+  body: {
+    action: import('../types/api').PlatformSubscriptionAction;
+    reason: string;
+    confirm?: boolean;
+  },
+) =>
+  api.post<import('../types/api').PlatformActionResult>(
+    `/platform/subscriptions/${companyId}/actions`,
+    body,
+  );
+
+export const getPlatformPlans = () =>
+  api.get<import('../types/api').PlatformPlanList>('/platform/plans');
+
+export const createPlatformPlan = (body: Record<string, unknown>) =>
+  api.post<import('../types/api').PlatformPlan>('/platform/plans', body);
+
+export const updatePlatformPlan = (code: string, body: Record<string, unknown>) =>
+  api.put<import('../types/api').PlatformPlan>(`/platform/plans/${code}`, body);
+
+export const addPlatformPlanPrice = (code: string, body: Record<string, unknown>) =>
+  api.post<import('../types/api').PlatformPlan>(`/platform/plans/${code}/prices`, body);
+
+export const publishPlatformPlan = (code: string, reason: string) =>
+  api.post<import('../types/api').PlatformPlan>(`/platform/plans/${code}/publish`, {
+    reason,
+    confirm: true,
+  });
+
+export const archivePlatformPlan = (code: string, reason: string) =>
+  api.post<import('../types/api').PlatformPlan>(`/platform/plans/${code}/archive`, {
+    reason,
+    confirm: true,
+  });
+
+export const getPlatformSettings = () =>
+  api.get<import('../types/api').PlatformSettingList>('/platform/settings');
+
+export const previewPlatformSetting = (key: string, value: string) =>
+  api.post<{ key: string; current: string; next: string; changed: boolean }>(
+    `/platform/settings/${key}/preview`,
+    { value },
+  );
+
+export const updatePlatformSetting = (
+  key: string,
+  body: { value: string; reason: string; confirm?: boolean },
+) => api.put<import('../types/api').PlatformSetting>(`/platform/settings/${key}`, body);
+
+export const getPlatformAudit = (limit = 50) =>
+  api.get<import('../types/api').PlatformAuditList>('/platform/audit', {
+    params: { limit },
+  });
+
+/** Anonymous display values (V5-43); empty strings mean "hide". */
+export const getPublicConfig = () =>
+  api.get<import('../types/api').PublicConfig>('/public/config');
