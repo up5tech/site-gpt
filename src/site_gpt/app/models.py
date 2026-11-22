@@ -47,6 +47,12 @@ class Company(BaseModel):
     integrations = relationship(
         "Integration", cascade="all, delete-orphan", passive_deletes=True
     )
+    subscription = relationship(
+        "Subscription",
+        uselist=False,
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
 
 
 class User(BaseModel):
@@ -761,3 +767,104 @@ class Contact(BaseModel):
     # When the visitor ticked the consent box (F9). NULL means "no recorded
     # consent", which is also the state of every row created before V2.
     consent_at: Mapped[datetime] = mapped_column(nullable=True)
+
+
+class Subscription(BaseModel):
+    """One company's current Stripe subscription state (M11, V5 F2).
+
+    A single row per company is the whole lifecycle record: the unique
+    `company_id` means a second Checkout can never create a second paid
+    subscription by accident, and the stored Stripe customer/subscription ids are
+    the only trusted mapping from a webhook back to a tenant. `last_event_at` is
+    the Stripe event timestamp that produced the current state, so a delayed or
+    replayed older event cannot restore stale access.
+
+    No card data, price object or raw webhook payload is stored — Stripe remains
+    the system of record for payment; this row only mirrors confirmed state.
+    """
+
+    __tablename__ = "subscriptions"
+
+    __table_args__ = (
+        UniqueConstraint("company_id"),
+        UniqueConstraint("stripe_customer_id"),
+        UniqueConstraint("stripe_subscription_id"),
+        CheckConstraint(
+            "status IN ('incomplete', 'trialing', 'active', 'past_due', "
+            "'unpaid', 'canceled', 'paused')",
+            name="ck_subscriptions_status",
+        ),
+        CheckConstraint(
+            "interval IS NULL OR interval IN ('month', 'year')",
+            name="ck_subscriptions_interval",
+        ),
+        # The platform console lists subscriptions by lifecycle state and renewal
+        # date (V5 Wave 4); this is the read that must not scan the table.
+        Index(
+            "idx_subscriptions_status_current_period_end",
+            "status",
+            "current_period_end",
+        ),
+    )
+
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
+    )
+    # The approved catalog code selected at Checkout (server-resolved, never a
+    # client-supplied price or Stripe Price ID).
+    plan_code: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    interval: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # "incomplete" until a verified webhook confirms Stripe's own state.
+    status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="incomplete"
+    )
+    stripe_customer_id: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )
+    stripe_subscription_id: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )
+    current_period_start: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    current_period_end: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    cancel_at_period_end: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+    canceled_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # Stripe's `created` for the newest applied event: the out-of-order guard.
+    last_event_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
+class BillingEvent(BaseModel):
+    """The minimal idempotency receipt for one Stripe webhook event (M11).
+
+    The unique Stripe event id is the replay protection: the row is inserted
+    before any state change, so a retried or concurrent delivery of the same
+    event loses the insert instead of applying twice. Only the fields needed to
+    reconcile and support an account are kept — never the raw payload, a card or
+    a customer's personal details.
+    """
+
+    __tablename__ = "billing_events"
+
+    __table_args__ = (
+        UniqueConstraint("stripe_event_id"),
+        Index("idx_billing_events_created_at", "created_at"),
+    )
+
+    stripe_event_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    type: Mapped[str] = mapped_column(String(100), nullable=False)
+    # Stripe's own event timestamp (seconds), not our receipt time.
+    stripe_created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    processed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
