@@ -176,6 +176,7 @@ npm install && npm run dev   # :5173
 - `POST /api/chat/feedback` — public 👍/👎 rating `{website_id, session_id, rating, comment?}`
 - `GET /api/widget-config?website_id=` — public widget appearance/config (assistant name, colors, greeting, placeholder, position, suggested questions)
 - `POST /api/v1/ingest?website_id=` — API-key ingest for scripts/CI (`X-API-Key`); admins mint and revoke keys at `/api/api-keys` (the raw key is returned once)
+- `GET /api/plans` — **public**, read-only plan catalog (V5 F1): code, name, description, integer minor-unit price, currency, interval, features, machine-readable limits and `self_serve_checkout`. No auth, no database, no Stripe identifiers; empty until the approved catalog lands
 - `GET /health`
 - `POST /api/session-token` — public; mints (or rotates) the widget's per-session read token. A refusal carries `{"detail": ..., "reason": ...}`, where `session_expired` means the session must start over and `session_claimed` means another tab holds it (the widget only resets on the first)
 - `GET /api/conversations` (+`/{sid}`, `DELETE /{sid}`) — history, admin-scoped; the `/{sid}` read
@@ -658,6 +659,36 @@ daily quota and the K4 session token; the page is public, so there is nothing to
 log in to.
 - **Where to find it.** Settings → Widget shows the selected website's hosted URL
 with a **Copy Link** button beside the install snippet.
+
+## Public site and plans (V5 Wave 1)
+
+The frontend has two shells:
+
+| Path | Shell | Who |
+|---|---|---|
+| `/`, `/pricing`, `/register`, `/login` | public marketing shell (`components/PublicLayout.tsx`) | anyone |
+| `/app`, `/app/websites`, `/app/settings`, … | authenticated console (`components/Layout.tsx`) | signed-in users |
+
+The dashboard moved from `/` to `/app` (V5 decision D1). Old console URLs —
+`/websites`, `/users`, `/settings`, `/inbox`, … — redirect to their `/app/...`
+equivalent with the query string and hash intact (`CONSOLE_PATHS` in `App.tsx`),
+so bookmarks and deep links keep working and `ProtectedRoute` still returns a
+visitor to the page they asked for after login. The public and protected API and
+widget URLs are unchanged (`/api/...`, `/api/v1/...`, `/widget.js`,
+`/chat/{website_id}`).
+
+**The plan catalog is server-owned.** `GET /api/plans` (public, read-only, no
+database) serves `services/plan_catalog.py`, which publishes only definitions
+marked `published=True`. It is **empty** until product/legal approval (V5-01,
+decision D2) records the tiers, limits, prices and cadence — an empty catalog is
+the honest state, and the pricing page says plans are being finalised instead of
+inventing a price. The response carries integer minor units, a currency, an
+interval, display features, machine-readable limits and a `self_serve_checkout`
+flag — never a Stripe Price ID, secret or internal identifier. Registration reads
+a `?plan=` code only to show which plan was chosen: the code is matched against
+the same public catalog and is never sent to `POST /api/register`, so an unknown
+or stale code cannot grant anything. Paid status will change only through a
+verified Stripe webhook (Wave 2), and `BILLING_ENABLED` stays `false` by default.
 
 ## Dev commands
 
