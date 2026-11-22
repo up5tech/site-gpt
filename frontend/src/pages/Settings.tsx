@@ -26,6 +26,7 @@ import {
 } from 'antd';
 import useApp from 'antd/es/app/useApp';
 import { useCallback, useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { RetentionPurgeResult, Website } from '../types/api';
 import api, {
@@ -242,9 +243,40 @@ interface LimitFormValues {
   session_message_limit?: number;
 }
 
+/**
+ * Settings is deep-linkable (V5-10 follow-up): `?tab=` selects the tab, so the
+ * console's legacy `/settings?tab=widget` link (which the route migration sends
+ * to `/app/settings?tab=widget` with the query intact) opens the Widget tab
+ * instead of landing on Profile. The list is the tab keys below; anything else
+ * — a typo, a tab that was removed — falls back to Profile rather than erroring.
+ */
+const SETTINGS_TABS: string[] = [
+  'profile',
+  'model',
+  'privacy',
+  'api-keys',
+  'widget',
+  'appearance',
+];
+const DEFAULT_SETTINGS_TAB = 'profile';
+
 export function Settings() {
   const { user, fetchUser } = useAuth();
   const { message, modal } = useApp();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedTab = searchParams.get('tab') ?? '';
+  const activeTab = SETTINGS_TABS.includes(requestedTab)
+    ? requestedTab
+    : DEFAULT_SETTINGS_TAB;
+  // Switching tabs keeps the query in step, so the URL can be copied, reloaded
+  // or reached with the browser's Back button. Profile is the default and drops
+  // the parameter instead of writing `?tab=profile`.
+  const changeTab = (key: string) => {
+    const next = new URLSearchParams(searchParams);
+    if (key === DEFAULT_SETTINGS_TAB) next.delete('tab');
+    else next.set('tab', key);
+    setSearchParams(next, { replace: true });
+  };
   const [profileForm] = Form.useForm();
   const [appearanceForm] = Form.useForm();
   const [inboxForm] = Form.useForm();
@@ -1266,7 +1298,8 @@ export function Settings() {
       </div>
 
       <Tabs
-        defaultActiveKey='profile'
+        activeKey={activeTab}
+        onChange={changeTab}
         items={items}
         type='card'
         className='premium-tabs'
