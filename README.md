@@ -118,6 +118,7 @@ npm install && npm run dev   # :5173
 | `BILLING_ENABLED` | `false` | V5 Stripe billing master switch; off preserves current/self-hosted behavior and requires no Stripe credentials |
 | `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` | — | backend-only Stripe API and webhook signing secrets; required only when billing is explicitly enabled; never use `VITE_*` |
 | `STRIPE_API_VERSION` | `2026-11-18.endive` | explicit Stripe API version used for SDK/webhook requests; review/pin against the installed Stripe SDK before enabling billing |
+| `STRIPE_PRICE_IDS` | *(empty)* | private plan-code → Stripe Price ID mapping (`code:interval=price_...` or JSON); a plan without one cannot be bought. Never expose it to the frontend |
 | `DIGEST_ENABLED` | `false` | global switch for the worker's weekly-digest loop (each company also needs its `digest_enabled` setting) |
 | `DIGEST_CHECK_SECONDS` | `3600` | how often the digest loop looks for companies whose send hour has come |
 | `DELIVERY_CHECK_SECONDS` | `60` | how often the worker retries integration deliveries whose backoff has elapsed |
@@ -687,8 +688,51 @@ interval, display features, machine-readable limits and a `self_serve_checkout`
 flag — never a Stripe Price ID, secret or internal identifier. Registration reads
 a `?plan=` code only to show which plan was chosen: the code is matched against
 the same public catalog and is never sent to `POST /api/register`, so an unknown
-or stale code cannot grant anything. Paid status will change only through a
-verified Stripe webhook (Wave 2), and `BILLING_ENABLED` stays `false` by default.
+or stale code cannot grant anything. Paid status changes only through a
+verified Stripe webhook (below), and `BILLING_ENABLED` stays `false` by default.
+
+## Billing (V5 Wave 2)
+
+Stripe-hosted Checkout in `subscription` mode, Stripe Billing Portal, and signed
+webhooks. Billing is **off by default**: with `BILLING_ENABLED=false` no Stripe
+call is made, no Stripe credential is needed, and every route except
+`GET /api/billing/status` answers 404.
+
+| Route | Who | Purpose |
+|---|---|---|
+| `GET /api/billing/status` | any signed-in user | `{enabled}`, so the console can gate its navigation |
+| `GET /api/billing/subscription` | any signed-in user | plan code, mirrored status, renewal date, cancel-at-period-end |
+| `POST /api/billing/checkout` | company admin | `{plan_code}` → a Stripe Checkout URL |
+| `POST /api/billing/portal` | company admin | a Stripe Billing Portal session for this company's customer |
+| `POST /api/billing/webhook` | Stripe only | signature-verified lifecycle events |
+
+**Checkout trusts only the server.** The request body carries a plan *code*;
+the server resolves it against the published catalog and then to a private
+Stripe Price ID from `STRIPE_PRICE_IDS`, and it builds the success/cancel/return
+URLs from `FRONTEND_URL`. A client-posted amount, currency, customer, Price ID
+or URL is ignored, and an unknown, contact-sales or unmapped plan is refused
+with no Stripe call. One company has one subscription row (`M11`,
+`alembic head a7c41d9e6b52`), created `incomplete` when Checkout starts.
+
+**Only a signed webhook confirms payment.** `POST /api/billing/webhook` reads
+the raw body, verifies `Stripe-Signature` with `STRIPE_WEBHOOK_SECRET` before
+parsing, and applies `checkout.session.completed`,
+`customer.subscription.created/updated/deleted`, `invoice.paid` and
+`invoice.payment_failed`. Each Stripe event id is receipted once
+(`billing_events.stripe_event_id` is unique), so a retry or replay changes state
+once; `subscriptions.last_event_at` makes a delayed older event a no-op instead
+of restoring stale access. Returning from Checkout with `?checkout=success`
+changes nothing — the browser is never evidence of payment. Events for an
+unknown customer, or for a customer whose stored company disagrees with the
+metadata, change no rows. A failed apply rolls the receipt back and answers
+non-2xx so Stripe retries. No raw event payload, card data or payment method is
+stored.
+
+**Not yet exercised externally:** a real Stripe test-mode Checkout/webhook needs
+merchant test credentials (decision D3), which have not been supplied, and the
+catalog stays empty until D2 approval. The SDK calls, signature verification,
+idempotency, ordering and tenant-scope negatives are covered by mocked tests in
+`tests/test_billing.py`; live Checkout is blocked and unexecuted.
 
 ## Dev commands
 
