@@ -7,7 +7,11 @@ import { Dropdown, Layout, MenuProps, Space, Typography } from 'antd';
 import { useEffect, useState } from 'react';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { getInboxStatus, INBOX_STATUS_CHANGED } from '../utils/api';
+import {
+  getBillingStatus,
+  getInboxStatus,
+  INBOX_STATUS_CHANGED,
+} from '../utils/api';
 import { useDocumentTitle } from '../utils/useDocumentTitle';
 
 const { Header, Content } = Layout;
@@ -34,6 +38,9 @@ export function LayoutComponent({ children }: Props) {
   // whole surface answers 404, so the navigation must not offer it. One tiny
   // read per session answers `{enabled}` without touching the queue.
   const [inboxEnabled, setInboxEnabled] = useState(false);
+  // Billing is a deployment switch, like the inbox flag: `GET /api/billing/status`
+  // answers even when billing is off, so the console never links a 404 surface.
+  const [billingEnabled, setBillingEnabled] = useState(false);
   // Settings → the live-inbox switch asks for a re-read instead of a reload.
   const [inboxStatusRefresh, setInboxStatusRefresh] = useState(0);
 
@@ -61,6 +68,24 @@ export function LayoutComponent({ children }: Props) {
     };
   }, [isAuthenticated, inboxStatusRefresh]);
 
+  useEffect(() => {
+    if (!isAuthenticated) {
+      setBillingEnabled(false);
+      return;
+    }
+    let cancelled = false;
+    getBillingStatus()
+      .then((response) => {
+        if (!cancelled) setBillingEnabled(response.data.enabled);
+      })
+      .catch(() => {
+        if (!cancelled) setBillingEnabled(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isAuthenticated]);
+
   const menuItems = [
     { key: '/app', label: 'Dashboard' },
     { key: '/app/websites', label: 'Websites' },
@@ -73,6 +98,7 @@ export function LayoutComponent({ children }: Props) {
     ...(inboxEnabled ? [{ key: '/app/inbox', label: 'Inbox' }] : []),
     { key: '/app/analytics', label: 'Analytics' },
     { key: '/app/integrations', label: 'Integrations' },
+    ...(billingEnabled ? [{ key: '/app/billing', label: 'Billing' }] : []),
   ];
 
   const dropdownItems: MenuProps['items'] = [

@@ -20,6 +20,7 @@ import { Login } from './pages/Login';
 import { Pricing } from './pages/Pricing';
 import { Register } from './pages/Register';
 import { Analytics } from './pages/Analytics';
+import { Billing } from './pages/Billing';
 import { Handoffs } from './pages/Handoffs';
 import { Inbox } from './pages/Inbox';
 import { Integrations } from './pages/Integrations';
@@ -49,6 +50,7 @@ const CONSOLE_PATHS = [
   'inbox',
   'training',
   'settings',
+  'billing',
 ];
 
 /**
@@ -138,6 +140,7 @@ function App() {
               <Route path='inbox' element={<Inbox />} />
               <Route path='training' element={<Training />} />
               <Route path='settings' element={<Settings />} />
+              <Route path='billing' element={<Billing />} />
               {/* Unknown `/app/...` paths stay in the console shell. */}
               <Route path='*' element={<ConsoleNotFound />} />
             </Route>

@@ -48,6 +48,24 @@ export interface BillingUrl {
   url: string;
 }
 
+/** One countable resource against the plan's granted ceiling (V5-32).
+ * `limit` is null when the plan does not enforce that key, so the page shows
+ * the count rather than inventing a ceiling. */
+export interface UsageEntry {
+  key: string;
+  used: number;
+  limit: number | null;
+}
+
+/** Plan state plus current usage for the signed-in company. */
+export interface BillingUsage {
+  plan_code: string | null;
+  status: string | null;
+  enforced: boolean;
+  websites: UsageEntry;
+  seats: UsageEntry;
+}
+
 export interface Company {
   id: string;
   name: string;

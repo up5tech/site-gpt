@@ -25,12 +25,13 @@ from site_gpt.app.db.session import get_db
 from site_gpt.app.schemas.billing import (
     BillingStatus,
     BillingSummary,
+    BillingUsage,
     CheckoutRequest,
     CheckoutResponse,
     PortalResponse,
     WebhookReceived,
 )
-from site_gpt.app.services import billing
+from site_gpt.app.services import billing, entitlements
 
 router = APIRouter()
 
@@ -70,6 +71,20 @@ def get_subscription(
     """The signed-in user's company subscription state (read-only)."""
     _enabled()
     return BillingSummary(**billing.summary(db, user.company_id))
+
+
+@router.get("/api/billing/usage", response_model=BillingUsage, tags=["billing"])
+def get_usage(
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+) -> BillingUsage:
+    """This company's plan state and countable usage (V5-32).
+
+    Read-only and company-scoped, like the summary: a member may see what the
+    plan includes, but only an admin can change billing.
+    """
+    _enabled()
+    return BillingUsage(**entitlements.usage(db, user.company_id))
 
 
 @router.post(
