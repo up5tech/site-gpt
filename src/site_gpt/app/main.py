@@ -14,6 +14,7 @@ from site_gpt.app.api.feedback import router as feedback_router
 from site_gpt.app.api.handoff import router as handoff_router
 from site_gpt.app.api.inbox import router as inbox_router
 from site_gpt.app.api.integration import router as integration_router
+from site_gpt.app.api.plan import router as plan_router
 from site_gpt.app.api.privacy import router as privacy_router
 from site_gpt.app.api.routes import router
 from site_gpt.app.api.setting import router as setting_router
@@ -125,6 +126,9 @@ app.include_router(analytics_router)
 app.include_router(integration_router, prefix="/api/integrations")
 app.include_router(inbox_router, prefix="/api/inbox")
 app.include_router(privacy_router, prefix="/api/privacy")
+# The public plan catalog (V5 F1) carries its own /api/plans path and needs no
+# authentication: it is what the marketing pricing page reads.
+app.include_router(plan_router)
 app.include_router(v1_router, prefix="/api/v1")
 
 
