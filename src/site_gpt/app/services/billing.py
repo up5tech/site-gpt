@@ -387,17 +387,30 @@ def process_webhook(
     except IntegrityError:
         # Already receipted: a Stripe retry, a replay or a concurrent delivery.
         db.rollback()
+        logger.info("stripe webhook %s (%s): duplicate", event_type, event_id)
         return "duplicate"
 
     try:
         outcome = _apply(db, event, event_type, created)
         receipt.processed_at = datetime.now(UTC)
         db.commit()
-    except Exception:
+    except Exception as exc:
         # The receipt must not survive a failed apply, or Stripe's retry would
         # be answered as a duplicate and the state change would never happen.
+        # The log names the event, its type and the failure only: no payload,
+        # customer or card data (V5-33 visibility without the event body).
+        logger.error(
+            "stripe webhook %s (%s) failed to apply (%s: %s); Stripe will retry",
+            event_type,
+            event_id,
+            type(exc).__name__,
+            exc,
+        )
         db.rollback()
         raise
+    # `ignored` (unknown customer/company) and `stale` (an older event) are the
+    # two silent-looking outcomes an operator needs to see during reconciliation.
+    logger.info("stripe webhook %s (%s): %s", event_type, event_id, outcome)
     return outcome
 
 
