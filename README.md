@@ -703,6 +703,7 @@ call is made, no Stripe credential is needed, and every route except
 | `GET /api/billing/status` | any signed-in user | `{enabled}`, so the console can gate its navigation |
 | `GET /api/billing/subscription` | any signed-in user | plan code, mirrored status, renewal date, cancel-at-period-end |
 | `POST /api/billing/checkout` | company admin | `{plan_code}` → a Stripe Checkout URL |
+| `GET /api/billing/usage` | any signed-in user | plan state plus website/seat counts against the plan ceiling |
 | `POST /api/billing/portal` | company admin | a Stripe Billing Portal session for this company's customer |
 | `POST /api/billing/webhook` | Stripe only | signature-verified lifecycle events |
 
@@ -733,6 +734,47 @@ merchant test credentials (decision D3), which have not been supplied, and the
 catalog stays empty until D2 approval. The SDK calls, signature verification,
 idempotency, ordering and tenant-scope negatives are covered by mocked tests in
 `tests/test_billing.py`; live Checkout is blocked and unexecuted.
+
+## Plans, entitlements and the billing page (V5 Wave 3)
+
+`services/entitlements.py` is the only place a paid plan becomes a limit; no
+route compares plan codes or trusts a client. The policy is deliberately
+conservative while D5/D7 are unapproved:
+
+| Subscription status | Plan limits applied |
+|---|---|
+| `active`, `trialing` + a currently **published** catalog plan | yes |
+| `incomplete`, `past_due`, `unpaid`, `paused`, `canceled`, no row | no |
+| active, but the plan code was unpublished or is unknown | no |
+
+"No limits applied" is the V4 baseline, not a lockout and not a guessed free
+tier: missing or stale Stripe data can never become a higher plan, and a quiet
+webhook never removes service. With `BILLING_ENABLED=false` the resolver
+returns an empty snapshot **without a database read**, so self-hosted behaviour
+is unchanged.
+
+The effective value is the stricter of the company's own setting and the plan
+ceiling, so `PUT /api/settings` and `/api/v1` can lower usage but never raise a
+plan limit. Enforced keys are `websites`, `seats`, `daily_messages` and
+`session_messages`; any other catalog limit is display copy. A limit of `0` is
+treated as "not stated" (it already means "no cap" in `services/quota.py`).
+Boundaries: `POST /api/websites` and `POST /api/companies/users` answer 403 at
+the ceiling, and all three chat handlers (`/api/chat`, `/api/chat/stream`,
+`/api/v1/chat`) keep the V4 order — per-IP limiter → session cap → daily quota —
+with the plan ceiling applied to both caps and the same refusal semantics.
+
+`/app/billing` (console → Billing, shown only when billing is enabled) reads
+`GET /api/billing/subscription` and `GET /api/billing/usage`: plan, mirrored
+status, renewal or "cancels at period end", usage against the enforced
+ceilings, a Stripe Billing Portal button, and a plan selector that starts
+Checkout. It never claims a plan is paid because the browser returned from
+Checkout — only a verified webhook moves that state. Checkout and portal
+controls are admin-only; members see the read-only summary. Operators should
+follow `docs/billing.md` for webhook retries, reconciliation and rollback.
+
+Still blocked externally: Stripe test-mode Checkout (D3), the approved catalog
+and lifecycle/grace policy (V5-01 / D2/D4/D5/D7) and legal copy (D8). No plan
+limit is enforced while the catalog is empty.
 
 ## Dev commands
 
