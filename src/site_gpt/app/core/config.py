@@ -153,6 +153,11 @@ BILLING_ENABLED = os.getenv("BILLING_ENABLED", "false").strip().lower() in (
 )
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "").strip()
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "").strip()
+# The plan-code → Stripe Price ID mapping, private server configuration: either
+# a JSON object (`{"starter:month": "price_..."}`) or comma-separated
+# `code:interval=price_...` entries. Absent mapping means that plan cannot be
+# bought — Checkout fails closed rather than guessing a price (V5 invariant 8).
+STRIPE_PRICE_IDS = os.getenv("STRIPE_PRICE_IDS", "").strip()
 # Keep the Stripe API contract explicit and independent of SDK defaults.
 STRIPE_API_VERSION = os.getenv("STRIPE_API_VERSION", "2026-11-18.endive").strip()
 

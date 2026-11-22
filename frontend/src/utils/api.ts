@@ -1,5 +1,5 @@
 import axios, { AxiosInstance } from 'axios';
-import type { AnalyticsSummary, ApiKeyCreated, ApiKeyItem, ApiKeyPayload, ChatResponse, ContactList, ConversationList, ConversationMessages, DashboardStats, DeliveryAttempt, DeliveryList, DeliveryStatus, DigestPreview, DigestSendResult, FeedbackItem, FeedbackList, FeedbackRequest, FeedbackReview, HandoffList, HandoffUpdate, InboxConversation, InboxConversationDetail, InboxList, InboxMessage, InboxPresence, InboxState, InboxStatus, IntegrationItem, IntegrationPayload, IntegrationTestResult, LoginResponse, PublicPlanList, RecentConversations, RegisterRequest, RetentionPurgeResult, Setting, Website, WebsiteQuota, WidgetConfig } from '../types/api';
+import type { AnalyticsSummary, ApiKeyCreated, ApiKeyItem, ApiKeyPayload, BillingStatus, BillingSummary, BillingUrl, ChatResponse, ContactList, ConversationList, ConversationMessages, DashboardStats, DeliveryAttempt, DeliveryList, DeliveryStatus, DigestPreview, DigestSendResult, FeedbackItem, FeedbackList, FeedbackRequest, FeedbackReview, HandoffList, HandoffUpdate, InboxConversation, InboxConversationDetail, InboxList, InboxMessage, InboxPresence, InboxState, InboxStatus, IntegrationItem, IntegrationPayload, IntegrationTestResult, LoginResponse, PublicPlanList, RecentConversations, RegisterRequest, RetentionPurgeResult, Setting, Website, WebsiteQuota, WidgetConfig } from '../types/api';
 
 // Base API instance with proxy /api -> backend
 const api: AxiosInstance = axios.create({
@@ -319,3 +319,18 @@ export type { LoginResponse } from '../types/api';
 // Public plan catalog (V5-11). Unauthenticated and read-only: the pricing page
 // renders exactly what the server publishes, prices included.
 export const getPlans = () => api.get<PublicPlanList>('/plans');
+
+// Billing (V5 F2). Checkout and the portal return a Stripe-hosted URL; the
+// browser never posts a price, amount, customer or return URL.
+export const getBillingStatus = () =>
+  api.get<BillingStatus>('/billing/status');
+
+export const getBillingSummary = () =>
+  api.get<BillingSummary>('/billing/subscription');
+
+export const startBillingCheckout = (planCode: string) =>
+  api.post<BillingUrl>('/billing/checkout', { plan_code: planCode });
+
+export const openBillingPortal = () =>
+  api.post<BillingUrl>('/billing/portal');
+

@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from site_gpt.app.api.api_key import router as api_key_router
+from site_gpt.app.api.billing import router as billing_router
 from site_gpt.app.api.chat_page import router as chat_page_router
 from site_gpt.app.api.company import router as company_router
 from site_gpt.app.api.document import router as document_router
@@ -129,6 +130,10 @@ app.include_router(privacy_router, prefix="/api/privacy")
 # The public plan catalog (V5 F1) carries its own /api/plans path and needs no
 # authentication: it is what the marketing pricing page reads.
 app.include_router(plan_router)
+# Billing (V5 F2) owns /api/billing/*: status, summary, Checkout, Billing Portal
+# and the signature-verified Stripe webhook. Everything but `status` answers 404
+# while BILLING_ENABLED is false.
+app.include_router(billing_router)
 app.include_router(v1_router, prefix="/api/v1")
 
 

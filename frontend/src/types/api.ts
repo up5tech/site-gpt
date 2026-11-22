@@ -24,6 +24,30 @@ export interface PublicPlanList {
   plans: PublicPlan[];
 }
 
+/** Whether paid billing is switched on for this deployment (V5 F2). */
+export interface BillingStatus {
+  enabled: boolean;
+}
+
+/**
+ * One company's mirrored subscription state. No Stripe customer/subscription
+ * id, secret or payment method is ever returned.
+ */
+export interface BillingSummary {
+  has_billing_account: boolean;
+  plan_code: string | null;
+  interval: string | null;
+  status: string | null;
+  active: boolean;
+  cancel_at_period_end: boolean;
+  current_period_end: string | null;
+}
+
+/** A Stripe-hosted URL (Checkout or Billing Portal) to navigate to. */
+export interface BillingUrl {
+  url: string;
+}
+
 export interface Company {
   id: string;
   name: string;
