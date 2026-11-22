@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -19,7 +21,7 @@ from site_gpt.app.api.upload import router as upload_router
 from site_gpt.app.api.user import router as user_router
 from site_gpt.app.api.v1 import router as v1_router
 from site_gpt.app.api.website import router as website_router
-from site_gpt.app.core.config import CORS_ORIGINS
+from site_gpt.app.core.config import CORS_ORIGINS, validate_billing_config
 from site_gpt.app.services.embed_guard import (
     EmbedTokenRefused,
     embed_token_error_response,
@@ -51,7 +53,16 @@ TAGS_METADATA = [
     },
 ]
 
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    # Fail fast only when billing was explicitly enabled. The default/off path
+    # remains independent of Stripe credentials and makes no provider calls.
+    validate_billing_config()
+    yield
+
+
 app = FastAPI(
+    lifespan=lifespan,
     title="AI Agent Expose API",
     version="2.0.0",
     description=DESCRIPTION,

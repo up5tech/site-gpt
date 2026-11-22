@@ -143,6 +143,40 @@ NOTION_MAX_PAGES = int(os.getenv("NOTION_MAX_PAGES", "25"))
 # `total_exact: false`) otherwise. 0 never counts past what the import cap needs.
 NOTION_MAX_COUNT_PAGES = int(os.getenv("NOTION_MAX_COUNT_PAGES", "10"))
 
+# V5 Stripe billing. No SDK import or provider call is made from configuration;
+# when disabled (the default), self-hosted deployments need no Stripe settings.
+BILLING_ENABLED = os.getenv("BILLING_ENABLED", "false").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "").strip()
+STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "").strip()
+# Keep the Stripe API contract explicit and independent of SDK defaults.
+STRIPE_API_VERSION = os.getenv("STRIPE_API_VERSION", "2026-11-18.endive").strip()
+
+
+def validate_billing_config() -> None:
+    """Fail fast on incomplete enabled billing config without exposing secrets."""
+    if not BILLING_ENABLED:
+        return
+
+    missing = [
+        name
+        for name, value in (
+            ("STRIPE_SECRET_KEY", STRIPE_SECRET_KEY),
+            ("STRIPE_WEBHOOK_SECRET", STRIPE_WEBHOOK_SECRET),
+            ("STRIPE_API_VERSION", STRIPE_API_VERSION),
+        )
+        if not value
+    ]
+    if missing:
+        raise RuntimeError(
+            "BILLING_ENABLED=true requires: " + ", ".join(missing)
+        )
+
+
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*")
 
