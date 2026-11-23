@@ -620,3 +620,94 @@ Which enforceable control protects the platform-owner boundary — a second fact
 ### What an approval changes
 
 Only the D5 row moves from **UNAPPROVED** to **APPROVED**, which is the condition for exposing the platform console at all (V6-11) and supplies the operator half of V6-02's ownership model. Gate V6-0G still needs D1, D2, D3, D4, D7, D11 and the remaining decisions, so Wave 1 stays closed; until then `PLATFORM_CONSOLE_ENABLED=false` remains the only operating control.
+
+## Appendix — D6 decision brief
+
+**Status: D6 remains UNAPPROVED.** This brief lays out the upload choices; it names no scanner, vendor, format list, size limit, quarantine period or owner, and it recommends none of the options. The limits quoted below are what the code does today, recorded as evidence, not as a proposal.
+
+### The question
+
+What happens to a file a customer supplies before it becomes knowledge the assistant answers from — whether the upload surface is opened at all for the launch cohort, whether untrusted bytes are scanned and by what kind of control, which formats and sizes are accepted, what happens to a file that fails a check, and what the service does while the check is unavailable. The answer is what V6-13 implements; today the answer is "the surface is open to every signed-in account, nothing is scanned and no format is refused".
+
+### What the code does today (evidence, not a decision)
+
+- **Five entry points, all behind the same login.** `api/upload.py` exposes `POST /api/uploads/` (multipart), `/url`, `/youtube`, `/notion` and `/google-drive`, and every one depends on `get_current_user` — **any** authenticated account of any role in any company, not only an admin or manager. Nothing in `/api/v1` exposes uploads.
+- **No format check on the file itself.** The multipart route derives the extension from the supplied filename (`os.path.splitext`) and stores `file.content_type` as sent; there is no allowlist of extensions or MIME types anywhere on the upload path, so a file named `.pdf` is accepted as a PDF and anything else named `.txt` is accepted as text.
+- **One size limit, enforced while streaming.** `MAX_UPLOAD_MB` (default `20`) becomes `MAX_UPLOAD_BYTES` (`core/config.py:258`) and the multipart route aborts mid-stream, deleting the partial file; the four import routes enforce the same ceiling on the declared or streamed length (`services/sources.py`). There is no per-company quota on stored uploads.
+- **Nothing scans anything.** There is no antivirus, malware or content-scanning code in the tree; the only match for “scan” on this path is a comment about a remote provider's own warning page. `docs/security.md` states plainly that uploads are **not** virus-scanned, and risk R9 records it as accept-with-owner.
+- **Parsing happens later, in the worker.** The upload routes store bytes under `uploads/` and create an `Attachment` row; text extraction (`services/parse.py::extract_text_from_file`) runs in `worker.py:316` during ingestion, using `pypdf`, `python-docx`, `python-pptx` or BeautifulSoup depending on the extension. A hostile file is therefore stored first and parsed out of process, and the extracted text becomes an `extra_documents` row the assistant can quote.
+- **Nothing serves the stored bytes.** No route returns an uploaded file (D2 records the same fact), so the browser-delivery risk is absent; what a bad file can reach is the parser and, through extracted text, an answer.
+- **Deletion is the retention path.** `services/retention.py` unlinks expired attachments and deletes their documents; erasing a conversation or contact is a separate path that does not remove a document an admin uploaded.
+
+### Options and consequences
+
+#### 1. Who may upload, and whether the surface is open at all
+
+| Option | What it means | Consequences to accept |
+|---|---|---|
+| **A — open to every signed-in account (today)** | Any member of any company can upload a file or import a URL. | Nothing to build and the smallest support burden for a team, but the population that can hand bytes to a parser is every tenant user, which makes the scanning decision below a decision about an untrusted population rather than a few vetted admins. |
+| **B — restricted to admins or managers** | The route requires a privileged role before the bytes are accepted. | Shrinks the supply of files to people the customer already trusts and needs one dependency per route plus a frontend state; it is a compromise rather than a control, because a compromised admin account or a customer admin acting in bad faith still reaches the parser. |
+| **C — disabled for the launch cohort** | The upload and import routes answer 403 (or are not exposed) and knowledge comes only from crawled pages and text entered by the operator. | Removes the entire threat surface and every scanning question with it, at the cost of a real product capability (documents, YouTube, Notion, Drive) for the first cohort — and the approver must say so in the launch scope (D1) rather than leave a button that fails. |
+
+#### 2. Whether and where untrusted bytes are checked
+
+| Option | What it means | Consequences to accept |
+|---|---|---|
+| **A — no check, risk accepted and documented** | Uploads are stored and parsed as they are; the accepted risk, its owner and its expiry are recorded. | No dependency, no latency and no new failure mode, and it is the only option that keeps the surface fully usable on a single host; but a malicious file reaches a third-party parser in the worker and its text can be quoted in answers, so the acceptance has to name that consequence instead of saying “no scanning”. |
+| **B — scan before the bytes are stored** | The upload is held in memory or a staging location, checked, and only then written and recorded. | Nothing unscanned ever reaches the parser or the retention path, and a rejection is a clean 4xx to the user; but it puts a scanner on the request path (latency and availability), needs a size ceiling the scanner can accept, and must cover all five entry points — an import route that skips the check undoes it. |
+| **C — store into quarantine, scan asynchronously** | Bytes land in a quarantined state, a check runs out of band, and only a cleared file becomes an attachment the worker may parse. | Keeps uploads responsive and survives scanner latency, at the cost of a new state on `attachments`, a job or poll to move it, a visible pending state in the UI, and a hard rule that the worker must never parse a quarantined row — which is a code change, not a configuration. |
+| **D — check at parse time in the worker** | The worker validates each file immediately before extraction. | Fits the existing pipeline without touching the routes, but the bytes are already stored and the user was already told the upload succeeded; a rejection then surfaces as a failed ingest rather than a refused upload, and the quarantine state still has to exist to hold the file until it is cleared. |
+
+#### 3. What a failing file does
+
+| Option | What it means | Consequences to accept |
+|---|---|---|
+| **A — reject the upload** | The request fails and the bytes never persist. | Simple to explain and to test, and it leaves nothing to clean up; but the user learns only that the file was refused, and a false positive blocks a legitimate document with no path to a human. |
+| **B — accept into quarantine and report the state** | The file is stored, marked as not usable, and the UI shows it. | Keeps the bytes for investigation and for a later decision, at the cost of storing something known-bad and of a state the UI and retention path both have to understand. |
+| **C — delete immediately and record the event** | The bytes are discarded and an audit or log entry records the refusal. | Smallest retention of hostile input and a trail for the customer, but a false positive silently destroys the user's file and the event must not contain the filename or contents if those are personal data. |
+
+#### 4. Supported formats and size limits
+
+| Option | What it means | Consequences to accept |
+|---|---|---|
+| **A — whatever the parser can read, one global size cap (today's shape)** | Every extension with a handler is accepted and one limit applies to all of them. | Nothing to maintain and no surprises for the user; but it treats an OOXML container, a PDF with embedded JavaScript and a plain text file as equally safe, and a single cap ignores that a compressed container can expand far beyond the bytes stored. |
+| **B — an explicit allowlist with per-type expectations** | The accepted extensions and MIME types are enumerated, and the check is on the actual content rather than the name. | Prevents a renamed file from reaching the wrong parser and makes the promise auditable; it needs a maintained list, a content-sniffing step and a rejection message, and it will reject files the current behaviour accepts. |
+| **C — restrict to text-like formats for the cohort** | Only the extensions the standard library reads; no PDF, DOCX or PPTX. | Removes the third-party parsers — the largest single class of file-processing risk — and needs no scanner for the format itself; but it removes PDF and Office documents, which is much of what customers actually upload, and the limit must be stated in the launch scope. |
+
+Whichever is chosen, the size limit has to be stated per entry point, because the local upload and the four imports enforce the same ceiling through different code paths, and the decompression question (a container that expands past the stored size) has to be answered explicitly — the current cap bounds bytes on disk, not bytes extracted.
+
+#### 5. Behaviour while the check is unavailable
+
+| Option | What it means | Consequences to accept |
+|---|---|---|
+| **A — fail closed: refuse uploads, keep the product working** | With the scanner unreachable, the upload routes answer 503 and everything already ingested keeps working. | Cannot admit something unchecked, and the blast radius is one feature; but a scanner outage becomes a visible product outage, the error message has to be honest, and the queue-and-retry case is not covered. |
+| **B — fail open: accept unscanned and flag it** | Uploads continue and are marked as unchecked until a later pass. | No user-visible outage, at the cost of admitting exactly what the control exists to stop, and it requires the flag to be visible to the operator and to forced re-scan later. |
+| **C — queue and retry** | Uploads are accepted into quarantine and held until the check can run. | The user is not blocked and nothing unchecked is parsed, but it needs the quarantine state from option 2C, a retry policy, a bound on how long a file may wait, and a decision about what the user sees. |
+
+### Cross-checks an approval must satisfy
+
+- **D2 fixes where the bytes and the parser live.** Option 2B puts the scanner on the request path; 2C/4C need storage that can hold a quarantined object, and a multi-instance deployment must not let one instance write while another never sees the file.
+- **D7 owns the retention of whatever is stored**, including a quarantine that must not outlive its decision and the deletion path for a refused or quarantined file.
+- **D8 owns the event a refusal writes** — who can read it and what it may not contain.
+- **D1 names the cohort and the included features**, so option 1C or 4C is a scope statement there, not a silent removal here.
+- **D3 constrains the latency budget** if the scanner sits synchronously in the request, and the scanner's own availability becomes part of the availability promise.
+- **R9 in `docs/risk-register-v6.md` is this decision's risk row**; an accept option must carry the owner and expiry that row leaves blank today.
+
+### Exact evidence an approver must sign
+
+1. The population allowed to upload (§1) and whether the surface is open, admin-only or off for the cohort — recorded in D1's scope as well.
+2. The check chosen (§2), the kind of control it is (a scanner service, an engine inside the worker, or an explicit accepted risk), and the point in the path where it runs.
+3. Proof that the check covers **all five** entry points — multipart, URL, YouTube, Notion, Google Drive — rather than the form upload alone.
+4. The behaviour for a failing file (§3), including what the user is told and what the operator can see.
+5. The accepted formats and the exact size limit per entry point, with the decompression rule stated separately from the stored-bytes rule.
+6. The behaviour while the check is unavailable (§5), the user-visible message, and the maximum time a file may wait in quarantine if option 5C is chosen.
+7. The quarantine state's lifetime, who may release or delete it, and how it is excluded from parsing and from answers until cleared.
+8. The latency and availability budget the check adds, consistent with D3 if it sits on the request path.
+9. The audit or log event a refusal produces, its retention and its redaction (D8/D7).
+10. The residual risk statement if option 2A is chosen: what a malicious file can reach (the parser process and the extracted text an answer may quote), who accepts it, and when it is reviewed.
+11. Confirmation that a test upload of a known-bad fixture was exercised end to end against the chosen path in a non-production environment — accepted, quarantined or refused as decided.
+12. The approver's role, date and a link or path to the signed evidence — recorded in this row and copied into `plans/PLAN_V6.md` §4 and into risk R9 of `docs/risk-register-v6.md`.
+
+### What an approval changes
+
+Only the D6 row moves from **UNAPPROVED** to **APPROVED**, which unblocks V6-13 and turns R9 from an unowned P1 into either a mitigated control or a signed acceptance. Gate V6-0G still needs D1, D2, D3, D4, D5, D7, D11 and the remaining decisions, so Wave 1 stays closed; until then uploads keep their current behaviour and R9 keeps its blank owner.
