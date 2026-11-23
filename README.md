@@ -872,7 +872,9 @@ V6 is the production-readiness plan in [`plans/PLAN_V6.md`](plans/PLAN_V6.md).
 Wave 0 has only just started on branch `feat/v6`: the reproducible baseline (62
 Python test modules / 1094 tests, 46 node checks, clean build/lint/imports,
 Alembic head `0b22b30bf930`) and the provider-free V5-5G gate result (72/72 checks
-passed, 2 blocked) are recorded. V6-01 (launch track), V6-02 (named owners,
+passed, 2 blocked) are recorded, then three standalone repairs from the await
+audit took the suite to 63 modules / 1102 tests with head, dependencies and
+flags unchanged. V6-01 (launch track), V6-02 (named owners,
 SLO/RPO/RTO) and V6-03 (architecture review) wait on approvers nobody has named
 yet, so gate V6-0G is unsigned and Wave 1 has not started. The open decisions and
 the evidence each one needs are listed in
