@@ -142,3 +142,85 @@ For uploads the same three options exist only in weaker forms — snapshot or ob
 ### What an approval changes
 
 Only the D3 row moves from **UNAPPROVED** to **APPROVED**, which unblocks the objective half of V6-02 and gives V6-21 its alert thresholds and V6-42 its restore targets. Gate V6-0G still needs D1, D7, D11 and the architecture decisions, so Wave 1 stays closed.
+
+## Appendix — D11 decision brief
+
+**Status: D11 remains UNAPPROVED.** This brief supplies no support owner, channel, coverage window, escalation target, response time or contact address. Every option below is a shape to choose, not a proposal.
+
+### The question
+
+Who answers a customer when the service is broken or unclear, through which channel, during what window, to whom it escalates, and what the customer may expect in return. The answer supplies the support details V6-41 must publish and the support-ownership half of V6-02, and it is a commitment the business makes, not an engineering setting.
+
+D3 §3 chooses the **shape** of coverage (one named contact / a shared rota / contracted continuous cover). D11 names who operates it and records the mechanics. The two rows must agree: a D3 promise with no D11 owner is unstaffed, and a D11 window wider than D3's coverage is an unpriced commitment.
+
+### What exists today (evidence, not a decision)
+
+- There is **no support address configured**: `support_contact_email` is a typed platform setting whose default is `""` ("Leave blank to hide it") and whose value is published anonymously through `GET /api/public/config`; `PublicLayout` renders a `mailto:` link in the footer **only** when it is set. So an approved address needs no deploy — but today the footer shows nothing and no owner exists to read a message sent there.
+- **No operator surface is live** to work a support queue: `PLATFORM_CONSOLE_ENABLED=false` makes the whole `/api/platform` surface a 404. `platform_audit_logs` records operator mutations and holds no customer conversation.
+- **The inbox is not a support channel.** `/api/inbox` is the tenant's own live-agent console over that tenant's conversations; pointing service-level support traffic at it would expose one customer's transcripts to staff answering another.
+- Nothing in the repo names a support owner, rota, paging tool or ticket system; `docs/release-v5.md` records support ownership as NO-GO and `docs/risk-register-v6.md` R4 lists named support and incident ownership as unevidenced.
+
+### Options and consequences
+
+#### 1. Who is accountable for support
+
+| Option | What it means | Consequences to accept |
+|---|---|---|
+| **A — one named individual** | The accountable owner answers support themselves and is the only escalation entry point. | Cheapest and clearest to publish, but coverage ends whenever that person sleeps, travels or leaves, and there is no second reader for a security-sensitive report; the row must name a deputy or state the gap. |
+| **B — a named internal rota** | Several named staff share a queue under one accountable owner. | Load is spread and absence is covered, but it needs a shared queue, a written handover and defined shifts — otherwise "the rota" is a mailing list where each assumes another answered. |
+| **C — contracted external provider** | A support vendor answers first line under a contract. | Cover can be wider than the team's own hours, at the cost of a contract, onboarding material and a written boundary for what the vendor may not decide; customer conversations reach a third party, so D7's deletion map and D8's vendor terms must cover it before it handles a single message. |
+
+#### 2. Channel
+
+| Option | What it means | Consequences to accept |
+|---|---|---|
+| **A — one email alias** | A published address that forwards to the owner. | Zero infrastructure and works for a signed-out customer, but gives no status, no assignment and no history beyond a mailbox, and a message can sit unseen with nobody able to prove when it arrived. |
+| **B — a ticketing or shared-inbox tool** | Requests land in a queue with assignment and state. | Makes ownership and response measurable, but adds a vendor that stores customer data and an access list that has to be reviewed; it is only as good as the rota behind it. |
+| **C — an in-app contact form plus email fallback** | A form inside the product feeds the queue, with the published address for everyone else. | Best context (the tenant, the page, the error) and a natural place to state the coverage window, but it needs a route, a table and abuse handling that do not exist today, and a customer who cannot sign in still needs the fallback. |
+
+#### 3. Coverage window
+
+| Option | What it means | Consequences to accept |
+|---|---|---|
+| **A — business hours on stated days** | A published window in a stated timezone, with everything else queued. | Sustainable for a small team and honest if published, but an outage outside the window is answered the next working day, which must be said plainly on the site and in the notice. |
+| **B — extended hours with an on-call rotation** | Longer daily coverage plus a paged on-call engineer. | Covers most customer working days, but needs a roster, a paging tool, a compensation decision and a rule for who is woken for what; an on-call that is never exercised is not coverage. |
+| **C — continuous cover** | Somebody is reachable at every hour. | Matches an "always available" product claim, but requires follow-the-sun staffing or an external provider under contract, and it must not be published before it is actually staffed. |
+
+#### 4. Escalation target and path
+
+| Option | What it means | Consequences to accept |
+|---|---|---|
+| **A — single tier** | The support owner handles everything and asks engineering informally when stuck. | Simplest to start, but no bound applies when the owner cannot solve it and no engineer is accountable for the answer; an incident then has no named owner. |
+| **B — support owner then on-call engineer** | A written trigger moves a request to a named on-call engineer, with a named incident owner. | Bounds the answer and gives incidents an owner, but needs the trigger written down (what cannot be resolved from the runbook), a roster, and a hand-back rule so the on-call is not the permanent owner. |
+| **C — three tiers adding business, security and legal** | On top of B, a named path for a suspected breach, a legal or contractual question and a payment dispute. | Required if the service handles personal data or paid subscriptions, but every tier must name a person and a contact method; a path that ends at "the founders" is not an escalation target. |
+
+#### 5. Response expectations
+
+| Option | What it means | Consequences to accept |
+|---|---|---|
+| **A — acknowledgement only** | The customer is told the request arrived; no time to a substantive answer. | Honest and cheap, and it is the only option that cannot be broken by a small team, but it gives the customer nothing to plan around and reads as thin beside a paid plan. |
+| **B — acknowledgement plus per-severity response targets** | Severity classes (service down / degraded / question) each get a target time to first substantive response. | Useful and publishable, but it needs severity definitions the customer can apply, and the target only holds if the coverage window can actually meet it; a target inside a window nobody staffs is a false promise. |
+| **C — response plus resolution targets tied to D3** | Resolution commitments per severity, aligned with D3's availability promise. | Strongest commercial position, but it overlaps D3 and must be approved by the same owner with the same numbers — two documents promising different things is worse than one modest promise, and a resolution commitment carries commercial weight. |
+
+### Cross-checks an approval must satisfy
+
+- **D3 §3 must match the D11 window.** If the availability statement promises cover the support row does not staff, the published sentence is the one that binds; correct the other row rather than reinterpreting it.
+- **Support access to tenant data is a data grant.** Whatever the channel stores — a ticket with a transcript attached, a mailbox, a vendor portal — falls under D7's deletion rules and D8's access and retention terms; support staff reading a tenant's conversations need that access named and audited.
+- **A third-party channel adds a subprocessor** to V6-41's list, with its DPA and retention period, before the first customer message arrives.
+- **The published address is a setting, not a deploy:** the approved address goes into `platform_settings.support_contact_email` (public, footer-visible) and the same text appears in the app and the privacy notice.
+
+### Exact evidence an approver must sign
+
+1. The accountable support owner, by name, with a named deputy for absence — and the owner's acceptance of the role.
+2. The channel: exact address or URL, who monitors it, and what the customer sees before anyone answers.
+3. The coverage window: days, hours and timezone, and the stated behaviour outside it (queued with an acknowledgement, or explicitly not covered).
+4. The escalation path: the trigger, the next tier by name, the contact or paging method, and the named incident owner for a service-down event.
+5. The response expectations per severity class, with the severity definitions and confirmation that the approved window can meet them.
+6. The support-side data access: which staff or vendor may read which tenant data, through which tool, and how that access is audited.
+7. The exact published text for the marketing footer, the app and the privacy notice, containing no promise the owner has not accepted.
+8. The value to set in `platform_settings.support_contact_email`, and the person who maintains it; until it is set the footer correctly shows no address.
+9. The approver's role, date and evidence path — recorded in the D11 row, copied into `plans/PLAN_V6.md` §4 and into risk R4 (and R3 if Track B is chosen) of `docs/risk-register-v6.md`.
+
+### What an approval changes
+
+Only the D11 row moves from **UNAPPROVED** to **APPROVED**, which supplies the support details V6-41 publishes and the support-ownership half of V6-02. Gate V6-0G still needs D1, D3, D7 and the architecture decisions, so Wave 1 stays closed.
