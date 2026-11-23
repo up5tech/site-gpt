@@ -523,3 +523,100 @@ Which settings a production deployment must have, where each value comes from, a
 ### What an approval changes
 
 Only the D4 row moves from **UNAPPROVED** to **APPROVED**, which unblocks V6-10 (the production-mode validator needs a signed required-set and a defined failure mode) and supplies the configuration half of V6-02's operating model. Gate V6-0G still needs D1, D2, D3, D7, D11 and the remaining decisions, so Wave 1 stays closed.
+
+## Appendix — D5 decision brief
+
+**Status: D5 remains UNAPPROVED.** This brief lays out the choices for authenticating platform owners; it names no identity provider, no second factor, no network range, no timeout, no bootstrap actor and no owner, and it recommends none of the options.
+
+### The question
+
+Which enforceable control protects the platform-owner boundary — a second factor or federated single sign-on on the operator's login, a private operator-only network path, or a combination — **where** that control is enforced (at the edge, in front of the application, or inside it), and who owns bootstrap, recovery and revocation. The answer decides whether the operator console may be exposed at all, which is the condition `PLATFORM_CONSOLE_ENABLED=false` currently stands in for.
+
+### What the code enforces today (evidence, not a decision)
+
+- **Two gates, neither of them authentication strength.** `PLATFORM_CONSOLE_ENABLED` (default `false`) makes the whole `/api/platform` surface a **404** before any auth runs (`api/platform.py::platform_console_enabled`); with it on, every route depends on `require_platform_owner`.
+- **The operator is an ordinary tenant account with a grant.** `require_platform_owner` (`core/auth.py:141`) composes `get_current_user` — the same email/password JWT login a tenant uses — and then re-reads an active grant per request, answering **403** when there is none. There is no separate operator login, no second factor, no re-authentication and no step-up for a destructive action.
+- **The grant is the only operator-specific control, and it is out-of-band only.** `scripts/platform_owner.py grant|revoke|list` is the whole provisioning path; the CLI needs the deployment's `DATABASE_URL` and a required `--actor` label that lands in the audit row. No HTTP route can mint, extend or remove a grant, and `users.role='admin'` never implies one.
+- **Revocation is a timestamp, not a session kill.** `revoke_owner` stamps `revoked_at`, so the next request is refused (the grant is re-read every time), but the account's ordinary JWT remains valid for tenant routes — the application has no server-side JWT revocation, and `docs/platform.md` tells an operator to rotate the JWT secret if a token may have been stolen.
+- **The break-glass path is database access.** `docs/platform.md` records that a locked-out operator is replaced with the CLI and that total lockout is recovered by running the CLI against the deployment database, which means whoever holds database credentials is the real root of this boundary.
+- **The UI's safeguards are procedural.** The `/platform` shell is a `ProtectedRoute` plus a `GET /api/platform/session` read (a signed-in tenant admin gets a 403 state), and the confirmation checkbox and the API's `confirm` flag are confirmations, not authentication — `docs/platform.md` says so plainly and lists strong authentication, re-authentication prompts and an IP allowlist as **not built**.
+- **Mutating actions are audited; session checks are not.** `platform_audit_logs` records actor, action, target and time for every grant/revoke, subscription action, catalog change and setting change. It has no record of a successful or failed console sign-in, and it is append-only with no pruning path.
+
+### Options and consequences
+
+#### 1. Which control protects the boundary
+
+| Option | What it means | Consequences to accept |
+|---|---|---|
+| **A — a second factor on the operator's login** | The existing account login gains a factor beyond the password, required for the operator account (or for everyone). | Needs no separate operator identity and keeps one login system, but it is an application-level change the codebase does not have, it must be enforced server-side (a client-side challenge is theatre), and it does nothing for a stolen session token — the JWT remains valid until it expires or the secret is rotated. |
+| **B — federated single sign-on for operators** | Operator authentication is delegated to an identity provider the organisation already controls, with the grant mapping the federated identity to the operator. | Centralises deactivation and device policy where the organisation already manages them and makes revocation at the provider effective for new logins; it requires an identity provider, a protocol integration, a claim-to-user mapping and a decision about whether tenants keep the existing login — so it is the largest engineering option, and it still does not revoke an already-issued JWT. |
+| **C — a private operator-only network path** | The console is reachable only from a network the operator controls (VPN, private link, bastion, or an internal-only ingress), with the existing grant check unchanged. | No authentication code and no new dependency; the network boundary does the work. But it puts the entire control outside the application, so a misconfigured ingress or a broadly routed VPN silently removes it, and it makes the console unusable from anywhere the path is absent — including during certain incidents. |
+| **D — C plus one of A or B** | The console is only reachable over the private path **and** the login is strengthened. | Defence in depth: neither a leaked token nor a routing mistake is sufficient alone. It also doubles the operational surface (network path, provider or factor, and their recovery stories) and is the slowest to stand up. |
+
+#### 2. Where the control is enforced
+
+| Option | What it means | Consequences to accept |
+|---|---|---|
+| **A — at the network edge** | The ingress refuses the platform path from outside the approved network, before any application code runs. | Enforced for every route under that path, cannot be bypassed by a client, and needs no code; it depends entirely on D2's ingress shape and on the edge's configuration being reviewed like code, and it fails open if a later rule widens the path. |
+| **B — in front of the application, in an identity-aware proxy** | A proxy authenticates the operator and forwards an identity the application trusts. | Enforced before the app sees the request and reusable for other internal surfaces; the application must trust the forwarded identity only from that proxy (which is a D4 trusted-proxy decision), and a direct path to the app would bypass it entirely. |
+| **C — inside the application** | The check lives in `require_platform_owner` and its login path. | Visible to tests and review, portable across environments, and it travels with the code; but it can only be as strong as what the app can verify, it cannot protect a route added later without the same dependency, and it is the option that most needs the platform switch kept off until it is proven. |
+| **D — edge or proxy, with the application check retained** | The stronger path is external and the grant check stays. | Nothing in the app regresses if the external control changes, at the cost of two places to keep correct and a documented statement of which one is authoritative. |
+
+#### 3. Identity and session model
+
+| Option | What it means | Consequences to accept |
+|---|---|---|
+| **A — tenant account plus grant (today)** | The operator signs in as an ordinary user and the grant adds operator rights. | One identity system, no new tables, and tenant and operator duties can share an accountant; but the operator's session is an ordinary session — its lifetime, storage and revocation are the tenant ones, and an operator's tenant role and operator role cannot be suspended independently. |
+| **B — a separate operator identity realm** | Operators are a distinct identity class, even if backed by the same login. | Cleaner separation and clearer audit attribution, at the cost of a second provisioning and recovery path (and a second thing that can be locked out). |
+| **C — short-lived, out-of-band credentials for the console** | Access is granted per session, from the operator's own tooling, with a short validity. | Shrinks the window a leaked credential is useful and makes every elevation a deliberate act; but it needs an issuance mechanism, a store, and a story for the incident where issuance is unavailable — and it is the most code of the three. |
+
+#### 4. Re-authentication for high-impact actions
+
+| Option | What it means | Consequences to accept |
+|---|---|---|
+| **A — none beyond the login (today)** | Every action is authorised by the session plus the grant. | Nothing to build and no additional friction; a stolen session can perform any operator action for its lifetime, which is why revocation depends on rotating the signing secret. |
+| **B — an explicit re-authentication step** | The destructive or commercial actions require the operator to authenticate again, or present a fresh proof, shortly before acting. | Narrows the stolen-session window for exactly the actions that matter, at the cost of a flow the console does not have and a decision about how long a fresh proof remains fresh — a period this brief deliberately does not set. |
+| **C — per-action approval by a second person** | A second named operator confirms the action. | Strongest control for a payment-affecting action, but it needs more than one trained operator (which D11 and the roster decide) and a queue that holds the pending action, so it is an operational commitment as much as a feature. |
+
+#### 5. Bootstrap
+
+| Option | What it means | Consequences to accept |
+|---|---|---|
+| **A — CLI on a host that holds the deployment database credentials (today)** | The first grant is created by running the script with `DATABASE_URL` exported. | No bootstrap secret beyond the database itself and the path is testable in staging; but database access becomes an operator-granting capability, so who holds it is a security decision, and the audit row carries only the `--actor` string the operator typed. |
+| **B — a seeded operator defined by deployment configuration** | The deployment names the initial operator and the application provisions the grant at start. | Reproducible and scriptable and removes the manual step, at the cost of a configuration value that can grant operator rights (so it becomes a secret) and a rule for what happens when it changes after first start. |
+| **C — an invitation issued by an existing operator** | A current operator grants the next one from within the console. | Removes database access from routine onboarding and keeps the audit actor real; but it cannot bootstrap the first operator, and it requires an HTTP grant path that **does not exist today** and that the V5 record deliberately forbids — choosing it reopens that non-goal explicitly. |
+
+#### 6. Recovery and revocation
+
+| Option | What it means | Consequences to accept |
+|---|---|---|
+| **A — CLI recovery, timestamp revocation (today)** | A lost operator is replaced with the CLI; a suspected compromise is revoked by timestamp; a stolen JWT is handled by rotating the signing secret. | Nothing new to build and it never depends on the console being reachable; but recovery requires database access, revocation does not end the account's tenant session, and rotating the secret signs every tenant out — a blunt instrument. |
+| **B — recovery through the identity provider** | The organisation's provider handles account recovery and deactivation, and the grant is re-pointed by the CLI or by a trusted operator. | Recovery follows the organisation's existing process and is effective for new logins; it presumes option 1B and leaves the already-issued-token question in place. |
+| **C — a second, sealed recovery credential** | A pre-provisioned break-glass credential (or a documented dual-control procedure) is held for the case where both the provider and the console are unavailable. | Bounds the worst case and can be rehearsed, at the cost of a credential that must be stored, rotated and monitored precisely because it bypasses the normal path. |
+
+### Cross-checks an approval must satisfy
+
+- **D2 fixes what the network option can even mean.** Edge enforcement needs an ingress that can refuse a path; an identity-aware proxy is an ingress component; the private path is a network boundary, not an application setting.
+- **D4 owns the trust that option 2B depends on.** A forwarded identity is only as trustworthy as the trusted-proxy rule, and a policy that accepts such a header from a public peer would undo the control.
+- **D8 must cover the console's own access trail.** Today only mutations are audited; whatever control is chosen should make sign-ins, refusals and grant changes visible to whoever investigates an incident, without logging tokens.
+- **D13 owns the session questions this row leans on** — lifetime, revocation and origin-bound widget authentication — because the operator session is an ordinary tenant session today.
+- **D11 and the roster decide whether option 4C is possible at all**, since dual control needs a second trained operator rather than a feature flag.
+- **D1 decides whether the console is in scope**, because Track A leaves it off entirely and no control in this row is then needed for launch.
+
+### Exact evidence an approver must sign
+
+1. The control chosen (§1) and, if more than one, which is authoritative and which is defence in depth.
+2. The enforcement point (§2) and the proof of it: for an edge or proxy, the configuration; for the application, the route inventory showing every platform route depends on the check; plus the statement that a direct path to the application does not bypass it.
+3. The identity model (§3): whether operators are tenant accounts with grants or a separate identity class, and how an operator's tenant access and operator access are suspended independently.
+4. The session lifetime and re-authentication rule (§4) for ordinary and high-impact actions, with the period supplied by the approver — not derived here.
+5. The bootstrap path (§5), who may execute it, what credential it needs, and the statement that no HTTP route mints operator access (or an explicit decision to change that non-goal).
+6. The recovery procedure (§6) for a lost operator, for total operator lockout and for a stolen session token, including the credential that makes each possible and who holds it.
+7. The revocation procedure and its measured effect: what stops at the next request, what does not (an issued JWT), and what the operator must do about the difference.
+8. The exposure decision: console enabled or disabled for the launch cohort, and if enabled, from where — public ingress, private path or operator proxy — consistent with D2.
+9. The audit expectations for operator access: which events are recorded, who may read them, and how that is verified rather than assumed.
+10. Confirmation that the chosen control was exercised end to end in a non-production environment — sign-in, refusal for a tenant account, a grant, a mutation, a revocation and a recovery — with the evidence path recorded.
+11. The approver's role, date and a link or path to the signed evidence — recorded in this row and copied into `plans/PLAN_V6.md` §4 and into risk R2 (operator security) and R4 (operational ownership) of `docs/risk-register-v6.md`.
+
+### What an approval changes
+
+Only the D5 row moves from **UNAPPROVED** to **APPROVED**, which is the condition for exposing the platform console at all (V6-11) and supplies the operator half of V6-02's ownership model. Gate V6-0G still needs D1, D2, D3, D4, D7, D11 and the remaining decisions, so Wave 1 stays closed; until then `PLATFORM_CONSOLE_ENABLED=false` remains the only operating control.
