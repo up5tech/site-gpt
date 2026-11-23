@@ -816,3 +816,95 @@ The thresholds themselves are deliberately absent here: they follow from D3's SL
 ### What an approval changes
 
 Only the D8 row moves from **UNAPPROVED** to **APPROVED**, which unblocks V6-21 and V6-22 and turns R6's "no observability vendor config" into either a named destination or a signed decision to keep telemetry in-house. Gate V6-0G still needs D1, D2, D3, D4, D5, D6, D7, D11 and the remaining decisions, so Wave 1 stays closed; until then the worker keeps printing, the logs keep going wherever the host sends them, and `docs/release-v5.md` row 9 stays pending.
+
+## Appendix — D13 decision brief (sessions and security response)
+
+**Status: D13 remains UNAPPROVED.** This brief covers four separate tenant-side security questions — MFA/SSO, admin audit, session revocation and origin-bound widget auth — and for each one the approver records either **require** (with the scope) or **defer** (with the residual risk and its expiry, per the risk register's vocabulary). It names no identity provider, no second factor, no retention period, no session lifetime, no revocation mechanism vendor and no owner, and it recommends none of the options.
+
+### The question
+
+Which tenant-side security controls the launch carries: whether a company's own users must present a second factor or federate their identity, how much of a tenant admin's activity is recorded, whether a customer can see and end a session other than by deactivating the account, and whether the widget's public reads are bound to an origin by something stronger than a header a non-browser client can write. R10, R11 and R12 in `docs/risk-register-v6.md` are the rows these four answers move.
+
+### What the code does today (evidence, not a decision)
+
+- **One login method, one factor.** `POST /api/token` takes an email and password, verifies it with argon2 and returns a bearer JWT (`create_access_token`, which defaults to a fixed expiry of `timedelta(hours=24)`). Password reset is an emailed link. There is **no** second factor of any kind, no federated **login** and no passwordless path anywhere in the tree; the only OAuth text in the code is the Google Drive Picker access token, which is not an authentication path.
+- **A bearer token in `localStorage`.** `frontend/src/utils/api.ts` stores the JWT in `localStorage` and attaches it as `Authorization`; logout is a client-side removal (`AuthContext.logout`) with **no logout route**, no refresh token and no token blacklist. `docs/security.md` records the trade-off: CSRF does not apply to a bearer API, but an XSS can read the token, so the frontend must stay free of untrusted HTML.
+- **One server-side check already exists.** `core/auth.py::get_current_user` re-reads the user row on every request and requires `status == "active"`, so deactivating or deleting a user ends that account's access immediately even with a valid token. What does not exist is any way to end **one** session, or all sessions of a user, while the account stays usable: `DELETE /api/company/users/{id}` hard-deletes the user, and nothing lists or revokes a session (R11).
+- **Tenant admin activity is not audited.** `docs/security.md` states it plainly: "No admin audit log. API keys keep a `revoked_at` and a last-used timestamp; other admin actions are not recorded." Settings writes, website and document deletion, user create/delete/role change, API-key mint and revoke, integration create and token rotation, and the privacy purge are all unaudited — the purge writes a log line (`api/privacy.py`) and nothing else. Only the **operator** boundary is audited (`platform_audit_logs`, append-only, secret-shaped detail redacted), and the inbox transcript read is explicitly not audited either (the company is the boundary).
+- **The widget's origin check is soft by design.** `services/embed_guard.py` compares `Origin`/`Referer` against the website's origin, allows loopback, and accepts the API's own origin as first-party for the hosted page (exact scheme+host+port). A non-browser client sets that header freely, which the module's own docstring says; the optional `X-Embed-Token` is a public, replayable value (`EMBED_TOKEN_MODE` `compat` accepts a missing token, `enforce` requires a valid one), and the K4 session token guards history rather than the origin (`SESSION_TOKEN_MODE` `compat` still accepts a missing token for an unclaimed session). K18 is recorded as accepted, with the residual restated in `docs/security.md` §7.
+- **Revocation exists in pieces, never as a UI.** `/api/v1` keys and embed tokens are revoked by stamping `revoked_at` (API keys from Settings → API keys; embed tokens through the website routes), and a K4 `session_tokens` row can be revoked by setting that column — but `docs/security.md` says outright that deleting or stamping the row is the only immediate way and that "there is still no server-side revocation UI".
+- **Nothing here is scoped by role yet.** Whatever is decided applies to `admin`/`manager`/`user` differently, and the app has three tenant roles (`get_admin_user`, `get_manager_user`) but no per-role session policy.
+
+### Options and consequences
+
+Each question below is decided **require** or **defer**. Deferring is a recorded decision with the residual in the risk register, not an omission.
+
+#### 1. Tenant MFA and SSO
+
+| Option | What it means | Consequences to accept |
+|---|---|---|
+| **A — defer: one factor for every tenant user** | Email plus password stays the only login; the residual is recorded against R11. | No integration, no support burden, no recovery process to write; but a stolen or reused password is a full account takeover of a tenant, including its conversations and API keys, and the deferral has to name that and its expiry. |
+| **B — require a second factor for tenant admins and managers** | A second factor on the privileged tenant accounts only. | Covers the accounts that can read transcripts, mint keys and delete data while leaving ordinary members unchanged; but it needs enrolment, a recovery path (lost device) that is itself an attack surface, a UI, and a decision about what happens to an existing account that has not enrolled. |
+| **C — require a second factor for every tenant user** | A second factor on all logins. | The strongest posture for a product holding customer conversations, at the cost of the highest friction and the largest support surface (every locked-out member is a ticket), and it is a product decision as much as a security one — it belongs in D1's scope statement. |
+| **D — federation instead of a factor (SSO)** | A company authenticates its users through its own identity provider. | Removes password handling for those customers and can carry their own policies (including their own second factor); but it is a per-customer integration, it introduces an external dependency on the login path, it needs a model for mapping an assertion to a company and a role, and the password path must stay for everyone else — so it does not replace option B or C, it sits beside them. |
+
+#### 2. Broader admin audit
+
+| Option | What it means | Consequences to accept |
+|---|---|---|
+| **A — defer: operator-only audit (today)** | Only platform-owner actions are recorded; tenant admin actions are not. | Nothing to build and it is what `docs/security.md` already states; but a customer cannot answer "who deleted this document" or "who rotated this integration token", an incident investigation has only prose logs, and the deferral must be recorded against R10. |
+| **B — audit a named set of tenant-admin mutations** | An append-only row for each action in a defined list, written in the same transaction as the change. | Answers the question customers actually ask and reuses the pattern the operator audit already proves; it needs the list agreed (that is D11's mutation set, not a new decision), a table and migration, a reader in the UI, and the same redaction discipline as `platform_audit_logs`. |
+| **C — B plus read access logging** | Also records who read a transcript, an export or a secret-bearing page. | Closes the gap `docs/security.md` notes for inbox reads; but it multiplies row volume, turns reads into writes on hot paths, and creates a second store of personal data that retention (D7) and erasure must then answer for. |
+
+Whichever is chosen, the audit rows' own retention is part of the answer, and `platform_audit_logs` already has no deletion path — a second audited surface makes that question unavoidable rather than theoretical.
+
+#### 3. Session revocation for tenant users
+
+| Option | What it means | Consequences to accept |
+|---|---|---|
+| **A — defer: no revocation UI** | Deactivation or deletion of the account is the only lever; a stolen token is valid until it expires. | Zero work and one real control already exists (the per-request `status == "active"` check); but a customer cannot end a single compromised session, a password change does not end existing sessions, and the residual has to be recorded against R11 with its expiry. |
+| **B — a session list with revoke** | The user (and an admin, for the company's users) can see active sessions and end one. | The direct answer to "I think I'm logged in somewhere else"; it requires server-side session state (a session id in the token and a row to check, or a denylist with a revocation check on every request), a UI, and a decision about whether the check costs a database read per request. |
+| **C — revoke all sessions for a user or a company** | One action ends every outstanding token for that account or tenant. | Much cheaper than per-session management and enough for the common incident ("revoke everything now"); but there is no per-session granularity, so ending one shared device logs out every device, and it still needs the revocation check from B. |
+| **D — shorter-lived tokens with refresh** | Access tokens are short-lived and a refresh path exists; revocation happens by refusing to refresh. | Bounds the exposure window even without a denylist and is the usual shape of a bearer deployment; but it adds a refresh flow, a storage decision for the refresh credential, and a new failure mode every client must handle — and it does not revoke already-issued tokens by itself. |
+
+This question and the widget's K4/embed tokens are separate: the tenant session is a JWT in a browser, the widget's is a hashed row that can already be stamped.
+
+#### 4. Origin-bound widget auth
+
+| Option | What it means | Consequences to accept |
+|---|---|---|
+| **A — defer: soft origin plus an optional public token (today)** | `Origin`/`Referer` matching, loopback allowed, own origin allowed, `EMBED_TOKEN_MODE=compat`, K4 token in `compat`. | No change and the current snippets keep working everywhere; but the check is advisory against any non-browser client, the embed token is public and replayable, and the residual (R12, K18) stays accepted with its expiry recorded. |
+| **B — turn the existing switches on** | `EMBED_TOKEN_MODE=enforce` and `SESSION_TOKEN_MODE=enforce`, with the snippet rollout that implies. | No new code and it does stop a caller without the page's token; but it does not make the origin trustworthy, because the token still ships in the page — it is a revocation and compatibility control, not origin authentication, and the rollout breaks any customer page that has not reloaded the snippet. |
+| **C — per-website allowed origins as data** | Each website's permitted origins are stored and enforced, so a page on another domain is refused even though the header is spoofable by hand. | Makes the customer's own configuration the boundary and gives support a fix for a copied snippet; but it is only as strong as the header for non-browser clients, it needs a UI and a migration, and a wrong entry silently breaks a customer's site. |
+| **D — a server-minted, short-lived, origin-bound assertion** | The page obtains a credential bound to its origin and lifetime from the server, and the read path verifies it. | The only option here that actually raises the bar against a scripted client; it needs a minting route that can tell a legitimate embed from a curl call (which is the hard part, since the server cannot verify an origin either), a lifetime model, and a rollout that keeps the published snippet working — so it is a design task, not a flag. |
+
+None of these removes the K18 caveat that a public value in a customer's page is replayable; the approver must say which residual remains and against which row.
+
+### Cross-checks an approval must satisfy
+
+- **D1 states what the cohort gets**, so "require MFA for everyone" or "defer" is a scope line there and not only a security note.
+- **D5 is the operator half of the same identity story** and already requires strong auth or a private network for the console; a tenant MFA decision must not silently borrow the operator answer or leave the two inconsistent.
+- **D2 owns where session state would live** if revocation option B/C is chosen, since a revocation check on every request is a per-process or shared-store decision.
+- **D7 owns the retention and erasure of any new audit rows**, and D8 the alerting any of these controls would feed.
+- **D11 owns the mutation set** the audit option B assumes; D13 does not re-list it.
+- **D6 and D13 meet at the upload/admin boundary** — an audited admin action is what makes "a compromised admin imported that file" answerable.
+- **R10, R11 and R12 are this decision's risk rows**; every "defer" must fill their owner and expiry, which are blank today.
+
+### Exact evidence an approver must sign
+
+1. For §1: **require** or **defer**, and if require, whether the factor applies to admins/managers or to every user, whether SSO is offered instead or beside it, and the recovery path for a lost factor.
+2. For §1 deferral: the residual statement (a stolen password is a full tenant takeover) and its expiry, recorded against R11.
+3. For §2: **require** or **defer**, and if require, the exact mutation list (by D11's identifier), where the row is written, and confirmation that it is in the same transaction as the change.
+4. For §2: whether reads are audited at all, and if so what an audited read records without storing the transcript again.
+5. The retention of every new audit row and its relationship to erasure requests (D7), plus confirmation that `platform_audit_logs` retention is settled at the same time.
+6. For §3: **require** or **defer**, and if require, which of the options (per session / all sessions / short-lived plus refresh), who may revoke (self, company admin, both), and what the revocation check costs per request.
+7. Confirmation of what already ends access today — the per-request `status == "active"` check and hard-deletion of a user — so the deferral is described accurately rather than as "no revocation exists".
+8. For §4: **require** or **defer**, and if require, whether it is the existing switches, per-website origin data, or a new assertion design, with the snippet rollout and the customer impact stated.
+9. The residual that remains after the chosen option — the K18 public-value caveat cannot be removed by any of these — and the row it is recorded against.
+10. The role and permission model each answer implies (`admin`, `manager`, `user`), so a control cannot be bypassed by a role that was not considered.
+11. A non-production demonstration of each **require** answer (an unenrolled login refused, an audited action producing one row, a revoked session refused on its next request, an off-origin read refused), observed rather than asserted.
+12. The approver's role, date and a link or path to the signed evidence — recorded in this row and copied into `plans/PLAN_V6.md` §4 and into R10, R11 and R12 of `docs/risk-register-v6.md`.
+
+### What an approval changes
+
+Only the D13 row moves from **UNAPPROVED** to **APPROVED** — as four recorded require-or-defer answers, not as one blanket "yes" — which unblocks V6-12 and V6-14 and turns R10, R11 and R12 from unnamed residuals into either controls or signed acceptances with an expiry. With D13 recorded, every decision row that V6-01…V6-03 wait on has a brief; gate V6-0G still needs the approvals themselves, so Wave 1 stays closed and no control in this brief is implemented until an approver signs it. Until then sessions stay bearer-only, tenant admin actions stay unaudited, the widget keeps its soft origin check, and `EMBED_TOKEN_MODE`/`SESSION_TOKEN_MODE` stay at `compat`.
