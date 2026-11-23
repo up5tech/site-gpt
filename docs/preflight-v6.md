@@ -39,7 +39,7 @@ An index of the thirteen decisions in this record: each question in a line, the 
 | **D2** | Which hosting/runtime topology, network boundaries and deploy/rollback mechanism? | **UNAPPROVED** | R4, R6, R8 |  |  |  |  |
 | **D3** | Which availability/support promise, SLOs, RPO/RTO and capacity assumptions? | **UNAPPROVED** | R4, R6, R8 |  |  |  |  |
 | **D4** | Which production security profile — secrets/config, proxy trust, CORS, limiter backend, docs exposure? | **UNAPPROVED** | R1 |  |  |  |  |
-| **D5** | Which enforceable control protects platform-owner access, and who owns bootstrap, recovery and revocation? | **UNAPPROVED** | R2 |  |  |  |  |
+| **D5** | Which enforceable control protects platform-owner access, and who owns bootstrap, recovery and revocation? | **UNAPPROVED** | R2, R3 |  |  |  |  |
 | **D6** | Which upload policy for untrusted files — scanning, formats, quarantine, outage behaviour — or restriction/disablement? | **UNAPPROVED** | R9 |  |  |  |  |
 | **D7** | Which retention, audit-retention, backup-expiry and deletion semantics, and which privacy/legal owner? | **UNAPPROVED** | R8, R10 |  |  |  |  |
 | **D8** | Which logs, error tracking, metrics and alerting; what reaches which vendor; redaction, access and retention? | **UNAPPROVED** | R6 |  |  |  |  |
@@ -640,7 +640,7 @@ Which enforceable control protects the platform-owner boundary — a second fact
 8. The exposure decision: console enabled or disabled for the launch cohort, and if enabled, from where — public ingress, private path or operator proxy — consistent with D2.
 9. The audit expectations for operator access: which events are recorded, who may read them, and how that is verified rather than assumed.
 10. The acceptance scenarios V6-11 must demonstrate in a non-production environment — sign-in, refusal for a tenant account, a grant, a mutation, a revocation and a recovery — agreed now, with the evidence path recorded. The demonstration is V6-11 evidence, after this signature.
-11. The approver's role, date and a link or path to the signed evidence — recorded in this row and copied into `plans/PLAN_V6.md` §4 and into risk R2 (operator security) of `docs/risk-register-v6.md`.
+11. The approver's role, date and a link or path to the signed evidence — recorded in this row and copied into `plans/PLAN_V6.md` §4 and into risk R2 (operator security) and R3 (the operator half of the paid-launch row) of `docs/risk-register-v6.md`.
 
 ### What an approval changes
 
