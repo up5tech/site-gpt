@@ -866,6 +866,19 @@ go/no-go table and rollback steps are in [`docs/release-v5.md`](docs/release-v5.
 billing operations are in [`docs/billing.md`](docs/billing.md) and the operator
 boundary in [`docs/platform.md`](docs/platform.md).
 
+### V6 pre-flight (started)
+
+V6 is the production-readiness plan in [`plans/PLAN_V6.md`](plans/PLAN_V6.md).
+Wave 0 has only just started on branch `feat/v6`: the reproducible baseline (62
+Python test modules / 1094 tests, 46 node checks, clean build/lint/imports,
+Alembic head `0b22b30bf930`) and the provider-free V5-5G gate result (72/72 checks
+passed, 2 blocked) are recorded. V6-01 (launch track), V6-02 (named owners,
+SLO/RPO/RTO) and V6-03 (architecture review) wait on approvers nobody has named
+yet, so gate V6-0G is unsigned and Wave 1 has not started. The open decisions and
+the evidence each one needs are listed in
+[`docs/preflight-v6.md`](docs/preflight-v6.md). Until they are approved,
+`BILLING_ENABLED=false` and `PLATFORM_CONSOLE_ENABLED=false` remain the defaults.
+
 ## Dev commands
 
 ```bash
