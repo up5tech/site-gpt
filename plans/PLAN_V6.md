@@ -79,7 +79,7 @@ Track B is an additional gate, not an assumption of Track A. It requires all Tra
 
 ## 4. Pre-flight decisions (blocking for the affected tasks)
 
-Record a decision owner, approver, date and evidence. A proposed default is not an approval. The live record for D1/D3/D7/D11 and D2/D4/D5/D6/D8/D13 is [`docs/preflight-v6.md`](../docs/preflight-v6.md), where every row is still **UNAPPROVED**; D1, D2, D3, D4, D5, D6, D7, D8, D11 and D13 each have an appendix there (`D1 decision brief`, `D2 decision brief`, `D3 decision brief`, `D4 decision brief`, `D5 decision brief`, `D6 decision brief`, `D7 decision brief`, `D8 decision brief`, `D11 decision brief`, `D13 decision brief`) that lays out the options and the evidence an approver must sign; D13 records its four questions as separate require-or-defer answers.
+Record a decision owner, approver, date and evidence. A proposed default is not an approval. The live record for D1/D3/D7/D9/D11 and D2/D4/D5/D6/D8/D13 is [`docs/preflight-v6.md`](../docs/preflight-v6.md), where every row is still **UNAPPROVED**; D1, D2, D3, D4, D5, D6, D7, D8, D9, D11 and D13 each have an appendix there (`D1 decision brief`, `D2 decision brief`, `D3 decision brief`, `D4 decision brief`, `D5 decision brief`, `D6 decision brief`, `D7 decision brief`, `D8 decision brief`, `D9 decision brief`, `D11 decision brief`, `D13 decision brief`) that lays out the options and the evidence an approver must sign; D13 records its four questions as separate require-or-defer answers.
 
 | ID | Decision | Required before |
 |---|---|---|
@@ -95,7 +95,7 @@ Record a decision owner, approver, date and evidence. A proposed default is not 
 | D10 | CI and browser-test execution environment, dependency policy, artifact handling and who may deploy from a passing workflow. | V6-30 |
 | D11 | Customer support owner, contact channel, escalation target and response expectations; no promise without approval. | V6-02 / V6-41 |
 | D12 | If Track B: resolve V5 D2–D12, assign commercial/legal approvers, merchant account owner, Stripe operational owner and explicit live activation authority. | Paid billing gate |
-| D13 | Whether tenant MFA/SSO, broader admin audit, session revocation UI and origin-bound widget authentication are required for the target customer/security posture, or explicitly accepted/deferred. | V6-12 / V6-14 / V6-15 |
+| D13 | Whether tenant MFA/SSO, broader admin audit, session revocation UI and origin-bound widget authentication are required for the target customer/security posture, or explicitly accepted/deferred. | V6-12 / V6-14 / V6-15 / V6-16 |
 
 ---
 
@@ -127,11 +127,11 @@ Record a decision owner, approver, date and evidence. A proposed default is not 
 
 #### Gate V6-0G — approved scope
 
-- [ ] The ten decisions briefed in `docs/preflight-v6.md` — D1/D3/D7/D11 and D2/D4/D5/D6/D8/D13 — have owners and decisions for the chosen launch track; open external approvals remain explicitly blocked. D9/D10/D12 are not briefed there and are not part of this gate: D9 blocks V6-20, D10 blocks V6-30 and D12 applies only to Track B.
+- [ ] The ten decisions that block Wave 0 and Wave 1 — D1/D3/D7/D11 and D2/D4/D5/D6/D8/D13, briefed in `docs/preflight-v6.md` — have owners and decisions for the chosen launch track; open external approvals remain explicitly blocked. D9 is briefed there too but is not part of this gate: it blocks V6-20 in Wave 2. D10 (V6-30) and D12 (Track B only) have no brief.
 - [ ] Hosting topology, SLO/RPO/RTO, launch cohort, support owner and risk register are recorded.
 - [ ] Track A vs Track B boundary is explicit. If Track B prerequisites are open, paid launch is out of scope and flags remain off.
 
-**Wave 0 evidence (2026-11-23):** branch `feat/v6` created from `master` at `66dd197`; V6-04 is the only completed task and it added no code, so the baseline counts equal V5's recorded 62 / 1094 / 46. Three latent defects found by the Wave 0 await audit were then repaired as standalone fixes — the retention producer's missing `await` (`e4bdc21`), the scheduler loops' unheld task references (`ab7cb8a`) and the mail send that could fail unseen or abandon its coroutine (`ab7cb8a`, `88860c6`) — which is the only reason the suite moved: the current run is **63 modules / 1102 Python tests OK** (`uv run python -m unittest discover -s tests`) and **46/46 node checks** (`node --test tests/*.mjs`). No dependency was added and no migration was written (head stays `0b22b30bf930`); none of those repairs starts V6-20 or decides D9 (`docs/worker-delivery.md` findings 1, 8 and 9). Gate **V6-0G is not signed:** D1/D3/D7/D11 (launch track, SLO/RPO/RTO, data handling and backups, support owner) and D2/D4/D5/D6/D8/D13 (topology, security profile, operator auth, uploads, telemetry, session/embed posture) have no recorded owner or approval, so V6-01…V6-03 stay unticked. **Wave 1 must not start:** no production-config validator (V6-10), no platform-console or session/upload/audit work (V6-11…V6-15), no new dependency and no migration (head stays `0b22b30bf930`); `BILLING_ENABLED=false` and `PLATFORM_CONSOLE_ENABLED=false` remain the defaults and `docs/release-v5.md`'s NO-GO rows still stand.
+**Wave 0 evidence (2026-11-23):** branch `feat/v6` created from `master` at `66dd197`; V6-04 is the only completed task and it added no code, so the baseline counts equal V5's recorded 62 / 1094 / 46. Three latent defects found by the Wave 0 await audit were then repaired as standalone fixes — the retention producer's missing `await` (`e4bdc21`), the scheduler loops' unheld task references (`ab7cb8a`) and the mail send that could fail unseen or abandon its coroutine (`ab7cb8a`, `88860c6`) — which is the only reason the suite moved: the current run is **63 modules / 1102 Python tests OK** (`uv run python -m unittest discover -s tests`) and **46/46 node checks** (`node --test tests/*.mjs`). No dependency was added and no migration was written (head stays `0b22b30bf930`); none of those repairs starts V6-20 or decides D9 (`docs/worker-delivery.md` findings 1, 8 and 9). Gate **V6-0G is not signed:** D1/D3/D7/D11 (launch track, SLO/RPO/RTO, data handling and backups, support owner) and D2/D4/D5/D6/D8/D13 (topology, security profile, operator auth, uploads, telemetry, session/embed posture) have no recorded owner or approval, so V6-01…V6-03 stay unticked. **Wave 1 must not start:** no production-config validator (V6-10), no platform-console, tenant-identity or session/upload/audit work (V6-11…V6-16), no new dependency and no migration (head stays `0b22b30bf930`); `BILLING_ENABLED=false` and `PLATFORM_CONSOLE_ENABLED=false` remain the defaults and `docs/release-v5.md`'s NO-GO rows still stand.
 
 ### Wave 1 — secure production configuration and access
 
@@ -143,12 +143,13 @@ Record a decision owner, approver, date and evidence. A proposed default is not 
 - [ ] **V6-13 · Upload safety decision and implementation** — `M`, conditional on D6. Integrate an approved scanner/quarantine/size policy before serving files to public/untrusted users, or enforce a documented restriction/disablement. Cover archive bombs, MIME/extension mismatch and scanner outage behavior at the boundary. **Done when:** malicious/unsupported/scanner-unavailable cases fail safely and accepted files still follow the existing ingestion path; if deferred, the disabled/restricted behavior is tested.
 - [ ] **V6-14 · Admin audit scope** — `M`, resolve D7/D13. Define and implement auditable security-relevant tenant actions (minimum candidate: user/role/status changes, API-key issue/revoke, settings/model changes, data export/erasure, and billing mutations if Track B). Audit metadata only; do not store transcript/body/secrets. **Done when:** access control, actor, tenant, action, target and timestamp are tested, retention is approved, and read access is bounded.
 - [ ] **V6-15 · Embed/session compatibility rollout** — `S`, conditional on risk decision. Specify whether to move `SESSION_TOKEN_MODE` or `EMBED_TOKEN_MODE` from `compat` to `enforce`, and whether K18 needs a separate origin-bound design. Stage, observe and provide rollback; no guessed hard cutover. **Done when:** tenant/embed impact, legacy behavior, communication and rollback are evidenced or the current residual is explicitly accepted for the launch cohort.
+- [ ] **V6-16 · Tenant identity requirements (MFA/SSO)** — `L`, resolve D13. Implement the approved second factor or federated login for tenant users, or record the explicit deferral with its residual, owner and review date; the existing password login, session tokens and widget compatibility stay unless a separate compatibility migration is approved. Cover enrolment, recovery and lockout, so a lost factor, a disabled account or a provider outage cannot strand a tenant, and add no identity dependency the decision has not approved. **Done when:** the require-or-defer answer is recorded for the launch cohort, and if required, enrolment, recovery, lockout and deactivated-account paths are tested; if deferred, the residual is recorded in the risk register with an owner and expiry, and no login or launch copy claims a second factor or federated login that does not exist.
 
 #### Gate V6-1G — security baseline
 
 - [ ] Production config fails closed; test/dev compatibility remains intact.
 - [ ] The operator surface is protected by the approved control or is disabled.
-- [ ] Upload, tenant-admin audit and session/embed decisions are implemented or explicitly out of launch scope with tested restrictions/accepted risks.
+- [ ] Tenant identity (MFA/SSO), upload, tenant-admin audit and session/embed decisions are implemented or explicitly out of launch scope with tested restrictions/accepted risks.
 - [ ] No credentials/PII are introduced into new logs, audit rows, frontend bundles or errors.
 
 ### Wave 2 — worker reliability and operational visibility
@@ -285,7 +286,7 @@ For each gate, record: commit SHA, runtime/tool versions, test/module counts, No
 
 - [ ] Approved launch track, target environment/cohort, named owners, support path and measurable operational objectives exist.
 - [ ] Production-only configuration validation blocks known unsafe defaults while local tests/development remain usable.
-- [ ] Platform access is protected by the approved control or the console remains disabled; session/upload/audit/embed decisions are tested or explicitly scoped out.
+- [ ] Platform access is protected by the approved control or the console remains disabled; tenant identity, session/upload/audit/embed decisions are tested or explicitly scoped out.
 - [ ] Background work has job-specific delivery/retry/idempotency and recovery evidence; staging alerts on material API/worker/dependency failures.
 - [ ] CI runs backend, Node, imports, frontend build/lint and safe migration/gate checks; critical browser journeys have repeatable acceptance evidence.
 - [ ] Database and upload recovery is restore-tested against approved RPO/RTO; privacy, retention, support and incident/rollback procedures are approved and rehearsed.
@@ -297,7 +298,7 @@ For each gate, record: commit SHA, runtime/tool versions, test/module counts, No
 | Wave | Tasks | Gate |
 |---|---|---|
 | 0 — scope and baseline | V6-01…04 | V6-0G |
-| 1 — security and access | V6-10…15 | V6-1G |
+| 1 — security and access | V6-10…16 | V6-1G |
 | 2 — reliability and visibility | V6-20…23 | V6-2G |
 | 3 — quality automation | V6-30…33 | V6-3G |
 | 4 — deployment and recovery | V6-40…44 | V6-4G |
