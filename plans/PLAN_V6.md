@@ -79,7 +79,7 @@ Track B is an additional gate, not an assumption of Track A. It requires all Tra
 
 ## 4. Pre-flight decisions (blocking for the affected tasks)
 
-Record a decision owner, approver, date and evidence. A proposed default is not an approval. The live record for D1/D3/D7/D9/D11 and D2/D4/D5/D6/D8/D13 is [`docs/preflight-v6.md`](../docs/preflight-v6.md), where every row is still **UNAPPROVED**; D1, D2, D3, D4, D5, D6, D7, D8, D9, D11 and D13 each have an appendix there (`D1 decision brief`, `D2 decision brief`, `D3 decision brief`, `D4 decision brief`, `D5 decision brief`, `D6 decision brief`, `D7 decision brief`, `D8 decision brief`, `D9 decision brief`, `D11 decision brief`, `D13 decision brief`) that lays out the options and the evidence an approver must sign; D13 records its four questions as separate require-or-defer answers.
+Record a decision owner, approver, date and evidence. A proposed default is not an approval. The live record for D1/D3/D7/D9/D10/D11 and D2/D4/D5/D6/D8/D13 is [`docs/preflight-v6.md`](../docs/preflight-v6.md), where every row is still **UNAPPROVED**; D1, D2, D3, D4, D5, D6, D7, D8, D9, D10, D11 and D13 each have an appendix there (`D1 decision brief`, `D2 decision brief`, `D3 decision brief`, `D4 decision brief`, `D5 decision brief`, `D6 decision brief`, `D7 decision brief`, `D8 decision brief`, `D9 decision brief`, `D10 decision brief`, `D11 decision brief`, `D13 decision brief`) that lays out the options and the evidence an approver must sign; D13 records its four questions as separate require-or-defer answers.
 
 | ID | Decision | Required before |
 |---|---|---|
@@ -92,7 +92,7 @@ Record a decision owner, approver, date and evidence. A proposed default is not 
 | D7 | Data handling: retention defaults, audit retention, backup expiry, user/company deletion and backup restore/deletion semantics; legal/privacy owner. | V6-41 / V6-42 (and the retention questions inside V6-14 / V6-15) |
 | D8 | Logs, error tracking, metrics and alerting: selected tools, data sent to vendors, PII redaction, access and retention. | V6-21 / V6-22 |
 | D9 | Background work delivery guarantee and acceptable duplicate/loss behavior by job type; retry limits, dead-letter owner and replay procedure. | V6-20 |
-| D10 | CI and browser-test execution environment, dependency policy, artifact handling and who may deploy from a passing workflow. | V6-30 |
+| D10 | CI and browser-test execution environment, dependency policy, artifact handling and who may deploy from a passing workflow. | V6-30 / V6-32 / V6-33 |
 | D11 | Customer support owner, contact channel, escalation target and response expectations; no promise without approval. | V6-02 / V6-41 |
 | D12 | If Track B: resolve V5 D2–D12, assign commercial/legal approvers, merchant account owner, Stripe operational owner and explicit live activation authority. | Paid billing gate |
 | D13 | Whether tenant MFA/SSO, broader admin audit, session revocation UI and origin-bound widget authentication are required for the target customer/security posture, or explicitly accepted/deferred. | V6-12 / V6-14 / V6-15 / V6-16 |
@@ -127,7 +127,7 @@ Record a decision owner, approver, date and evidence. A proposed default is not 
 
 #### Gate V6-0G — approved scope
 
-- [ ] The ten decisions that block Wave 0 and Wave 1 — D1/D3/D7/D11 and D2/D4/D5/D6/D8/D13, briefed in `docs/preflight-v6.md` — have owners and decisions for the chosen launch track; open external approvals remain explicitly blocked. D9 is briefed there too but is not part of this gate: it blocks V6-20 in Wave 2. D10 (V6-30) and D12 (Track B only) have no brief.
+- [ ] The ten decisions that block Wave 0 and Wave 1 — D1/D3/D7/D11 and D2/D4/D5/D6/D8/D13, briefed in `docs/preflight-v6.md` — have owners and decisions for the chosen launch track; open external approvals remain explicitly blocked. D9 and D10 are briefed there too but are not part of this gate: they block V6-20 in Wave 2 and V6-30/V6-32/V6-33 in Wave 3. D12 (Track B only) has no brief.
 - [ ] Hosting topology, SLO/RPO/RTO, launch cohort, support owner and risk register are recorded.
 - [ ] Track A vs Track B boundary is explicit. If Track B prerequisites are open, paid launch is out of scope and flags remain off.
 

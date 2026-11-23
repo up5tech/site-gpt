@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Status | **Draft, and every decision below is UNAPPROVED.** No approver, date or evidence has been recorded for any row. |
-| Scope | The decisions `plans/PLAN_V6.md` §4 marks as blocking for Wave 0 and Wave 1 — D1/D3/D7/D11 (launch scope, operations, data handling, support) and D2/D4/D5/D6/D8/D13 (topology, security profile, operator authentication, uploads, telemetry, session/embed posture) — plus D9 (background-job delivery), which blocks V6-20 in Wave 2 and is briefed here because it decides risk R5. |
+| Scope | The decisions `plans/PLAN_V6.md` §4 marks as blocking for Wave 0 and Wave 1 — D1/D3/D7/D11 (launch scope, operations, data handling, support) and D2/D4/D5/D6/D8/D13 (topology, security profile, operator authentication, uploads, telemetry, session/embed posture) — plus D9 (background-job delivery) and D10 (CI and browser execution), which block V6-20 in Wave 2 and V6-30/V6-32/V6-33 in Wave 3 and are briefed here because they decide risks R5 and R7. |
 | Snapshot | `master` at `66dd197`, branch `feat/v6` (2026-11-23), Alembic head `0b22b30bf930`. |
 | Rule | A proposed default, an engineering preference or this document is **not** an approval. An approval exists only when a named approver, a date and the evidence are recorded in the row. |
 
@@ -24,12 +24,13 @@ are why gate V6-0G is unsigned and Wave 1 has not started.
 | **D7** | What data handling applies: retention defaults, audit retention, backup expiry, and deletion/restore semantics for users, companies and backups? | Privacy/legal owner — **not yet named** | The approved retention and deletion rules including how backups are handled, the audit-retention period, and the owner who answers data-subject requests. | **UNAPPROVED** — no approver recorded. Blocks V6-41/V6-42 (and V6-14/V6-15 where they touch retention). |
 | **D8** | Which logs, error tracking, metrics and alerting are used; what data goes to which vendor; what is redacted; who has access and for how long? | Security/privacy owner with engineering — **not yet named** | The chosen tools (or an explicit decision to defer), the exact data each receives, the redaction rules, and access/retention terms approved by the privacy owner. | **UNAPPROVED** — no approver recorded. Blocks V6-21/V6-22. |
 | **D9** | What delivery guarantee applies to background jobs, which duplicate/loss cases are acceptable by job type, what retry limit and backoff, and who owns a dead-letter queue and replay? | Infrastructure/deployment owner with the engineering lead — **not yet named** | A per-job-type statement of the guarantee and of the acceptable duplicate/loss case, the retry and terminal-state rule, the dead-letter destination and owner, and where the replay procedure and its idempotency keys are recorded. | **UNAPPROVED** — no approver recorded. Blocks V6-20. |
+| **D10** | Where do the project's checks run, which of them must pass before a change lands, how is the browser journey executed, how are dependencies reviewed, and what does a passing run authorise? | Engineering lead with the operations owner — **not yet named** | The chosen execution environment and who operates it, the blocking set versus the scheduled set, the browser journey's execution and recorded result, the dependency-review rule with its reader and threshold, and the deploy authority and retained artifacts a passing run carries. | **UNAPPROVED** — no approver recorded. Blocks V6-30/V6-32/V6-33. |
 | **D11** | Who owns customer support, through which channel, with what coverage window, escalation target and response expectation? | Support owner (business) — **not yet named** | A named owner, contact channel, coverage window, escalation path and response expectation that the owner accepts — no engineering default promoted into a promise. | **UNAPPROVED** — no approver recorded. Blocks V6-02/V6-41. |
 | **D13** | Are tenant MFA/SSO, broader admin audit, a session-revocation UI and origin-bound widget authentication required for this cohort, or explicitly deferred? | Security owner with product owner — **not yet named** | An explicit require/defer decision per item with rationale, affected tasks and — for deferrals — the accepted residual risk and an expiry or review date. | **UNAPPROVED** — no approver recorded. Blocks V6-12/V6-14/V6-15/V6-16. |
 
 ## Decision register — one page to sign
 
-An index of the eleven decisions in this record: each question in a line, the risk rows it moves, and a sign-off slot in the same row. The options, their consequences and the exact evidence an approver must supply are in that row's appendix below; nothing here restates, narrows or recommends them, and an empty sign-off cell is not an approval. D10 (CI and browser execution) and D12 (Track B commercial readiness) are deliberately absent: they have no appendix here and block later tasks or apply only to Track B. D9 is briefed, but it blocks V6-20 in Wave 2 rather than the Wave 0 gate.
+An index of the twelve decisions in this record: each question in a line, the risk rows it moves, and a sign-off slot in the same row. The options, their consequences and the exact evidence an approver must supply are in that row's appendix below; nothing here restates, narrows or recommends them, and an empty sign-off cell is not an approval. D12 (Track B commercial readiness) is deliberately absent: it has no appendix here and applies only to Track B. D9 and D10 are briefed, but they block V6-20 in Wave 2 and V6-30/V6-32/V6-33 in Wave 3 rather than the Wave 0 gate.
 
 | ID | Question | Status | Risk rows | Approver | Role | Date | Evidence path |
 |---|---|---|---|---|---|---|---|
@@ -42,6 +43,7 @@ An index of the eleven decisions in this record: each question in a line, the ri
 | **D7** | Which retention, audit-retention, backup-expiry and deletion semantics, and which privacy/legal owner? | **UNAPPROVED** | R8, R10 |  |  |  |  |
 | **D8** | Which logs, error tracking, metrics and alerting; what reaches which vendor; redaction, access and retention? | **UNAPPROVED** | R6 |  |  |  |  |
 | **D9** | Which delivery guarantee, duplicate/loss tolerance by job type, retry limits, dead-letter destination and replay? | **UNAPPROVED** | R5 |  |  |  |  |
+| **D10** | Where do the checks run, what blocks a change, how does the browser journey run, how are dependencies reviewed, and what does a passing run authorise? | **UNAPPROVED** | R7 |  |  |  |  |
 | **D11** | Who owns customer support, through which channel, with what coverage, escalation and response expectation? | **UNAPPROVED** | R4 |  |  |  |  |
 | **D13** | Are tenant MFA/SSO, broader admin audit, a session-revocation UI and origin-bound widget auth required or deferred? | **UNAPPROVED** | R10, R11, R12 |  |  |  |  |
 
@@ -63,7 +65,7 @@ An index of the eleven decisions in this record: each question in a line, the ri
 
 ## Out of scope of this record
 
-D10 (CI/browser execution) and D12 (Track B commercial and Stripe readiness) are listed in `plans/PLAN_V6.md` §4 and are not duplicated here; D12 applies only if Track B is chosen. D9 is briefed here even though it gates a Wave 2 task, because R5 has no other decision to wait on.
+D12 (Track B commercial and Stripe readiness) is listed in `plans/PLAN_V6.md` §4 and is not duplicated here; it applies only if Track B is chosen. D9 and D10 are briefed here even though they gate Wave 2 and Wave 3 tasks, because R5 and R7 have no other decision to wait on.
 
 ## How an approval gets recorded
 
@@ -416,7 +418,7 @@ Whichever shape is chosen, the boundary description has to say which of these is
 - **D6 and option 4C interact.** Scanning has to sit wherever the bytes actually land; choosing object storage moves the upload surface into a new code path and a new boundary.
 - **D7 needs the deletion map for wherever bytes live**, including a shared filesystem or a bucket whose own versioning or lifecycle rules may outlive the application's purge.
 - **D8 needs to know where logs and metrics are collected from** — which process writes them, whether the worker's `print` output is captured, and which ingress or host layer supplies request logs.
-- **D9 owns queue survivability**, but this row decides whether Redis persists, whether eviction can drop keys and whether a restart loses queued work; those facts belong in D9's answer.
+- **D9 owns queue survivability**, but this row decides whether Redis persists, whether eviction can drop keys and whether a restart loses queued work; those facts belong in the D9 brief.
 - **D1 decides whether Track B is in scope**, which adds the payment provider's webhook ingress and the operator console's origin to the boundary description.
 
 ### Exact evidence an approver must sign
@@ -932,7 +934,7 @@ Only the D13 row moves from **UNAPPROVED** to **APPROVED** — as four recorded 
 
 ## Appendix — D9 decision brief
 
-**Status: D9 remains UNAPPROVED.** This brief lays out the choices for background-job delivery; it names no mechanism, no attempt limit, no backoff interval, no dead-letter owner and no replay authority, and it recommends none of the options. The windows and limits quoted below are what the code does today, recorded in `docs/worker-delivery.md` as evidence, not as a proposal.
+**Status: D9 remains UNAPPROVED.** This brief lays out the choices for background-job delivery; it names no mechanism, no attempt limit or deadline, no backoff interval, no dead-letter owner and no replay authority, and it recommends none of the options. The windows and limits quoted below are what the code does today, recorded in `docs/worker-delivery.md` as evidence, not as a proposal.
 
 ### The question
 
@@ -944,7 +946,7 @@ What delivery guarantee applies to the jobs on `queue:jobs` — `ingest`, `diges
 - **Each job type is recovered, or not, by its own record.** `ingest` has `claim_ingest` with a 6 h stale takeover (`STUCK_INGEST_AFTER`) plus `recover_stuck_ingests` at startup and on each scheduler tick; `digest` claims a unique `digest_log (company_id, period_start)` before the email and re-queues a claim older than `DIGEST_CHECK_SECONDS`; `topic_clusters` and `insights` take a unique row per window or conversation, skip a fresh claim and take over a stale one after 30 minutes. `retention` and `sitemap_scan` have no claim row at all: retention has a daily loop over an idempotent age cutoff, sitemap a best-effort Redis key with a TTL.
 - **One known duplicate-send path, one known duplicate-spend path and one known stale-knowledge path.** A `digest` crash between the mail server accepting and the `sent_at` commit re-sends the period, and a partial send stamps the period so the failed recipients are never retried; `topic_clusters` and `insights` can repeat an embedding/naming or classification call after a crash; a `sitemap_scan` that commits its page diff and then loses the message leaves knowledge stale until the periodic re-crawl.
 - **Nothing bounds repeats.** `digest`, `topic_clusters` and `insights` re-queue on a timer with no attempt counter, so a deterministic failure repeats every interval; only the claim windows bound concurrency.
-- **A durable, claim-per-row pattern already runs here.** `integration_deliveries` records every event before its first send, claims each row with `SELECT … FOR UPDATE SKIP LOCKED`, and retries on its own tick — the same table-plus-claim shape option C in §1 describes.
+- **A durable, claim-per-row pattern already runs here.** `integration_deliveries` records every event before its first send, claims each row with `SELECT … FOR UPDATE SKIP LOCKED`, and retries it on its own tick.
 
 ### Options and consequences
 
@@ -953,24 +955,24 @@ What delivery guarantee applies to the jobs on `queue:jobs` — `ingest`, `diges
 | Option | What it means | Consequences to accept |
 |---|---|---|
 | **A — no queue-level guarantee (today)** | `LPUSH`/`BRPOP`, with each handler's claim, unique row or scheduler tick as the only recovery. | No new mechanism, no migration and no change to the job payloads; but the guarantee differs per job type, two types have none, a crash always loses the message, and recovery waits for a stale window or the next tick — a day for `retention`, a whole scan interval for a lost `sitemap_scan`. |
-| **B — reliable Redis delivery** | A popped message moves to a per-worker processing list and is removed only after the handler returns; a reaper returns entries whose worker stopped. | Makes the queue at-least-once, so every handler must tolerate a repeat; it stays in the same Redis, so a flush, an eviction or a restart can still lose the main list and the processing lists together; needs a reaper interval and a rule for a job whose worker vanished mid-send. |
+| **B — reliable Redis delivery** | A popped message moves to a per-worker processing list and is removed only after the handler returns; a reaper returns entries whose worker stopped. | Reuses the Redis the queue already runs on — no second datastore and no migration — and makes the queue at-least-once, so every handler must tolerate a repeat; but a flush, an eviction or a restart can still lose the main list and the processing lists together, and it needs a reaper interval plus a rule for a job whose worker vanished mid-send. |
 | **C — durable job record** | Each job is a database row (written in the producer's transaction where one exists) and the worker claims rows with `FOR UPDATE SKIP LOCKED`, the pattern `integration_deliveries` already uses. | Survives a Redis loss and makes the backlog queryable and countable; requires a migration — making the plan's “no migration by default” an explicit decision — a poll interval instead of a blocking pop, a settle/purge rule for finished rows (adjacent D7) and an index for the claim. |
 
 #### 2. Which duplicate and loss cases are acceptable, by job type
 
 | Option | What it means | Consequences to accept |
 |---|---|---|
-| **A — one guarantee for all six** | A single rule applied to `ingest`, `digest`, `retention`, `topic_clusters`, `sitemap_scan` and `insights` alike. | Simplest to state and test; but the six are not alike — a repeated `digest` is a duplicate email to a customer, a repeated `retention` deletes nothing twice, and a lost `ingest` leaves partially refreshed knowledge — so one rule is either too loose for the send or needlessly costly for the purge. |
-| **B — classes: must-not-lose, must-not-duplicate, either acceptable** | Each job type is placed in a class, and §1's mechanism is sized to the strictest class it carries. | Matches the matrix and lets a cheap job stay cheap; requires the approver to classify all six and to state the rule for a job type added later, and a job that changes class needs a recorded re-decision. |
-| **C — at-least-once everywhere, with idempotency in every handler** | Every job may run twice, and each destructive path is made safe to repeat: a re-send guard, a page diff that survives a repeat, a delete that re-selects by age. | Uniform, testable and the least surprising to operate; but it asks for work on every destructive path — including the digest's send, which today has no guard between acceptance and the commit — and “safe to repeat” has to be proven per handler rather than assumed. |
+| **A — one rule for all six** | A single duplicate/loss statement applied to `ingest`, `digest`, `retention`, `topic_clusters`, `sitemap_scan` and `insights` alike. | Shortest to state and to test, and no classification work; but the six are not alike — a repeated `digest` is a duplicate email to a customer, a repeated `retention` deletes nothing twice and a lost `ingest` leaves partially refreshed knowledge — so one rule is either too loose for the send or stricter than the purge needs. |
+| **B — three classes** | Each job type is placed in must-not-lose, must-not-duplicate or either-acceptable, and §1's mechanism is sized to the strictest class it carries. | Keeps the statement to three lines and lets a cheap job stay cheap; requires the approver to place all six, and a job that later changes class needs a recorded re-decision. |
+| **C — one answer per job type** | Each of the six gets its own duplicate/loss answer, with no classes to belong to. | The most precise record and nothing to infer when one job's needs change; the longest to write and keep true, and two jobs that share an answer are still recorded twice, so a later job needs its own entry rather than a class to join. |
 
 #### 3. Retry and terminal state
 
 | Option | What it means | Consequences to accept |
 |---|---|---|
 | **A — no retry; the next tick is the retry** | What the loops do today for `digest`/`topic_clusters`/`insights`, and what the 6 h stale window does for `ingest`. | Nothing to build; but a deterministic failure repeats on every tick for as long as the timer runs, is indistinguishable from a healthy backlog, and can spend provider credit on each repeat. |
-| **B — bounded attempts with backoff and a terminal state** | The job carries its attempt count and last failure; after the approved limit it stops and is marked terminal. | Bounds cost and noise and turns “this job is stuck” into a state rather than an inference; needs somewhere to keep the count and the failure (the queue entry, a job row, or the handler's own claim row), and a decision about what terminal means per class — never retried, or retried only by a human. |
-| **C — bounded attempts, then a scheduled re-drive** | Terminal jobs wait for an operator or for a periodic re-drive that replays everything terminal. | Removes the silent-forever case without a manual step per failure; adds a schedule and a replay that must itself be safe to repeat, and a re-drive can resurrect a job whose cause was never fixed. |
+| **B — a bounded number of attempts** | The job carries its attempt count and last failure; after the approved limit it stops in a terminal state that only a replay clears. | Bounds cost and noise and turns “this job is stuck” into a state rather than an inference; needs somewhere to keep the count and the failure (the queue entry, a job row or the handler's own claim row) and a rule for what clears the terminal state. |
+| **C — attempts until an elapsed deadline** | Attempts continue with a growing backoff and stop when the approved deadline passes. | Absorbs an outage of unknown length without anyone deciding per job; but a deterministic failure keeps spending calls until the deadline, and the deadline is a target the approver has to choose and keep under review. |
 
 #### 4. Where a failed job is visible
 
@@ -984,22 +986,99 @@ What delivery guarantee applies to the jobs on `queue:jobs` — `ingest`, `diges
 
 | Option | What it means | Consequences to accept |
 |---|---|---|
-| **A — no replay procedure** | A job is re-created by triggering its producer again (an admin re-ingest, a settings change), or not at all. | Nothing to build or authorize; but the operator has to know which producer to trigger, and some jobs — a lost `sitemap_scan`, a `digest` week already stamped — cannot be reproduced that way without changing data. |
-| **B — a documented per-job replay path** | Each job type names the command or endpoint that re-creates it and the idempotency key that makes the repeat safe. | Replay is possible without a new tool and the safety argument is written down per type; the operator must have access to that command, and the document has to be kept true as the jobs change. |
-| **C — a replay action that records who replayed what** | One operator action replays a terminal job and writes an audit row (actor, job, time). | The trail an incident review needs, and it fits the audited operator boundary the platform console already uses; adds an interface to build, an authorization decision and a redaction rule for the payload it shows. |
+| **A — no replay** | A lost or stopped job is not re-created; the next scheduled run is the only recovery. | Nothing to build, authorize or document; but a lost `sitemap_scan` waits a whole interval, and a `digest` period already stamped as sent cannot be re-sent at all, so a partial send has no lever behind it. |
+| **B — replay through the producer** | Each job type documents the command or endpoint that re-creates its work (a re-ingest, a window re-queue) and the idempotency key that makes the repeat safe. | No new interface, and the safety argument is written per type; but the operator must know the producer and have access to it, and work a producer cannot reproduce — a scan whose diff was committed, a stamped `digest` week — has no replay. |
+| **C — replay the job record** | An operator action replays the stopped entry itself and writes an audit row (actor, job, time). | The trail an incident review needs, and it covers work a producer cannot reproduce because the payload is the record; adds an interface, an authorization decision and a redaction rule for the payload it shows, and it needs a record to replay from (§1 C or §4 B). |
 
 ### Exact evidence an approver must sign
 
 1. The §1 mechanism, and — if a durable record is chosen — the approval that a migration is now in scope for V6.
-2. The §2 classification: for each of the six job types and for a job type added later, whether a crash may lose it, whether it may run twice, and what makes a repeat safe.
-3. The §3 retry limit, backoff and terminal state, stated per class rather than as one number if the classes differ.
+2. The §2 statement, at the granularity chosen — one rule, three classes or six individual answers — covering each of the six job types, the rule for a job type added later, whether a crash may lose it or run it twice, and what makes an allowed repeat safe.
+3. The §3 retry rule — the attempt limit or the elapsed deadline, the backoff, and where a stopped job rests and what clears it.
 4. The §4 destination for a terminal job, who may read it, its retention or expiry, and which parts of its payload are redacted.
-5. The §5 replay authority and procedure, and the idempotency key each job type relies on.
+5. The §5 replay authority and procedure, the idempotency key each replay relies on, and — where the replay is recorded — where the audit row is written and who may read it.
 6. For `digest` specifically: whether a duplicate send is accepted for the launch cohort, and if not, the guard that closes the window between the mail server accepting and `sent_at` committing.
-7. The crash-window tests to be run and where their evidence is recorded — crash before the handler, during it, after an external send and before the queue entry is cleared, after a commit, and on a provider failure — on disposable infrastructure, never against data that matters.
+7. The crash-window tests to be run and where their evidence is recorded — crash before the handler, during it, after an external send and before the job is acknowledged or removed, after a commit, and on a provider failure — on disposable infrastructure, never against data that matters.
 8. The retention rule for settled job records or dead-letter entries, if either is durable (adjacent D7).
 9. The approver's role, the date and a link or path to the signed evidence — recorded in this row and copied into `plans/PLAN_V6.md` §4 and into risk R5 of `docs/risk-register-v6.md`.
 
 ### What an approval changes
 
 Only the D9 row moves from **UNAPPROVED** to **APPROVED**, which unblocks V6-20 and turns R5 from an unowned P1 into a stated guarantee with a tested recovery path. V6-20 is a Wave 2 task, so this signature does not open Wave 1: gate V6-0G still needs D1, D2, D3, D4, D5, D6, D7, D8, D11 and D13, and V6-20 starts only once V6-0G is signed as well. Until then the queue keeps its at-most-once behaviour and R5 keeps its blank owner.
+
+## Appendix — D10 decision brief
+
+**Status: D10 remains UNAPPROVED.** This brief lays out the choices for where the project's checks run; it names no vendor or product, sets no severity threshold, retention period or owner, and recommends none of the options. The commands and counts it quotes are what the checkout does today, recorded in `AGENTS.md` and `plans/PLAN_V6.md` §8 as evidence, not as a proposal.
+
+### The question
+
+Where do the checks the project already has run, which of them must pass before a change lands, how is the browser journey executed, how are dependencies reviewed, and what does a passing run authorise? The answer decides the workflow V6-30 adds, the browser runner V6-32 needs and the dependency and artifact rules V6-33 records. It adds no check of its own: every command named below exists today and is run by hand.
+
+### What the code does today (evidence, not a decision)
+
+- **No tracked workflow.** The checkout has no workflow directory, no CI configuration file and no `Makefile`: the commands in `AGENTS.md` and `plans/PLAN_V6.md` §8 are run on a developer's machine and their results transcribed into a document. Nothing runs on a push, and no result is attached to a commit.
+- **The checks that exist.** `uv run python -m unittest discover -s tests` (63 modules / 1102 tests at the last recording), `node --test tests/*.mjs` (46), `uv run python -c "import site_gpt.app.main; import site_gpt.app.worker"`, `cd frontend && npm run build && npm run lint` (`tsc && vite build` and `eslint … --max-warnings 0`), `uv run alembic current` = `uv run alembic heads` = `0b22b30bf930`, `trail build`, plus the gate scripts under `scripts/`. `scripts/gate_v5_5g/run_all.sh` creates, migrates to head and drops its own `v5_gate_5g` database, refusing a name that does not start with `v5_gate_5g`, and needs no provider; `scripts/gate_v3_4g`, `scripts/gate_v4_4g` and `scripts/gate_v4_5g` regress earlier versions and need inputs this checkout does not have (a prior version's tree, fixed Redis ports, live providers).
+- **Two runtimes, and a test that skips instead of failing.** `tests/test_widget_markdown.py` shells out to `node` and calls `skipTest` when it is absent, so a Python run on a machine without Node reports success with the widget checks skipped. `frontend/package.json` deliberately has no `test` script, so the frontend's only automated checks are build and lint.
+- **Lockfiles are committed; runtime versions are prose.** `uv.lock` and `frontend/package-lock.json` exist, while Python 3.13.13 and Node v24.19.0 are recorded in documents and there is no `.python-version` or `.nvmrc` file for a runner to read.
+- **Nothing is retained.** A run leaves terminal output in a shell: no test report, build artifact or digest is stored, and nothing ties a deployed build to a run that passed.
+- **The browser item is already blocked.** V5-5G records the journey across `/`, `/pricing`, `/app` and `/platform` as **blocked** because that gate is headless, and there is no browser runner in the tree.
+
+### Options and consequences
+
+#### 1. Where the checks execute
+
+| Option | What it means | Consequences to accept |
+|---|---|---|
+| **A — where it runs today** | No workflow: the documented commands run on a developer's machine and the result is transcribed. | Nothing to configure, pay for or keep available, and no repository credential leaves the team's machines; but a check nobody ran is not evidence, results depend on the machine that ran them, and a release claim cannot be tied to a commit without a transcript. |
+| **B — a hosted service triggered by the repository** | Push and pull-request events start the checks on infrastructure the service provides. | Runs without anyone remembering and attaches the result to the commit; needs an account, a credential-scoping rule for any job that needs one, images someone keeps current, and a policy for the workflow's own third-party dependencies. |
+| **C — a runner on infrastructure the team operates** | The team installs, patches and keeps the runner available itself. | The runtime can be the target environment itself and no third party holds the repository's credentials; but the runner has to be patched, monitored and kept up (adjacent D2 and D8), and its result is trusted only as far as the runner is. |
+
+#### 2. Which checks block a change
+
+| Option | What it means | Consequences to accept |
+|---|---|---|
+| **A — none required** | Every check is advisory; a change lands on review alone. | No waiting and no setup; but the suites and gate scripts that exist protect nothing at merge time, and the only record of a regression is someone noticing it later. |
+| **B — a fast subset required, the rest scheduled** | The unit suites, node checks, imports and build/lint block; the database gate scripts and whatever §3 chooses for the browser run on a schedule or before a release. | Keeps the wait per change short and still catches the expensive regressions; but the schedule lags the change, so a defect those gates would catch lands first, and someone has to read the scheduled result. |
+| **C — everything required** | Both suites, the imports, build/lint, the migration check, the gate scripts and the §3 browser run all block. | Nothing lands unchecked and every change is recorded the same way; but a change waits on a database-dropping gate and a browser run, and the gates that need inputs this checkout lacks have to be made self-contained first or they block every change. |
+
+#### 3. How the browser journey runs
+
+| Option | What it means | Consequences to accept |
+|---|---|---|
+| **A — no automated browser (today)** | The journey is walked by hand and the pass is recorded as prose. | No runner to install or keep in step; but the journey is only as repeatable as the person and the day, and a regression is found when someone happens to look. |
+| **B — a browser on the same runner as the checks** | That runner has a browser installed and drives the journey there; needs §1 B or C, because §1 A has no runner to install it on. | One environment carries both the checks and the browser, and the result attaches to the same run; needs the browser and its driver kept in step with the frontend, and the runner available whenever a change needs it. |
+| **C — a hosted browser service** | The journey runs against a service that supplies the browser, per change or per release, wherever §1 puts the other checks. | Independent of the team's machines and able to cover several viewports in one run; adds a third party that receives the staging URL and any test credential, an account to keep, and a per-run cost. |
+
+#### 4. Dependency review
+
+Both questions V6-33 names are in scope — vulnerability advisories and licence terms — and the options differ in when a person looks and whether a finding can stop a change.
+
+| Option | What it means | Consequences to accept |
+|---|---|---|
+| **A — review when a dependency changes** | A person reads the advisory feed and the licence terms for a package when it is added or bumped. | No tooling and no false blocking; but nothing reports a new advisory in an unchanged dependency, and nothing records that a review happened. |
+| **B — a scheduled report with a named owner** | A report runs on a cadence covering advisories and licences, the owner reads it and records each decision; it never fails a build. | Nothing is blocked on a busy day and the decisions have an owner; but the exposure lasts as long as the cadence, and an unreviewed week looks the same as a clean one. |
+| **C — a blocking threshold** | A report runs per change and fails it above a severity the approver sets, with an exception path. | Nothing above the threshold lands; but a new advisory can block unrelated work, the threshold has to be chosen and reviewed, and an exception needs an owner and an expiry or it becomes a permanent waiver. |
+
+#### 5. What a passing run authorises
+
+| Option | What it means | Consequences to accept |
+|---|---|---|
+| **A — evidence only** | A person reads the run and deploys as a separate manual step from an approved commit; only logs are kept. | No workflow credential can change production and there is nothing to retain; but nothing ties the deployed build to the run that passed, and the logs disappear with the service's own retention. |
+| **B — a named operator may deploy from that run** | Test reports and build artifacts are retained for an approved period, and the named operator deploys from the run that produced them. | The deployed thing is the tested thing, and the evidence outlives the run; needs an operator named in the approval, a rule for who may trigger the deploy, and retention that is enforced rather than assumed. |
+| **C — the workflow deploys on its own** | A passing run on an approved branch deploys without a human step, retaining artifacts and recording a digest. | No human latency and no forgotten deploy; but a defect in the pipeline is a production change, rollback has to be automatic or rehearsed (V6-44), and the branch that may deploy has to be protected exactly as the deploy credential is. |
+
+### Exact evidence an approver must sign
+
+1. The §1 environment and the role or team that operates it.
+2. The §2 blocking set: which of the commands above must pass before a change lands, which run on a schedule, and what a failure blocks.
+3. The §3 browser choice and where its result is recorded; if none is chosen, the recorded statement that the V5 browser item stays blocked, never a pass.
+4. The §4 rule: what is reviewed (vulnerability advisories and licences, application dependencies, frontend dependencies or both), on what cadence, who reads it, and which severity stops a change.
+5. The §5 deploy authority: who may deploy from a passing run, which artifacts and reports are retained (including whether an SBOM is emitted), for how long, and whether a digest or signature is required.
+6. The credentials a workflow or runner may hold, their scope, and the guarantee that no production or live-provider secret is available to a job triggered by a change.
+7. Which gate scripts run where, the guard that keeps each one on its own disposable database, and the explicit recording of the gates whose inputs this checkout lacks — blocked, never passed.
+8. Where the Python and Node versions are pinned so a runner matches the recorded environment, and the lockfiles it installs from.
+9. The approver's role, the date and a link or path to the signed evidence — recorded in this row and copied into `plans/PLAN_V6.md` §4 and into risk R7 of `docs/risk-register-v6.md`.
+
+### What an approval changes
+
+Only the D10 row moves from **UNAPPROVED** to **APPROVED**, which unblocks V6-30 and supplies the execution, browser, dependency and artifact rules V6-32 and V6-33 apply, and turns R7 from an unowned P1 into a defined workflow with a recorded result per commit. It opens no wave: V6-30 is a Wave 3 task, and gate V6-0G still needs D1, D2, D3, D4, D5, D6, D7, D8, D11 and D13. Until then the checks stay local, the browser journey stays recorded as blocked and R7 keeps its blank owner.
