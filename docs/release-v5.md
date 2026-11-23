@@ -27,17 +27,19 @@ Every row needs a named owner, a date and evidence before go-live. “Blocked”
 means the input does not exist in the repository; engineering must not fill it
 in.
 
-| # | Prerequisite | Required evidence | State |
-|---|---|---|---|
-| 1 | Approved commercial catalog (D2/D4/D5/D7) | Tier codes, names, exact limits, prices in minor units, currency, cadence, free/trial choice, upgrade/downgrade/proration, cancellation, refund, grace/past-due and existing-customer policy, signed by product/legal | **BLOCKED — no approval recorded** |
-| 2 | Legal and public content (D8/D9) | Terms, privacy notice, cancellation/refund/tax wording, support contact, company identity, approved claims, branding/screenshots | **BLOCKED — no copy supplied** |
-| 3 | Stripe merchant readiness (D3) | Account owner, merchant country, test and live keys, webhook endpoint registered, supported currencies/payment methods, test-mode run | **BLOCKED — no test account/keys** |
-| 4 | Platform-owner access (D10) | Approved MFA/SSO **or** private operator network, bootstrap operator, recovery/break-glass owner | **BLOCKED — neither approved** |
-| 5 | Platform mutation set and settings allowlist (D11/D12) | Approved list of operator actions and typed global settings | **BLOCKED — engineering defaults in use** |
-| 6 | Support ownership | Named billing/support owner, escalation path, response promise | **BLOCKED — no owner named** |
-| 7 | Deployment topology | TLS, exact `FRONTEND_URL`, `CORS_ORIGINS`, webhook reachability, proxy timeouts | Pending deployment verification |
-| 8 | Backups and retention | Database backup/restore test, audit export/retention decision, Stripe identifier retention | Pending operations sign-off |
-| 9 | Monitoring | Alert on webhook failures, 5xx, mirror drift, audit writes, console access | Pending operations sign-off |
+| # | Prerequisite | Required evidence | Decision brief | State |
+|---|---|---|---|---|
+| 1 | Approved commercial catalog (D2/D4/D5/D7) | Tier codes, names, exact limits, prices in minor units, currency, cadence, free/trial choice, upgrade/downgrade/proration, cancellation, refund, grace/past-due and existing-customer policy, signed by product/legal | D12 | **BLOCKED — no approval recorded** |
+| 2 | Legal and public content (D8/D9) | Terms, privacy notice, cancellation/refund/tax wording, support contact, company identity, approved claims, branding/screenshots | D12 | **BLOCKED — no copy supplied** |
+| 3 | Stripe merchant readiness (D3) | Account owner, merchant country, test and live keys, webhook endpoint registered, supported currencies/payment methods, test-mode run | D12 | **BLOCKED — no test account/keys** |
+| 4 | Platform-owner access (D10) | Approved MFA/SSO **or** private operator network, bootstrap operator, recovery/break-glass owner | D5 | **BLOCKED — neither approved** |
+| 5 | Platform mutation set and settings allowlist (D11/D12) | Approved list of operator actions and typed global settings | V5 §3 | **BLOCKED — engineering defaults in use** |
+| 6 | Support ownership | Named billing/support owner, escalation path, response promise | D11, D12 §5 | **BLOCKED — no owner named** |
+| 7 | Deployment topology | TLS, exact `FRONTEND_URL`, `CORS_ORIGINS`, webhook reachability, proxy timeouts | D2 | Pending deployment verification |
+| 8 | Backups and retention | Database backup/restore test, audit export/retention decision, Stripe identifier retention | D3, D7 | Pending operations sign-off |
+| 9 | Monitoring | Alert on webhook failures, 5xx, mirror drift, audit writes, console access | D8 | Pending operations sign-off |
+
+Decision-brief IDs are `docs/preflight-v6.md` → `Appendix — Dn decision brief`, and every one is still **UNAPPROVED**: a brief lists the options and the exact evidence an approver must sign, and a row's state changes only when that signature is recorded here. `V5 §3` is V5's own decision table in `plans/PLAN_V5.md`, which D12 does not carry.
 
 ## 2. Pre-deployment checks
 
@@ -119,13 +121,15 @@ keys or real cards.
 
 | Gate | Owner | Evidence | Decision |
 |---|---|---|---|
-| Catalog/legal/commercial | unassigned | — | **NO-GO** |
-| Stripe merchant/test | unassigned | — | **NO-GO** |
-| Platform owner strong auth/network | unassigned | — | **NO-GO** |
+| Catalog/legal/commercial | unassigned | `docs/preflight-v6.md` → `Appendix — D12 decision brief` (D12 **UNAPPROVED**) | **NO-GO** |
+| Stripe merchant/test | unassigned | `docs/preflight-v6.md` → `Appendix — D12 decision brief` (D12 **UNAPPROVED**) | **NO-GO** |
+| Platform owner strong auth/network | unassigned | `docs/preflight-v6.md` → `Appendix — D5 decision brief` (D5 **UNAPPROVED**) | **NO-GO** |
 | Security/deployment review | unassigned | `docs/security.md` | Pending |
 | Provider-free gate | engineering | 72/72, 2 blocked | PASS (with external blocks) |
 | Browser journey | unassigned | manual Wave 4 pass only | Pending deployment repeat |
 
+Each NO-GO row names the brief that holds its options; it leaves NO-GO only when
+the approver's name, date and evidence are recorded, not when the brief exists.
 Do not move the `v5` tag, publish prices or enable live billing while any row
 reads **NO-GO**. The existing annotated tag marks the engineering merge only; it
 is immutable. A release tag is cut once, on the exact commit its release gate
