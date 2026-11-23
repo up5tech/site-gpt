@@ -116,7 +116,7 @@ def send_email(
     Kept for synchronous endpoints such as ``api/user.py::forgot_password``.
     Runs the coroutine to completion when no event loop is running; if one is
     (i.e. called from async code), schedules it as a background task instead of
-    blocking the loop.
+    blocking the loop and never raises, like ``integrations.emit_event``.
     """
     coro = send_email_async(
         recipient=recipient, subject=subject, body=body, cc=cc, bcc=bcc
@@ -127,6 +127,17 @@ def send_email(
         asyncio.run(coro)
         return
 
-    task = loop.create_task(coro)
+    try:
+        task = loop.create_task(coro)
+    except Exception:
+        # The loop refused the task, typically because it is shutting down. Close
+        # the coroutine so it is not left un-awaited (asyncio would object at
+        # shutdown) and report the loss rather than raising into the caller: the
+        # request that triggered the send is already on its way out. Recipients
+        # stay out of the log, as in `_log_failed_send`.
+        coro.close()
+        logger.exception("email send could not be scheduled; nothing was sent")
+        return
+
     _pending_tasks.add(task)
     task.add_done_callback(_log_failed_send)
