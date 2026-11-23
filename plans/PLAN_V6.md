@@ -79,7 +79,7 @@ Track B is an additional gate, not an assumption of Track A. It requires all Tra
 
 ## 4. Pre-flight decisions (blocking for the affected tasks)
 
-Record a decision owner, approver, date and evidence. A proposed default is not an approval. The live record for D1/D3/D7/D9/D10/D11 and D2/D4/D5/D6/D8/D13 is [`docs/preflight-v6.md`](../docs/preflight-v6.md), where every row is still **UNAPPROVED**; D1, D2, D3, D4, D5, D6, D7, D8, D9, D10, D11 and D13 each have an appendix there (`D1 decision brief`, `D2 decision brief`, `D3 decision brief`, `D4 decision brief`, `D5 decision brief`, `D6 decision brief`, `D7 decision brief`, `D8 decision brief`, `D9 decision brief`, `D10 decision brief`, `D11 decision brief`, `D13 decision brief`) that lays out the options and the evidence an approver must sign; D13 records its four questions as separate require-or-defer answers.
+Record a decision owner, approver, date and evidence. A proposed default is not an approval. The live record for D1/D3/D7/D9/D10/D11/D12 and D2/D4/D5/D6/D8/D13 is [`docs/preflight-v6.md`](../docs/preflight-v6.md), where every row is still **UNAPPROVED**; D1, D2, D3, D4, D5, D6, D7, D8, D9, D10, D11, D12 and D13 each have an appendix there (`D1 decision brief`, `D2 decision brief`, `D3 decision brief`, `D4 decision brief`, `D5 decision brief`, `D6 decision brief`, `D7 decision brief`, `D8 decision brief`, `D9 decision brief`, `D10 decision brief`, `D11 decision brief`, `D12 decision brief`, `D13 decision brief`) that lays out the options and the evidence an approver must sign; D13 records its four questions as separate require-or-defer answers, and D12 applies only if Track B is chosen.
 
 | ID | Decision | Required before |
 |---|---|---|
@@ -94,7 +94,7 @@ Record a decision owner, approver, date and evidence. A proposed default is not 
 | D9 | Background work delivery guarantee and acceptable duplicate/loss behavior by job type; retry limits, dead-letter owner and replay procedure. | V6-20 |
 | D10 | CI and browser-test execution environment, dependency policy, artifact handling and who may deploy from a passing workflow. | V6-30 / V6-32 / V6-33 |
 | D11 | Customer support owner, contact channel, escalation target and response expectations; no promise without approval. | V6-02 / V6-41 |
-| D12 | If Track B: resolve V5 D2–D12, assign commercial/legal approvers, merchant account owner, Stripe operational owner and explicit live activation authority. | Paid billing gate |
+| D12 | If Track B: resolve the commercial V5 answers — D2 catalog and terms, D3 Stripe and merchant readiness, D4 trial/free tier and registration, D5 lifecycle, D6 existing-company rollout, D7 enforcement, D8 legal content, D9 branding — and assign commercial/legal approvers and a merchant account owner, name the Stripe operational owner for refunds, disputes, reconciliation and webhook failures, and record explicit live activation authority and how the approved catalog is published. V5 D10–D12 (platform-owner grant, permitted mutations, runtime settings) are the operator boundary: V6 D5 takes only the console's authentication requirement and the rest stays open in `plans/PLAN_V5.md` §3, so it is not part of this decision. | V6-51 / gate V6-6G (Track B only) |
 | D13 | Whether tenant MFA/SSO, broader admin audit, session revocation UI and origin-bound widget authentication are required for the target customer/security posture, or explicitly accepted/deferred. | V6-12 / V6-14 / V6-15 / V6-16 |
 
 ---
@@ -127,7 +127,7 @@ Record a decision owner, approver, date and evidence. A proposed default is not 
 
 #### Gate V6-0G — approved scope
 
-- [ ] The ten decisions that block Wave 0 and Wave 1 — D1/D3/D7/D11 and D2/D4/D5/D6/D8/D13, briefed in `docs/preflight-v6.md` — have owners and decisions for the chosen launch track; open external approvals remain explicitly blocked. D9 and D10 are briefed there too but are not part of this gate: they block V6-20 in Wave 2 and V6-30/V6-32/V6-33 in Wave 3. D12 (Track B only) has no brief.
+- [ ] The ten decisions that block Wave 0 and Wave 1 — D1/D3/D7/D11 and D2/D4/D5/D6/D8/D13, briefed in `docs/preflight-v6.md` — have owners and decisions for the chosen launch track; open external approvals remain explicitly blocked. D9, D10 and D12 are briefed there too but are not part of this gate: they block V6-20 in Wave 2, V6-30/V6-32/V6-33 in Wave 3 and, for D12 only if Track B is chosen, paid activation at V6-51/gate V6-6G.
 - [ ] Hosting topology, SLO/RPO/RTO, launch cohort, support owner and risk register are recorded.
 - [ ] Track A vs Track B boundary is explicit. If Track B prerequisites are open, paid launch is out of scope and flags remain off.
 

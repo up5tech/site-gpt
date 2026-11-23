@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Status | **Draft, and every decision below is UNAPPROVED.** No approver, date or evidence has been recorded for any row. |
-| Scope | The decisions `plans/PLAN_V6.md` §4 marks as blocking for Wave 0 and Wave 1 — D1/D3/D7/D11 (launch scope, operations, data handling, support) and D2/D4/D5/D6/D8/D13 (topology, security profile, operator authentication, uploads, telemetry, session/embed posture) — plus D9 (background-job delivery) and D10 (CI and browser execution), which block V6-20 in Wave 2 and V6-30/V6-32/V6-33 in Wave 3 and are briefed here because they decide risks R5 and R7. |
+| Scope | The decisions `plans/PLAN_V6.md` §4 marks as blocking for Wave 0 and Wave 1 — D1/D3/D7/D11 (launch scope, operations, data handling, support) and D2/D4/D5/D6/D8/D13 (topology, security profile, operator authentication, uploads, telemetry, session/embed posture) — plus D9 (background-job delivery) and D10 (CI and browser execution), which block V6-20 in Wave 2 and V6-30/V6-32/V6-33 in Wave 3 and are briefed here because they decide risks R5 and R7, and D12 (Track B commercial and Stripe readiness), briefed because it decides R3 and applies only if Track B is chosen. |
 | Snapshot | `master` at `66dd197`, branch `feat/v6` (2026-11-23), Alembic head `0b22b30bf930`. |
 | Rule | A proposed default, an engineering preference or this document is **not** an approval. An approval exists only when a named approver, a date and the evidence are recorded in the row. |
 
@@ -26,11 +26,12 @@ are why gate V6-0G is unsigned and Wave 1 has not started.
 | **D9** | What delivery guarantee applies to background jobs, which duplicate/loss cases are acceptable by job type, what retry limit and backoff, and who owns a dead-letter queue and replay? | Infrastructure/deployment owner with the engineering lead — **not yet named** | A per-job-type statement of the guarantee and of the acceptable duplicate/loss case, the retry and terminal-state rule, the dead-letter destination and owner, and where the replay procedure and its idempotency keys are recorded. | **UNAPPROVED** — no approver recorded. Blocks V6-20. |
 | **D10** | Where do the project's checks run, which of them must pass before a change lands, how is the browser journey executed, how are dependencies reviewed, and what does a passing run authorise? | Engineering lead with the operations owner — **not yet named** | The chosen execution environment and who operates it, the blocking set versus the scheduled set, the browser journey's execution and recorded result, the dependency-review rule with its reader and threshold, and the deploy authority and retained artifacts a passing run carries. | **UNAPPROVED** — no approver recorded. Blocks V6-30/V6-32/V6-33. |
 | **D11** | Who owns customer support, through which channel, with what coverage window, escalation target and response expectation? | Support owner (business) — **not yet named** | A named owner, contact channel, coverage window, escalation path and response expectation that the owner accepts — no engineering default promoted into a promise. | **UNAPPROVED** — no approver recorded. Blocks V6-02/V6-41. |
+| **D12** | Track B only: at what granularity V5's commercial answers (D2 catalog and terms, D3 Stripe and merchant readiness, D4 trial/free tier and registration, D5 lifecycle, D6 existing-company rollout, D7 enforcement, D8 legal content, D9 branding) are signed, which merchant account receives payment and who holds its keys, how the approved catalog is published, who may switch live billing on, and who owns refunds, disputes, reconciliation and webhook failures? V5 D10–D12 (operator boundary) are not carried here. | Product/business owner with legal and the merchant-account owner — **not yet named** | The signed catalog and commercial terms as they will be published, the eight signed V5 answers with their approvers, the merchant-account facts (holder, country, key custody, registered webhook) with test-mode access, the publication and activation procedure with its authority and rollback owner, and the named owner for refunds, disputes, reconciliation and webhook failures. | **UNAPPROVED** — no approver recorded. Track B only; blocks V6-51 and gate V6-6G. |
 | **D13** | Are tenant MFA/SSO, broader admin audit, a session-revocation UI and origin-bound widget authentication required for this cohort, or explicitly deferred? | Security owner with product owner — **not yet named** | An explicit require/defer decision per item with rationale, affected tasks and — for deferrals — the accepted residual risk and an expiry or review date. | **UNAPPROVED** — no approver recorded. Blocks V6-12/V6-14/V6-15/V6-16. |
 
 ## Decision register — one page to sign
 
-An index of the twelve decisions in this record: each question in a line, the risk rows it moves, and a sign-off slot in the same row. The options, their consequences and the exact evidence an approver must supply are in that row's appendix below; nothing here restates, narrows or recommends them, and an empty sign-off cell is not an approval. D12 (Track B commercial readiness) is deliberately absent: it has no appendix here and applies only to Track B. D9 and D10 are briefed, but they block V6-20 in Wave 2 and V6-30/V6-32/V6-33 in Wave 3 rather than the Wave 0 gate.
+An index of the thirteen decisions in this record: each question in a line, the risk rows it moves, and a sign-off slot in the same row. The options, their consequences and the exact evidence an approver must supply are in that row's appendix below; nothing here restates, narrows or recommends them, and an empty sign-off cell is not an approval. D9, D10 and D12 are briefed, but they block V6-20 in Wave 2, V6-30/V6-32/V6-33 in Wave 3 and paid activation (V6-51/gate V6-6G) rather than the Wave 0 gate, and D12 applies only if Track B is chosen.
 
 | ID | Question | Status | Risk rows | Approver | Role | Date | Evidence path |
 |---|---|---|---|---|---|---|---|
@@ -45,6 +46,7 @@ An index of the twelve decisions in this record: each question in a line, the ri
 | **D9** | Which delivery guarantee, duplicate/loss tolerance by job type, retry limits, dead-letter destination and replay? | **UNAPPROVED** | R5 |  |  |  |  |
 | **D10** | Where do the checks run, what blocks a change, how does the browser journey run, how are dependencies reviewed, and what does a passing run authorise? | **UNAPPROVED** | R7 |  |  |  |  |
 | **D11** | Who owns customer support, through which channel, with what coverage, escalation and response expectation? | **UNAPPROVED** | R4 |  |  |  |  |
+| **D12** | Track B only: are V5's commercial answers D2–D9 signed and how, which merchant account receives payment, how the catalog is published, who activates billing, and who owns refunds, disputes, reconciliation and webhook failures? V5 D10–D12 (operator boundary) are not carried. | **UNAPPROVED** | R3 |  |  |  |  |
 | **D13** | Are tenant MFA/SSO, broader admin audit, a session-revocation UI and origin-bound widget auth required or deferred? | **UNAPPROVED** | R10, R11, R12 |  |  |  |  |
 
 **Signing a row.** Put the approver's name, role and date in the row, put the evidence path or link in the last cell, and change the status cell from **UNAPPROVED** to **APPROVED**. Then copy the same four facts into `plans/PLAN_V6.md` §4 and into the risk rows named in the register, as “How an approval gets recorded” below describes. A row that is PROPOSED or BLOCKED stays unsigned, and no task whose decision is unsigned may start.
@@ -65,7 +67,7 @@ An index of the twelve decisions in this record: each question in a line, the ri
 
 ## Out of scope of this record
 
-D12 (Track B commercial and Stripe readiness) is listed in `plans/PLAN_V6.md` §4 and is not duplicated here; it applies only if Track B is chosen. D9 and D10 are briefed here even though they gate Wave 2 and Wave 3 tasks, because R5 and R7 have no other decision to wait on.
+Every decision `plans/PLAN_V6.md` §4 lists now has an appendix here, D12 included. D12 is in scope only if Track B is chosen: while Track A is the launch track it is out of scope, billing stays off and the paid surfaces stay 404. D9 and D10 are briefed here even though they gate Wave 2 and Wave 3 tasks, because R5 and R7 have no other decision to wait on; D12 gates paid activation (V6-51/gate V6-6G), not the Wave 0 gate, and carries only V5's commercial answers D2–D9: V5 D10–D12 are the operator boundary, V6 D5 takes only the console's authentication requirement, and the rest stays open in `plans/PLAN_V5.md` §3.
 
 ## How an approval gets recorded
 
@@ -85,7 +87,7 @@ Which launch is being approved — **Track A** (hosted core, billing and platfor
 
 | Option | What it means | Consequences to accept |
 |---|---|---|
-| **A — hosted core, billing off** | `plans/PLAN_V6.md` §3's Track A: the approved core product, launched to a controlled cohort, with `BILLING_ENABLED=false` and `PLATFORM_CONSOLE_ENABLED=false`. | Gate **V6-5G** is the only launch gate; V6-6G does not apply. No Stripe merchant account, plan catalog, price, refund/trial policy or billing legal copy is needed. The public pricing surface renders its being-finalised state, so the approver must accept that state for the cohort or approve content before launch. V5's commercial decisions (D2–D12) stay open; enabling billing later is a separate authorized change with its own gate and a decision about existing companies. Core support, privacy and retention content is still required (D7/D11, V6-41). |
+| **A — hosted core, billing off** | `plans/PLAN_V6.md` §3's Track A: the approved core product, launched to a controlled cohort, with `BILLING_ENABLED=false` and `PLATFORM_CONSOLE_ENABLED=false`. | Gate **V6-5G** is the only launch gate; V6-6G does not apply. No Stripe merchant account, plan catalog, price, refund/trial policy or billing legal copy is needed. The public pricing surface renders its being-finalised state, so the approver must accept that state for the cohort or approve content before launch. V5's commercial answers (D2–D9) stay open, as do the operator answers (D10–D12); enabling billing later is a separate authorized change with its own gate and a decision about existing companies. Core support, privacy and retention content is still required (D7/D11, V6-41). |
 | **B — paid SaaS and platform operations** | Track B: the core launch plus self-serve paid plans and the operator console. | Requires everything in A **and** the V5 prerequisites: an approved catalog/limits/terms set, legal and support copy, a merchant account with test-mode access, a real Stripe test-mode rehearsal, and the D5 control actually enforced at the ingress before the console is exposed. Gate **V6-6G** must pass independently of V6-5G, and live activation is a separate staged change with monitoring, abort thresholds and a rollback owner. This is the longest path to any launch, because core and commercial readiness must both land. |
 | **Both — core first, paid later** | Approve Track A now and Track B as a later, separately gated step. | The core launch is not held behind commercial work, but there are two go/no-go records, two sets of customer-facing promises to keep consistent, and a decision about whether the first cohort is grandfathered or price-protected when paid plans go live. The pricing-state question from A must still be answered for the first cohort, and B's prerequisites still apply before any payment. |
 
@@ -1082,3 +1084,80 @@ Both questions V6-33 names are in scope — vulnerability advisories and licence
 ### What an approval changes
 
 Only the D10 row moves from **UNAPPROVED** to **APPROVED**, which unblocks V6-30 and supplies the execution, browser, dependency and artifact rules V6-32 and V6-33 apply, and turns R7 from an unowned P1 into a defined workflow with a recorded result per commit. It opens no wave: V6-30 is a Wave 3 task, and gate V6-0G still needs D1, D2, D3, D4, D5, D6, D7, D8, D11 and D13. Until then the checks stay local, the browser journey stays recorded as blocked and R7 keeps its blank owner.
+
+## Appendix — D12 decision brief
+
+**Status: D12 remains UNAPPROVED.** This brief lays out the choices for putting a price on the product; it applies only if D1 chooses Track B, and it names no price, currency, tier, trial or refund term, merchant country, approver or key holder, and it recommends none of the options. The configuration and document states it quotes are what the checkout does today, recorded in `docs/release-v5.md` and `plans/PLAN_V5.md` §3 as evidence, not as a proposal.
+
+### The question
+
+If Track B is chosen, what has to be approved before a customer can be charged: which of V5's commercial answers are signed and at what granularity, which merchant account receives the money and who holds its keys, how the approved catalog reaches the public pricing page, who may switch live billing on, and who runs refunds, disputes and reconciliation afterwards. The answer is what gate V6-6G (paid activation) and V6-51 (paid rehearsal) wait on; it changes no Track A task and no code.
+
+### What the repository does today (evidence, not a decision)
+
+- **Billing is off and fails closed.** `BILLING_ENABLED` defaults to `false`, and the lifespan in `main.py` validates the Stripe settings only when it is true (`core/config.py:167`), so billing-off needs no merchant credentials and makes no provider call. Checkout, Portal and the webhook answer 404 while it is off.
+- **The catalog is empty until someone publishes.** `PLANS` is an empty tuple (`services/plan_catalog.py:82`), kept as the empty-table fallback; a plan is public only when its `catalog_plans` row is `published` **and** carries a usable `plan_prices` row, and with billing on a published plan without a `price_…` mapping refuses checkout rather than guessing one.
+- **The provider configuration is server-only and pinned.** `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, the legacy `STRIPE_PRICE_IDS` fallback and a pinned `STRIPE_API_VERSION` (`2026-11-18.endive`) live in `core/config.py`; no Stripe value is in the frontend bundle, and with billing on and a key missing, startup refuses and reports setting names only.
+- **Entitlements cannot be bought by accident.** Only `active`/`trialing` plus a currently published plan grants a limit; every other status, and an unpublished or unknown plan code, leaves the company on its V4 ceilings. A limit of `0` means “not stated”, never unlimited.
+- **No commercial term is recorded anywhere.** `docs/release-v5.md` §1 lists the catalog, legal content, merchant readiness, operator access, mutation set and support ownership as **BLOCKED**, and §6 records catalog/legal/commercial and Stripe merchant/test as **NO-GO**; `docs/billing.md` states that no grace period or refund policy exists yet; the §4 test-mode rehearsal has never run, and V5-5G stands at 72/72 with its live Stripe and browser items blocked.
+- **The operator half is not this row.** V5 D10–D12 (who a platform owner is, what they may change, which settings are editable) belong to the operator boundary: V6 D5 takes only the console's authentication requirement, and the grant model, the permitted mutation set and the settings allowlist stay open in `plans/PLAN_V5.md` §3, with the surface that exists today described in `docs/platform.md` and `docs/security.md`. This row carries only what a customer pays and who operates the merchant relationship.
+
+### Options and consequences
+
+#### 1. Which commercial answers are signed, and how
+
+`plans/PLAN_V6.md`'s D12 row asks for V5's commercial answers, D2–D9: catalog and terms (D2), Stripe and merchant readiness (D3), trial/free tier and registration (D4), lifecycle (D5), existing-company rollout (D6), enforcement (D7), legal content (D8) and branding (D9). V5 D10–D12 are the operator boundary and are not part of this decision: V6 D5 carries only the console's authentication requirement, and the rest stays open in `plans/PLAN_V5.md` §3, so this brief carries none of it.
+
+| Option | What it means | Consequences to accept |
+|---|---|---|
+| **A — each answer signed in its own row** | Every commercial V5 decision gets a named approver, a date and its own evidence, all signed before the rehearsal, and the gate reads the eight records. | Nothing is inferred and each owner signs only what they own; but it is the slowest path, and the last signature gates the rehearsal, so test-mode work can wait on legal copy that has no engineering dependency. |
+| **B — one Track B approval containing every answer** | A single signed record, given at one point, states each commercial answer and the owner who accepted it. | One record and one go/no-go to read; but one signature then covers pricing and legal together, so the record has to name which owner accepted which part or it is one person approving another's domain. |
+| **C — two sign-off points, however the answers are recorded** | Catalog, terms and legal copy are signed before any test-mode rehearsal; the rollout, lifecycle and enforcement answers follow before live activation, and each point may use one record or eight. | Rehearsal can start as soon as a catalog and copy exist and the remaining answers can follow; but the two sign-off points have to stay consistent, and activation can arrive with a lifecycle policy signed later than the prices it charges. |
+
+#### 2. Which merchant account receives payment, and who holds its keys
+
+| Option | What it means | Consequences to accept |
+|---|---|---|
+| **A — the organisation's existing merchant account** | The product charges through the account the organisation already uses, under its current owner. | The account, its payout history and its key holders already exist, so nothing new is opened; but this product's charges share that account's disputes and payout schedule with whatever else uses it, and its owner becomes the merchant for these charges whether or not they operate billing. |
+| **B — a merchant account opened for this product** | A separate account holds this product's charges, keys and disputes. | Isolates the charges, the keys and the dispute history, and gives the operational owner an account they hold; but opening one needs the organisation's legal and banking details and its own test-mode key and webhook registration — the longest lead time in this row. |
+| **C — no merchant account** | Track B does not launch; the flags stay off. | Nothing to configure and no card data anywhere; but there is no paid track at all, and V5 D3 forbids substituting another processor or building card entry, so this is a deferral rather than a workaround. |
+
+#### 3. How the approved catalog reaches customers
+
+| Option | What it means | Consequences to accept |
+|---|---|---|
+| **A — publish the approved rows live after sign-off** | The catalog row signed under §1 is published in live mode in one step. | One publication and the public page matches the signed rows immediately; but a wrong price row is visible to customers before any rehearsal has seen it. |
+| **B — test mode first, then exactly those rows live** | The catalog is published to test mode, rehearsed, then published live as the same set. | The catalog is exercised end to end before a customer sees it, and the live publication repeats a rehearsed set; but test and live are two records that must stay identical, and a mapping mistake between them fails at the first real checkout. |
+| **C — launch with the catalog unpublished** | Pricing keeps its “being finalised” state, checkout stays unavailable, and plans are published in a later authorized change. | No price is published unapproved and the core product can launch; but Track B has no paid surface at all, and customers see the placeholder state until that later change. |
+
+#### 4. How far live activation reaches
+
+| Option | What it means | Consequences to accept |
+|---|---|---|
+| **A — one switch for every customer** | Billing is enabled for the whole customer base in one window. | One configuration change, one monitoring window and one rollback; but every customer meets the new billing path at once, including those whose cards or currencies the rehearsal did not cover. |
+| **B — a named cohort first, then widened** | Billing is enabled for an approved cohort, and widening it is a separate decision with abort thresholds. | A defect reaches a named cohort first and the expansion is its own decision; but it needs a cohort definition, thresholds and someone watching, and two product states to support at once. |
+| **C — no live activation in V6** | The paid path is rehearsed in test mode only; live billing waits for a later authorization. | The rehearsal evidence exists and no customer can be charged by accident; but the paid track is not launched in V6, and every approval above buys nothing until that later change. |
+
+#### 5. Who runs billing after activation
+
+| Option | What it means | Consequences to accept |
+|---|---|---|
+| **A — the support owner also owns billing** | The V6 D11 support owner answers billing questions and handles refunds, disputes and failed webhooks. | One contact for the customer and no handoff; but that owner now carries refund decisions and dispute evidence they may not be trained or authorized for. |
+| **B — a separate merchant-operations owner** | Refunds, disputes, reconciliation and failed webhooks sit with whoever holds the merchant relationship, and support escalates to them. | Each job sits with someone equipped for it and the customer still has one entry point; but it adds a role to name and a handoff to document, and a slow escalation is a customer waiting. |
+| **C — no named owner** | The merchant-account holder acts when something happens, with no roster or procedure. | Nothing to name and nothing to document; but a refund or a chargeback then has no owner, no procedure and no evidence — the state `docs/release-v5.md` §1 row 6 records today. |
+
+### Exact evidence an approver must sign
+
+1. D1 naming Track B (or “both”) in scope for a named cohort, and the commercial V5 answers carried — D2–D9, each with the approver and evidence §1 requires — at the granularity §1 chooses.
+2. The merchant-account facts supplied by its owner: account holder, merchant country, supported currencies and payment methods, where test and live keys are kept, the registered webhook endpoint and who rotates its signing secret — recorded by reference, never as key values.
+3. The approved catalog exactly as it will be published — code, name, limits, price in integer minor units, currency, cadence and whether self-serve checkout is offered — with the statement that nothing outside that set is published.
+4. The trial and free-tier answer (V5 D4), or an explicit “no trial and no free tier”.
+5. The lifecycle and rollout answers (V5 D5–D6): cancellation timing, invoice retry and grace, past-due behaviour, upgrade/downgrade/proration, refund policy, reactivation and the grandfathering rule for companies that existed before billing — plus the enforcement policy (V5 D7): the plan-to-entitlement mappings and how they resolve against existing admin-set limits. Values are the approver's, not derived here.
+6. Legal and support content approved (V5 D8/D9, plus V6 D7/D11 where they touch retention and support), the pages each appears on, and the support contact a paying customer is given.
+7. The §4 activation scope: who may change the flag, for which cohort, the abort thresholds, the exact configuration change and the rollback owner — plus the statement that a deploy does not enable billing by itself.
+8. The pass conditions the rehearsal will be judged by (V6-51), agreed now: which cases must pass — Checkout, signed webhook, duplicate, out-of-order, invalid signature, provider failure, Portal cancel-at-period-end, entitlement boundaries and flag-off parity — how each result is recorded and who attests it, with fixture-only tests recorded as fixtures, never as a live Stripe run. The results are V6-51 and gate V6-6G evidence, checked after this signature because this decision is what unblocks them, not before it.
+9. The §5 owner for refunds, disputes, reconciliation and webhook failures with the procedure each follows, and the approver's role, date and signed-evidence link — recorded in this row and copied into `plans/PLAN_V6.md` §4 and into risk R3 of `docs/risk-register-v6.md`.
+
+### What an approval changes
+
+Only the D12 row moves from **UNAPPROVED** to **APPROVED**, and only for Track B: it is one of the conditions gate V6-6G and V6-51 wait on, and it neither opens Wave 1 nor authorizes a charge by itself — the activation scope it records in §4 is part of this row (and under §4's option C there is none), so what remains between this signature and a customer's card is V6-51's rehearsal and gate V6-6G's own evidence. A deploy does not enable billing on its own. Under Track A nothing changes: billing stays off, the catalog stays unpublished, the paid surfaces answer 404 and R3 stays mitigated by configuration alone.
