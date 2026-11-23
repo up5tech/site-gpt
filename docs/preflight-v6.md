@@ -711,3 +711,108 @@ Whichever is chosen, the size limit has to be stated per entry point, because th
 ### What an approval changes
 
 Only the D6 row moves from **UNAPPROVED** to **APPROVED**, which unblocks V6-13 and turns R9 from an unowned P1 into either a mitigated control or a signed acceptance. Gate V6-0G still needs D1, D2, D3, D4, D5, D7, D11 and the remaining decisions, so Wave 1 stays closed; until then uploads keep their current behaviour and R9 keeps its blank owner.
+
+## Appendix — D8 decision brief
+
+**Status: D8 remains UNAPPROVED.** This brief lists the telemetry choices; it names no vendor, no log destination, no retention period, no threshold, no alert route and no owner, and it recommends none of the options. Where it quotes what the code does, that is evidence, not a proposal.
+
+### The question
+
+What the service emits about its own operation — application logs, worker output, error reports, metrics and alerting — where those streams go, which fields they may and may not contain, how long each is kept, who can read it, what is worth waking someone for, and what happens when the telemetry path itself fails. R6 in `docs/risk-register-v6.md` is this decision's risk row: today there is no observability vendor configuration, no deployment workflow that tracks health, and the worker reports with `print`.
+
+### What the code does today (evidence, not a decision)
+
+- **Two reporting styles, no configuration.** Fifteen modules use `logging.getLogger(__name__)` and about thirty log calls; the worker uses `print` in 55 places and the rest of the tree in 78. There is **no** `logging.basicConfig`, `dictConfig`, `LOG_LEVEL` variable or logging config file anywhere in `src/` or `tests/`, so the level, format and destination are whatever the process environment and the ASGI server's defaults produce — no structured format, no JSON, no timestamp contract of our own.
+- **No correlation id.** `main.py` installs CORS and the two error handlers and nothing else; there is no request-id middleware, and a log line carries whatever ids the call site happens to pass (company, website, integration, handoff request) rather than one identifier that ties a request's lines together.
+- **No error tracking and no metrics.** There is no error-reporting SDK, no tracing, no metrics library and no `/metrics` route in the tree. The only operational endpoint is `GET /health` (`api/routes.py:822`), which pings the database, pings Redis on the app's own loop, reports the limiter's backend and `degraded` flag, and downgrades `status` to `degraded` — a readiness probe with no history, no counters and no thresholds.
+- **What log lines currently contain.** Ids, counts, provider types, event types and HTTP status codes (`integration … delivered … (200)`, `clustered N of M questions for company …`, `retention purge … for company …: N rows`). Exception logs carry the traceback (`rag.py` on a failed stream, `mail.py`, `digest.py`, `integrations.py`); a provider failure is stored and logged through the redacting `safe_error`, which strips the provider's secret fields before the text reaches `last_error` or a line.
+- **The documented rule.** `docs/security.md` states that no raw API key, integration token or password is written to a log line and that webhook bodies are not logged, and it tells the operator to keep `SQL_ECHO=false` because verbose SQL can put row values in the logs. Both are rules the code follows by construction, not by a filter that would catch a mistake.
+- **Durable records that already behave like telemetry.** The platform audit trail (`platform_audit_logs`, append-only, secret-shaped detail redacted, never purged by the app), billing events (`billing_events` — event id and type, deliberately no payload), integration deliveries (`integration_deliveries` — every attempt, its status code and `last_error`, payload cleared when a row dies and settled rows deleted after `DELIVERY_RETENTION_DAYS`), and the run records (`digest_log`, `topic_cluster_runs`, `conversation_insights` status). All of them are in the product database, per tenant, and none is exported anywhere.
+- **No retention or access control on the log streams themselves.** Nothing in the app deletes, rotates or redacts a log file; that is the host's job, and `docs/release-v5.md` row 9 ("alert on webhook failures, 5xx, mirror drift, audit writes, console access") is still *pending operations sign-off*. There is no deploy manifest, container file or unit file in the repository that would fix a destination.
+
+### Options and consequences
+
+#### 1. Which streams exist at all
+
+| Option | What it means | Consequences to accept |
+|---|---|---|
+| **A — the current streams only: application logs, as the host writes them** | Structured logging stays out of scope; the operator collects stdout/stderr however the platform does. | Nothing to build, and `/health` plus the audit tables cover the minimum; but the worker's `print` lines have no level and no destination of their own, a line cannot be correlated with a request or a job, and any alerting has to parse prose. |
+| **B — one structured application log** | Every entry point emits one record shape (time, level, event, tenant, correlation id, no payload), with the config and level set from the environment and the `print` calls replaced. | Makes the stream queryable and alertable and is a precondition for any vendor that indexes fields; it touches many call sites, is a code change before anything can be monitored, and needs a rule about what a record may never contain. |
+| **C — structured logs plus error reports and metrics** | Adds an error-reporting path (a traceback reaches a place someone watches) and a metrics surface (counters and latency the operator can chart) beside the logs. | The full picture, at the cost of the most code, the most data leaving the host and the most vendor surface to review; it also inherits every question in §2–§5 rather than answering them once. |
+
+#### 2. Where the data goes
+
+| Option | What it means | Consequences to accept |
+|---|---|---|
+| **A — stays on the operator's own infrastructure** | Logs and metrics go to the host's own collection, and viewing them means access to that infrastructure. | No third party receives anything, no data-processing question arises and there is no vendor cost; but alerts then depend on whatever the host offers, retention is bounded by local disk, and "who can read the logs" becomes the server's access list. |
+| **B — a third-party observability service** | Logs, error reports or metrics are shipped to a processor outside the deployment. | Better querying, retention and alerting than a single host runs itself, at the cost of a processor that receives tenant identifiers and operational metadata, a data-processing and retention question, a network path that must not carry payloads, a possible cross-border transfer, and a second outage surface. |
+| **C — self-hosted observability stack** | A separate collection stack the operator runs, whether on the same host or another. | Keeps the data inside the operator's boundary and can still index and alert, but it is infrastructure to run, patch, back up and size, and it becomes something else that can be down during an incident. |
+
+Whichever is chosen, the approver has to name it: "no vendor configuration" is not a destination, and a decision to send nothing anywhere is an option that must be recorded, not a default.
+
+#### 3. What may leave the process: identity and redaction
+
+| Option | What it means | Consequences to accept |
+|---|---|---|
+| **A — internal ids only, with the existing rules as prose** | Lines carry company/website/conversation ids and no personal data, enforced by review and the `docs/security.md` rule. | Nothing to build and the current shape already complies; but a single careless format string in new code puts an email address or a prompt into the stream, and redaction is a habit rather than a control. |
+| **B — a redaction filter in the logging path** | One filter scrubs secret-shaped values, tokens and addresses before a record is emitted, and a test proves it. | Catches the mistake the rule only forbids, and a filter is small; but it can only scrub what it recognises, it is easy to bypass with a pre-formatted string, and it does not decide whether a tenant identifier is itself personal data in the processor's hands. |
+| **C — a defined field allowlist per record** | Only the listed fields are ever emitted; anything else is dropped rather than scrubbed. | The strongest form, because an unknown field cannot leak; but it needs the record shape from §1B first and it makes ad-hoc debugging harder, since a value the developer wanted is simply absent. |
+
+Related and separately decidable: whether the correlation id is tenant-scoped or global, and whether a chat message, prompt or document excerpt may ever appear in a log line — the current answer is no, enforced only by the rule above.
+
+#### 4. Retention and access
+
+| Option | What it means | Consequences to accept |
+|---|---|---|
+| **A — whatever the destination keeps by default** | No retention statement of our own. | No work, and it is what happens today; but "how long are our logs kept" then has no answer for a customer, an erasure request or an incident review, and the platform audit trail — which is inside the database — follows a different clock than the streams around it. |
+| **B — a stated retention per stream** | Each stream (application logs, error reports, metrics, audit rows) has a period, a deletion mechanism and a documented owner. | Answers the question a customer and an auditor will ask, and separates operational logs from the audit record that must outlive them; it needs someone to enforce it where the data actually lives, and the app can only enforce the part it stores. |
+| **C — a stated retention plus an access rule** | As B, and only named roles can read each stream, with access itself recorded. | Makes the log store part of the trust boundary rather than a side effect; it is the most work and needs an identity source outside the app's tenant roles, which the operator boundary (D5) does not currently provide. |
+
+Two specific questions belong here rather than in a separate brief: whether logs are in scope for a customer erasure request (the app erases product rows, not log lines), and whether `platform_audit_logs` retention — the one durable record with no deletion path — is confirmed at the same time.
+
+#### 5. What is worth alerting on
+
+| Option | What it means | Consequences to accept |
+|---|---|---|
+| **A — nothing; watch `/health` by hand** | A probe answers and someone looks when a user complains. | Honest about the current state and needs no owner; but silent failures are the documented behaviour today (workers `print` and continue), and the release doc's monitoring row stays permanently pending. |
+| **B — a small set of signals with a stated responder** | The few conditions that mean the product is broken (health degraded, error rate, job backlog, webhook or delivery failures, audit-write failure) reach a channel someone is assigned to watch. | The minimum a production launch needs and the list maps onto what already exists (`/health`, `integration_deliveries`, `platform_audit_logs`); but it needs thresholds chosen by the approver and a named responder — with nobody named, an alert is a message in a channel no one owns. |
+| **C — signals plus escalation and runbooks** | As B, with severity, an escalation path and a runbook link per signal, and an on-call expectation. | Turns an alert into an incident process, which V6-02's SLO/RPO/RTO work needs anyway; it is the largest commitment and cannot be staffed by a document — the approver has to commit people, not just thresholds. |
+
+The thresholds themselves are deliberately absent here: they follow from D3's SLOs, so an approval that fixes a number before the SLO is agreed would be inventing a target.
+
+#### 6. When the telemetry path itself fails
+
+| Option | What it means | Consequences to accept |
+|---|---|---|
+| **A — lose the data, keep serving** | Shipping is best-effort; a full queue or an unreachable destination drops records. | The product never degrades because of its monitoring, which is the right default for request traffic; but the window where the system was breaking may be exactly the window whose evidence is missing, and nobody knows it was dropped. |
+| **B — buffer locally and ship later** | Records are held on the host and forwarded when the destination returns, within a bound. | Keeps the record across a short outage, at the cost of disk that can fill, a bound on how much is held, a decision about what happens when it is exceeded, and the same redaction rules applying to a file on disk. |
+| **C — fail closed** | A request or job that cannot emit its record fails. | Guarantees a complete trail, which suits an audit record and is wrong for an operational log: it couples product availability to the observability vendor, and an outage becomes a product outage. |
+
+### Cross-checks an approval must satisfy
+
+- **D1 fixes the cohort and the launch scope**, so the alerting minimum in §5 is sized for that cohort rather than for the eventual product.
+- **D3 owns the SLOs** the thresholds in §5 derive from, and the availability promise the telemetry path is allowed to affect.
+- **D2 owns where the processes run**, which determines whether §2A is even possible and whether logs on one host survive a replacement.
+- **D7 owns retention** of anything the app stores; the audit-trail and log-retention questions in §4 must not contradict it.
+- **D5 owns the operator identity** any access rule in §4C would reuse; there is no independent operator login today.
+- **D6 owns the refusal events** whose alerting this brief assumes, and D13 the session/audit surface that writes them.
+- **R6 is this decision's risk row**; an approval either removes its "no vendor configuration" half or records the residual with an owner.
+
+### Exact evidence an approver must sign
+
+1. Which streams exist (§1) and the record shape if any is standardised, including the level source.
+2. The destination for each stream (§2) — named infrastructure, named service, or an explicit decision to send nothing anywhere.
+3. If a third party is involved: what categories of data it receives, where they are processed, and the retention and deletion terms that follow.
+4. The identity rule (§3): which ids appear, whether tenant ids count as personal data, whether the correlation id is tenant-scoped, and confirmation that prompts, documents, message text, tokens, passwords and webhook bodies never appear.
+5. The enforcement chosen (§3A/3B/3C) and the test that proves it.
+6. Retention per stream (§4), the deletion mechanism, and whether log lines fall inside a customer erasure request — plus the confirmed retention of `platform_audit_logs`.
+7. Who may read each stream and on what authority (§4C), consistent with D5.
+8. The alert list and its responder (§5), derived from D3's SLOs, with the thresholds stated as part of the approval rather than before it.
+9. The behaviour while telemetry is unavailable (§6), including any local buffer bound.
+10. The worker's `print` calls: whether they are converted, left, or removed, and what happens to a job failure that is currently only printed.
+11. A dry run of the chosen path in a non-production environment — one request, one failed job and one alert reaching the destination — observed, not asserted.
+12. The approver's role, date and a link or path to the signed evidence — recorded in this row and copied into `plans/PLAN_V6.md` §4 and into risk R6 of `docs/risk-register-v6.md`.
+
+### What an approval changes
+
+Only the D8 row moves from **UNAPPROVED** to **APPROVED**, which unblocks V6-21 and V6-22 and turns R6's "no observability vendor config" into either a named destination or a signed decision to keep telemetry in-house. Gate V6-0G still needs D1, D2, D3, D4, D5, D6, D7, D11 and the remaining decisions, so Wave 1 stays closed; until then the worker keeps printing, the logs keep going wherever the host sends them, and `docs/release-v5.md` row 9 stays pending.
