@@ -87,8 +87,8 @@ Which launch is being approved — **Track A** (hosted core, billing and platfor
 
 | Option | What it means | Consequences to accept |
 |---|---|---|
-| **A — hosted core, billing off** | `plans/PLAN_V6.md` §3's Track A: the approved core product, launched to a controlled cohort, with `BILLING_ENABLED=false` and `PLATFORM_CONSOLE_ENABLED=false`. | Gate **V6-5G** is the only launch gate; V6-6G does not apply. No Stripe merchant account, plan catalog, price, refund/trial policy or billing legal copy is needed. The public pricing surface renders its being-finalised state, so the approver must accept that state for the cohort or approve content before launch. V5's commercial answers (D2–D9) stay open, as do the operator answers (D10–D12); enabling billing later is a separate authorized change with its own gate and a decision about existing companies. Core support, privacy and retention content is still required (D7/D11, V6-41). |
-| **B — paid SaaS and platform operations** | Track B: the core launch plus self-serve paid plans and the operator console. | Requires everything in A **and** the V5 prerequisites: an approved catalog/limits/terms set, legal and support copy, a merchant account with test-mode access, a real Stripe test-mode rehearsal, and the D5 control actually enforced at the ingress before the console is exposed. Gate **V6-6G** must pass independently of V6-5G, and live activation is a separate staged change with monitoring, abort thresholds and a rollback owner. This is the longest path to any launch, because core and commercial readiness must both land. |
+| **A — hosted core, billing off** | `plans/PLAN_V6.md` §3's Track A: the approved core product, launched to a controlled cohort, with `BILLING_ENABLED=false` and `PLATFORM_CONSOLE_ENABLED=false`. | Gate **V6-5G** is the only launch gate; V6-6G does not apply. No Stripe merchant account, plan catalog, price, refund/trial policy or billing legal copy is needed. The public pricing surface renders its being-finalised state, so the approver must accept that state for the cohort or approve content before launch. V5's commercial answers (D2–D9) stay open, as do the operator answers (D10–D12); enabling billing later is a separate authorized change with its own gate and a decision about existing companies. Core support, privacy and retention content is still required (V6 D7/D11, V6-41). |
+| **B — paid SaaS and platform operations** | Track B: the core launch plus self-serve paid plans and the operator console. | Requires everything in A **and** the V5 prerequisites: an approved catalog/limits/terms set, legal and support copy, a merchant account with test-mode access, a real Stripe test-mode rehearsal, and the V6 D5 control actually enforced at the ingress before the console is exposed. Gate **V6-6G** must pass independently of V6-5G, and live activation is a separate staged change with monitoring, abort thresholds and a rollback owner. This is the longest path to any launch, because core and commercial readiness must both land. |
 | **Both — core first, paid later** | Approve Track A now and Track B as a later, separately gated step. | The core launch is not held behind commercial work, but there are two go/no-go records, two sets of customer-facing promises to keep consistent, and a decision about whether the first cohort is grandfathered or price-protected when paid plans go live. The pricing-state question from A must still be answered for the first cohort, and B's prerequisites still apply before any payment. |
 
 ### Exact evidence an approver must sign
@@ -98,8 +98,8 @@ Which launch is being approved — **Track A** (hosted core, billing and platfor
 3. Registration policy: open or invite-only, and how an invitation is issued.
 4. The regions where data is stored and processed, and the data types accepted, listed per category (for example chat transcripts, uploaded files, contact details).
 5. The included features, and the features or flags that stay off at launch.
-6. For the cohort's pricing surface: accept the empty-catalog being-finalised state, or approve plan content before launch (required for B or both).
-7. For B or both: confirmation that each V5 decision has an owner, that the V6-6G conditions are accepted, and the named merchant-account owner and live-activation authority.
+6. For the cohort's pricing surface: accept the empty-catalog being-finalised state at launch, or record that the catalog content will be approved under D12 before any price is published (required for B or both).
+7. For B or both: the statement that the V5 commercial answers (D2–D9), the merchant account, the operational owner and the live-activation authority are D12 prerequisites that this row does not approve, and that D12 must be signed before V6-51 and gate V6-6G.
 8. Sign-off on launch copy: no price, guarantee, SLO, certification or feature claim beyond the approved scope.
 9. The approver's role, the date, and a link or path to the signed evidence — recorded in this row and copied into `plans/PLAN_V6.md` §4 and into risk R3 (the track a paid launch still waits on) of `docs/risk-register-v6.md`.
 
@@ -157,7 +157,7 @@ For uploads the same three options exist only in weaker forms — snapshot or ob
 2. For each service level claimed: what counts as available, over which measurement window, measured from where, and who reads the result. The values themselves are supplied by the approver.
 3. A recovery point and recovery time for the database **and** separately for the upload volume, plus who measures them and where the measurement is recorded.
 4. The backup mechanism, its retention and expiry, and confirmation that a restore rehearsal is required before launch (the rehearsal itself is V6-42's evidence, not this signature).
-5. Capacity assumptions the promise rests on: expected peak demand, provider rate limits and the headroom assumed in database, Redis and worker sizing — as supplied by business/operations, not derived by engineering.
+5. Capacity assumptions the promise rests on: expected peak demand, provider rate limits and the headroom assumed in the database, Redis and worker sizing D2 records — as supplied by business/operations, not derived by engineering.
 6. The §4 maintenance-window policy, including the notice channel and the freeze end condition if option C is chosen.
 7. The §3 support coverage: who answers, through which channel, in which hours, and the escalation target. (D11 names the support owner; this decision records the coverage the promise needs.)
 8. The exclusions the promise relies on: which third-party dependencies, customer-side causes and events are outside it.
@@ -231,7 +231,7 @@ What data-handling policy applies: the default retention for a company and its c
 1. The default retention for a new company (on or off, and the period if on), who may change it, and whether existing companies are migrated or left as they are.
 2. A per-class deletion map: for transcripts, contact details, inbox state, feedback, handoffs, uploaded files and extracted text, embeddings, topic clusters, insight labels, integration delivery payloads, audit rows and billing records — deleted, kept, or aggregated.
 3. The audit-retention period, who may read the log, and how expiry is executed and verified (noting that no pruning path exists in the code today).
-4. Backup expiry, backup access control, and the restore-time rule for data deleted after the backup was taken — with evidence that the re-deletion step was practised, not just described.
+4. Backup expiry, backup access control, and the restore-time rule for data deleted after the backup was taken, with the re-deletion step stated as a pass condition of V6-42's restore rehearsal. That rehearsal is V6-42 evidence, checked after this signature.
 5. The deletion path and actor for a user and for a company (tenant admin, support, platform owner), whether it is immediate or pending, and the evidence a customer receives.
 6. The legal or contractual exceptions that outlive deletion, stated explicitly rather than implied.
 7. The privacy-notice wording that matches the behaviour above (V6-41), with no promise the code cannot keep.
@@ -315,7 +315,7 @@ D3 §3 chooses the **shape** of coverage (one named contact / a shared rota / co
 3. The coverage window: days, hours and timezone, and the stated behaviour outside it (queued with an acknowledgement, or explicitly not covered).
 4. The escalation path: the trigger, the next tier by name, the contact or paging method, and the named incident owner for a service-down event.
 5. The response expectations per severity class, with the severity definitions and confirmation that the approved window can meet them.
-6. The support-side data access: which staff or vendor may read which tenant data, through which tool, and how that access is audited.
+6. The support-side data access: which staff or vendor may read which tenant data, through which tool, and how that access is audited — or the explicit statement that it is not audited and the residual accepted against R10.
 7. The exact published text for the marketing footer, the app and the privacy notice, containing no promise the owner has not accepted.
 8. The value to set in `platform_settings.support_contact_email`, and the person who maintains it; until it is set the footer correctly shows no address.
 9. The approver's role, date and evidence path — recorded in the D11 row, copied into `plans/PLAN_V6.md` §4 and into risk R4 (named support and incident ownership) of `docs/risk-register-v6.md`.
@@ -430,11 +430,11 @@ Whichever shape is chosen, the boundary description has to say which of these is
 3. The TLS termination point, certificate source and renewal owner, and the exact external scheme, host and port the application sees — because `GET /chat/{id}`'s embed allowlist compares `request.base_url` exactly.
 4. The `TRUSTED_PROXY_IPS` value and confirmation that `Host`, `X-Forwarded-For` and `X-Forwarded-Proto` are forwarded; without it the limiter keys on the proxy and every visitor shares a bucket.
 5. The `CORS_ORIGINS` list and the admin app's public URL (`FRONTEND_URL`), consistent with option 5.
-6. Sizing and capacity, as supplied by the operator and consistent with D3: API instance count, worker count, database size and connection budget, Redis memory and eviction policy, upload volume size and headroom.
+6. Sizing and capacity, supplied by the operator: API instance count, worker count, database size and connection budget, Redis memory and eviction policy, upload volume size and headroom. D3's capacity assumptions are then written against these numbers.
 7. The upload volume's identity — local path, shared mount or bucket — whether it survives a host replacement, who backs it up, and, if it stays local, confirmation that only one API instance serves and purges it.
 8. The frontend pipeline: where the build is served, the `VITE_BACKEND_URL` baked into it, and how `index.html` and `/widget.js?v=…` are invalidated after a deploy.
-9. The deploy procedure: the artifact, the commands, the order relative to `alembic upgrade head`, whether requests are served during it, who executes it, and the record of a rehearsal in a non-production environment.
-10. The rollback procedure: how many previous artifacts are retained, the migration policy (downgrade, forward-fix or restore), the mixed-version rule for the API, worker and schema, and the record of a rehearsal — not a description.
+9. The deploy procedure this row selects: the artifact and mechanism, the order relative to `alembic upgrade head`, whether requests are served during it, and who executes it — with the rehearsal that proves it stated as a pass condition. The rehearsal record itself is V6-40 evidence, checked after this signature.
+10. The rollback procedure this row selects: how many previous artifacts are retained, the migration policy (downgrade, forward-fix or restore), and the mixed-version rule for the API, worker and schema, with the rehearsal's pass conditions stated — the record itself is V6-40 evidence, not a description.
 11. The environment list: production and whatever non-production environment exists, how secrets and data differ, and which data may never appear outside production (D7/D8).
 12. The health contract the ingress uses — `/health` as it exists today (JSON with `db`, `redis` and limiter state) or a separate readiness path — plus the proxy's buffering and idle-timeout settings for the three SSE endpoints.
 13. The approver's role, date and a link or path to the signed evidence — recorded in this row and copied into `plans/PLAN_V6.md` §4 and into risk R4 (topology verification), R6 (the deployment workflow behind `/health`) and R8 (TLS, private networking, backups) of `docs/risk-register-v6.md`.
@@ -541,7 +541,7 @@ Which settings a production deployment must have, where each value comes from, a
 6. The rate-limit backend for this deployment and the accepted failure mode (§5), consistent with the instance count in D2.
 7. The documentation decision (§6): which paths answer, from where, and — if disabled — where the reference lives instead.
 8. The environment list and separation rule: which environments exist, which values differ, and the guarantee that no production data or credential appears in a non-production one.
-9. Confirmation that development, the unit suites and `scripts/gate_v5_5g` still run under the approved policy — a validator that breaks them is not signable as written.
+9. The requirement that the approved policy leave development, the unit suites and `scripts/gate_v5_5g` runnable without production secrets, and the demonstration V6-10 must produce — a validator that breaks them is not acceptable. The demonstration is V6-10 evidence, after this signature.
 10. The names of the settings whose absence the deployment must treat as fatal, agreed with the operator who will run the start-up, so the validator can be written against a signed list rather than an engineering guess.
 11. The approver's role, date and a link or path to the signed evidence — recorded in this row and copied into `plans/PLAN_V6.md` §4 and into risk R1 (secure boot) of `docs/risk-register-v6.md`.
 
@@ -639,7 +639,7 @@ Which enforceable control protects the platform-owner boundary — a second fact
 7. The revocation procedure and its measured effect: what stops at the next request, what does not (an issued JWT), and what the operator must do about the difference.
 8. The exposure decision: console enabled or disabled for the launch cohort, and if enabled, from where — public ingress, private path or operator proxy — consistent with D2.
 9. The audit expectations for operator access: which events are recorded, who may read them, and how that is verified rather than assumed.
-10. Confirmation that the chosen control was exercised end to end in a non-production environment — sign-in, refusal for a tenant account, a grant, a mutation, a revocation and a recovery — with the evidence path recorded.
+10. The acceptance scenarios V6-11 must demonstrate in a non-production environment — sign-in, refusal for a tenant account, a grant, a mutation, a revocation and a recovery — agreed now, with the evidence path recorded. The demonstration is V6-11 evidence, after this signature.
 11. The approver's role, date and a link or path to the signed evidence — recorded in this row and copied into `plans/PLAN_V6.md` §4 and into risk R2 (operator security) of `docs/risk-register-v6.md`.
 
 ### What an approval changes
@@ -658,7 +658,7 @@ What happens to a file a customer supplies before it becomes knowledge the assis
 
 - **Five entry points, all behind the same login.** `api/upload.py` exposes `POST /api/uploads/` (multipart), `/url`, `/youtube`, `/notion` and `/google-drive`, and every one depends on `get_current_user` — **any** authenticated account of any role in any company, not only an admin or manager. Nothing in `/api/v1` exposes uploads.
 - **No format check on the file itself.** The multipart route derives the extension from the supplied filename (`os.path.splitext`) and stores `file.content_type` as sent; there is no allowlist of extensions or MIME types anywhere on the upload path, so a file named `.pdf` is accepted as a PDF and anything else named `.txt` is accepted as text.
-- **One size limit, enforced while streaming.** `MAX_UPLOAD_MB` (default `20`) becomes `MAX_UPLOAD_BYTES` (`core/config.py:258`) and the multipart route aborts mid-stream, deleting the partial file; the four import routes enforce the same ceiling on the declared or streamed length (`services/sources.py`). There is no per-company quota on stored uploads.
+- **One size limit, enforced while streaming.** `MAX_UPLOAD_MB` (default `20`) becomes `MAX_UPLOAD_BYTES` (`core/config.py:258–259`) and the multipart route aborts mid-stream, deleting the partial file; the four import routes enforce the same ceiling on the declared or streamed length (`services/sources.py`). There is no per-company quota on stored uploads.
 - **Nothing scans anything.** There is no antivirus, malware or content-scanning code in the tree; the only match for “scan” on this path is a comment about a remote provider's own warning page. `docs/security.md` states plainly that uploads are **not** virus-scanned, and risk R9 records it as accept-with-owner.
 - **Parsing happens later, in the worker.** The upload routes store bytes under `uploads/` and create an `Attachment` row; text extraction (`services/parse.py::extract_text_from_file`) runs in `worker.py:316` during ingestion, using `pypdf`, `python-docx`, `python-pptx` or BeautifulSoup depending on the extension. A hostile file is therefore stored first and parsed out of process, and the extracted text becomes an `extra_documents` row the assistant can quote.
 - **Nothing serves the stored bytes.** No route returns an uploaded file (D2 records the same fact), so the browser-delivery risk is absent; what a bad file can reach is the parser and, through extracted text, an answer.
@@ -722,7 +722,7 @@ Whichever is chosen, the size limit has to be stated per entry point, because th
 
 1. The population allowed to upload (§1) and whether the surface is open, admin-only or off for the cohort — recorded in D1's scope as well.
 2. The check chosen (§2), the kind of control it is (a scanner service, an engine inside the worker, or an explicit accepted risk), and the point in the path where it runs.
-3. Proof that the check covers **all five** entry points — multipart, URL, YouTube, Notion, Google Drive — rather than the form upload alone.
+3. If a check is chosen, proof that it covers **all five** entry points — multipart, URL, YouTube, Notion, Google Drive — rather than the form upload alone; under option 2A, the statement that no entry point is checked, with the residual recorded in item 10.
 4. The behaviour for a failing file (§3), including what the user is told and what the operator can see.
 5. The accepted formats and the exact size limit per entry point, with the decompression rule stated separately from the stored-bytes rule.
 6. The behaviour while the check is unavailable (§5), the user-visible message, and the maximum time a file may wait in quarantine if option 5C is chosen.
@@ -730,7 +730,7 @@ Whichever is chosen, the size limit has to be stated per entry point, because th
 8. The latency and availability budget the check adds, consistent with D3 if it sits on the request path.
 9. The audit or log event a refusal produces, its retention and its redaction (D8/D7).
 10. The residual risk statement if option 2A is chosen: what a malicious file can reach (the parser process and the extracted text an answer may quote), who accepts it, and when it is reviewed.
-11. Confirmation that a test upload of a known-bad fixture was exercised end to end against the chosen path in a non-production environment — accepted, quarantined or refused as decided.
+11. The acceptance test V6-13 must pass: a known-bad fixture uploaded through each chosen entry point, ending accepted, quarantined or refused as decided, in a non-production environment, with the evidence path recorded. The result is V6-13 evidence, after this signature.
 12. The approver's role, date and a link or path to the signed evidence — recorded in this row and copied into `plans/PLAN_V6.md` §4 and into risk R9 of `docs/risk-register-v6.md`.
 
 ### What an approval changes
@@ -829,13 +829,13 @@ The thresholds themselves are deliberately absent here: they follow from D3's SL
 2. The destination for each stream (§2) — named infrastructure, named service, or an explicit decision to send nothing anywhere.
 3. If a third party is involved: what categories of data it receives, where they are processed, and the retention and deletion terms that follow.
 4. The identity rule (§3): which ids appear, whether tenant ids count as personal data, whether the correlation id is tenant-scoped, and confirmation that prompts, documents, message text, tokens, passwords and webhook bodies never appear.
-5. The enforcement chosen (§3A/3B/3C) and the test that proves it.
+5. The enforcement chosen (§3A/3B/3C) and the test that must prove it — the test is written with V6-21/V6-22, and its result is recorded after this signature.
 6. Retention per stream (§4), the deletion mechanism, and whether log lines fall inside a customer erasure request — plus the confirmed retention of `platform_audit_logs`.
 7. Who may read each stream and on what authority (§4C), consistent with D5.
 8. The alert list and its responder (§5), derived from D3's SLOs, with the thresholds stated as part of the approval rather than before it.
 9. The behaviour while telemetry is unavailable (§6), including any local buffer bound.
 10. The worker's `print` calls: whether they are converted, left, or removed, and what happens to a job failure that is currently only printed.
-11. A dry run of the chosen path in a non-production environment — one request, one failed job and one alert reaching the destination — observed, not asserted.
+11. The dry run V6-21/V6-22 must demonstrate in a non-production environment — one request, one failed job and one alert reaching the destination — agreed now, with the evidence path recorded. The dry run itself is that task's evidence, after this signature.
 12. The approver's role, date and a link or path to the signed evidence — recorded in this row and copied into `plans/PLAN_V6.md` §4 and into risk R6 of `docs/risk-register-v6.md`.
 
 ### What an approval changes
@@ -856,7 +856,7 @@ Which tenant-side security controls the launch carries: whether a company's own 
 - **A bearer token in `localStorage`.** `frontend/src/utils/api.ts` stores the JWT in `localStorage` and attaches it as `Authorization`; logout is a client-side removal (`AuthContext.logout`) with **no logout route**, no refresh token and no token blacklist. `docs/security.md` records the trade-off: CSRF does not apply to a bearer API, but an XSS can read the token, so the frontend must stay free of untrusted HTML.
 - **One server-side check already exists.** `core/auth.py::get_current_user` re-reads the user row on every request and requires `status == "active"`, so deactivating or deleting a user ends that account's access immediately even with a valid token. What does not exist is any way to end **one** session, or all sessions of a user, while the account stays usable: `DELETE /api/company/users/{id}` hard-deletes the user, and nothing lists or revokes a session (R11).
 - **Tenant admin activity is not audited.** `docs/security.md` states it plainly: "No admin audit log. API keys keep a `revoked_at` and a last-used timestamp; other admin actions are not recorded." Settings writes, website and document deletion, user create/delete/role change, API-key mint and revoke, integration create and token rotation, and the privacy purge are all unaudited — the purge writes a log line (`api/privacy.py`) and nothing else. Only the **operator** boundary is audited (`platform_audit_logs`, append-only, secret-shaped detail redacted), and the inbox transcript read is explicitly not audited either (the company is the boundary).
-- **The widget's origin check is soft by design.** `services/embed_guard.py` compares `Origin`/`Referer` against the website's origin, allows loopback, and accepts the API's own origin as first-party for the hosted page (exact scheme+host+port). A non-browser client sets that header freely, which the module's own docstring says; the optional `X-Embed-Token` is a public, replayable value (`EMBED_TOKEN_MODE` `compat` accepts a missing token, `enforce` requires a valid one), and the K4 session token guards history rather than the origin (`SESSION_TOKEN_MODE` `compat` still accepts a missing token for an unclaimed session). K18 is recorded as accepted, with the residual restated in `docs/security.md` §7.
+- **The widget's origin check is soft by design.** `services/embed_guard.py` compares `Origin`/`Referer` against the website's origin, allows loopback, and accepts the API's own origin as first-party for the hosted page (exact scheme+host+port). A non-browser client sets that header freely, which the module's own docstring says; the optional `X-Embed-Token` is a public, replayable value (`EMBED_TOKEN_MODE` `compat` accepts a missing token, `enforce` requires a valid one), and the K4 session token guards history rather than the origin (`SESSION_TOKEN_MODE` `compat` still accepts a missing token for an unclaimed session). K18 is recorded as accepted, with the residual restated in `docs/security.md` §5.
 - **Revocation exists in pieces, never as a UI.** `/api/v1` keys and embed tokens are revoked by stamping `revoked_at` (API keys from Settings → API keys; embed tokens through the website routes), and a K4 `session_tokens` row can be revoked by setting that column — but `docs/security.md` says outright that deleting or stamping the row is the only immediate way and that "there is still no server-side revocation UI".
 - **Nothing here is scoped by role yet.** Whatever is decided applies to `admin`/`manager`/`user` differently, and the app has three tenant roles (`get_admin_user`, `get_manager_user`) but no per-role session policy.
 
@@ -878,7 +878,7 @@ Each question below is decided **require** or **defer**. Deferring is a recorded
 | Option | What it means | Consequences to accept |
 |---|---|---|
 | **A — defer: operator-only audit (today)** | Only platform-owner actions are recorded; tenant admin actions are not. | Nothing to build and it is what `docs/security.md` already states; but a customer cannot answer "who deleted this document" or "who rotated this integration token", an incident investigation has only prose logs, and the deferral must be recorded against R10. |
-| **B — audit a named set of tenant-admin mutations** | An append-only row for each action in a defined list, written in the same transaction as the change. | Answers the question customers actually ask and reuses the pattern the operator audit already proves; it needs the list agreed (that is D11's mutation set, not a new decision), a table and migration, a reader in the UI, and the same redaction discipline as `platform_audit_logs`. |
+| **B — audit a named set of tenant-admin mutations** | An append-only row for each action in a defined list, written in the same transaction as the change. | Answers the question customers actually ask and reuses the pattern the operator audit already proves; it needs the list agreed — that list is this decision's §2 answer, not another row's — a table and migration, a reader in the UI, and the same redaction discipline as `platform_audit_logs`. |
 | **C — B plus read access logging** | Also records who read a transcript, an export or a secret-bearing page. | Closes the gap `docs/security.md` notes for inbox reads; but it multiplies row volume, turns reads into writes on hot paths, and creates a second store of personal data that retention (D7) and erasure must then answer for. |
 
 Whichever is chosen, the audit rows' own retention is part of the answer, and `platform_audit_logs` already has no deletion path — a second audited surface makes that question unavoidable rather than theoretical.
@@ -911,7 +911,7 @@ None of these removes the K18 caveat that a public value in a customer's page is
 - **D5 is the operator half of the same identity story** and already requires strong auth or a private network for the console; a tenant MFA decision must not silently borrow the operator answer or leave the two inconsistent.
 - **D2 owns where session state would live** if revocation option B/C is chosen, since a revocation check on every request is a per-process or shared-store decision.
 - **D7 owns the retention and erasure of any new audit rows**, and D8 the alerting any of these controls would feed.
-- **D11 owns the mutation set** the audit option B assumes; D13 does not re-list it.
+- **D13 owns the tenant-admin mutation list** the audit option B assumes; it is not V5 D11's operator mutation set, which covers different actions and is not re-listed here.
 - **D6 and D13 meet at the upload/admin boundary** — an audited admin action is what makes "a compromised admin imported that file" answerable.
 - **R10, R11 and R12 are this decision's risk rows**; every "defer" must fill their owner and expiry, which are blank today.
 
@@ -919,7 +919,7 @@ None of these removes the K18 caveat that a public value in a customer's page is
 
 1. For §1: **require** or **defer**, and if require, whether the factor applies to admins/managers or to every user, whether SSO is offered instead or beside it, and the recovery path for a lost factor.
 2. For §1 deferral: the residual statement (a stolen password is a full tenant takeover) and its expiry, recorded against R11.
-3. For §2: **require** or **defer**, and if require, the exact mutation list (by D11's identifier), where the row is written, and confirmation that it is in the same transaction as the change.
+3. For §2: **require** or **defer**, and if require, the exact tenant-admin mutation list (this decision's §2 answer), where the row is written, and confirmation that it is in the same transaction as the change.
 4. For §2: whether reads are audited at all, and if so what an audited read records without storing the transcript again.
 5. The retention of every new audit row and its relationship to erasure requests (D7), plus confirmation that `platform_audit_logs` retention is settled at the same time.
 6. For §3: **require** or **defer**, and if require, which of the options (per session / all sessions / short-lived plus refresh), who may revoke (self, company admin, both), and what the revocation check costs per request.
@@ -927,7 +927,7 @@ None of these removes the K18 caveat that a public value in a customer's page is
 8. For §4: **require** or **defer**, and if require, whether it is the existing switches, per-website origin data, or a new assertion design, with the snippet rollout and the customer impact stated.
 9. The residual that remains after the chosen option — the K18 public-value caveat cannot be removed by any of these — and the row it is recorded against.
 10. The role and permission model each answer implies (`admin`, `manager`, `user`), so a control cannot be bypassed by a role that was not considered.
-11. A non-production demonstration of each **require** answer (an unenrolled login refused, an audited action producing one row, a revoked session refused on its next request, an off-origin read refused), observed rather than asserted.
+11. The demonstration each **require** answer must produce in a non-production environment — an unenrolled login refused, an audited action producing one row, a revoked session refused on its next request, an off-origin read refused — agreed now as acceptance criteria, with the evidence path recorded. The demonstrations are V6-12/V6-14/V6-15/V6-16 evidence, checked after this signature.
 12. The approver's role, date and a link or path to the signed evidence — recorded in this row and copied into `plans/PLAN_V6.md` §4 and into R10, R11 and R12 of `docs/risk-register-v6.md`.
 
 ### What an approval changes
