@@ -124,6 +124,12 @@ TOPIC_TABLES = [
 ]
 
 
+RETENTION_TABLES = [
+    models.Company.__table__,
+    models.Setting.__table__,
+]
+
+
 def _topic_session():
     """An in-memory database with just the tables the topics scheduler touches."""
     engine = create_engine("sqlite+pysqlite:///:memory:")
@@ -409,6 +415,70 @@ class WorkerToDigestTests(unittest.TestCase):
         self.assertIn("Topic groups", body)
         self.assertIn("Pricing", body)
         self.assertIn("Named from 2 of 2 visitor questions", body)
+
+
+class EnqueueDueRetentionTests(unittest.TestCase):
+    """The daily scheduler must actually push one job per company with a policy.
+
+    Regression: `enqueue_due_retention` called the async `enqueue_job` without
+    awaiting it, so the loop logged a queue it never wrote and no purge ever ran.
+    """
+
+    def setUp(self):
+        self.engine = create_engine("sqlite+pysqlite:///:memory:")
+        Base.metadata.create_all(self.engine, tables=RETENTION_TABLES)
+        self.sessions = []
+        db = self._session()
+        self.company = models.Company(name="Acme")
+        db.add(self.company)
+        db.commit()
+
+    def _session(self):
+        session = sessionmaker(bind=self.engine)()
+        self.sessions.append(session)
+        return session
+
+    def tearDown(self):
+        for session in self.sessions:
+            session.close()
+        self.engine.dispose()
+
+    def _policy(self, days):
+        session = self._session()
+        session.add(
+            models.Setting(
+                company_id=self.company.id, key="retention_days", value=days
+            )
+        )
+        session.commit()
+
+    def _run(self):
+        enqueue = AsyncMock()
+        with patch.object(worker, "SessionLocal", self._session), patch.object(
+            worker, "enqueue_job", enqueue
+        ):
+            queued = asyncio.run(worker.enqueue_due_retention())
+        return queued, enqueue
+
+    def test_a_company_with_a_policy_is_enqueued(self):
+        self._policy("30")
+
+        queued, enqueue = self._run()
+
+        self.assertEqual(queued, [str(self.company.id)])
+        enqueue.assert_awaited_once()
+        self.assertEqual(
+            enqueue.await_args.args[0],
+            {"type": "retention", "company_id": str(self.company.id)},
+        )
+
+    def test_a_company_without_a_policy_queues_nothing(self):
+        self._policy("0")
+
+        queued, enqueue = self._run()
+
+        self.assertEqual(queued, [])
+        enqueue.assert_not_awaited()
 
 
 class HandleTopicClustersTests(unittest.TestCase):

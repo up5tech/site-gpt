@@ -370,7 +370,11 @@ async def enqueue_due_retention() -> list[str]:
     queued: list[str] = []
     try:
         for company_id in retention.companies_with_policy(db):
-            enqueue_job({"type": "retention", "company_id": str(company_id)})
+            # Awaited: `enqueue_job` is a coroutine, so a bare call pushed nothing
+            # while this function still reported the company as queued.
+            await enqueue_job(
+                {"type": "retention", "company_id": str(company_id)}
+            )
             queued.append(str(company_id))
     finally:
         db.close()
