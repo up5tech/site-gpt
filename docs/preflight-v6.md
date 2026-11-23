@@ -417,3 +417,109 @@ Whichever shape is chosen, the boundary description has to say which of these is
 ### What an approval changes
 
 Only the D2 row moves from **UNAPPROVED** to **APPROVED**, which unblocks V6-10 (the validator needs to know which settings are required in this environment) and V6-40 (a deploy/rollback runbook needs a mechanism to describe), and supplies the topology half of V6-02's operating model. Gate V6-0G still needs D1, D3, D7, D11 and the remaining architecture decisions, so Wave 1 stays closed.
+
+## Appendix — D4 decision brief
+
+**Status: D4 remains UNAPPROVED.** This brief lays out the security-profile choices; it supplies no key length, no origin list, no proxy address, no provider, no region and no owner, and it recommends none of the options.
+
+### The question
+
+Which settings a production deployment must have, where each value comes from, and what the application does when one is missing — the secret and configuration policy, which peers may supply a forwarded client address, which browser origins are allowed, whether rate limits are shared across processes, whether the API documentation is reachable, and how far one environment is separated from another. The answer is what V6-10's production-mode validator enforces; today the only fail-closed check in that area is `validate_billing_config`, and it returns immediately while billing is off.
+
+### What the code requires today (evidence, not a decision)
+
+- **The application has no notion of its own environment.** Nothing in `core/config.py` or `main.py` distinguishes development from production (`ENV`, `APP_ENV` and an equivalent flag do not exist), so every behaviour below is the same everywhere and only the values differ.
+- **One secret has a working fallback.** `JWT_SECRET_KEY` defaults to `"your-secret-key-change-this-in-production"` (`core/config.py:8`), and nothing refuses to start with it. Tokens signed with the fallback are valid to anyone who reads this repository.
+- **Two secrets fail open rather than fail closed.** `API_KEY_PEPPER` defaults to `""` and is only concatenated into the SHA-256 of a minted key (`services/api_keys.py:43`), so an unset pepper silently salts nothing; `INTEGRATION_WEBHOOK_SECRET` defaults to `None` and the outbound signature is computed with `config.INTEGRATION_WEBHOOK_SECRET or ""` (`services/integrations.py:144`), so an unset secret produces a signature anyone can recompute. Neither is required, and neither raises.
+- **The remaining credentials are optional by construction.** Model-provider keys, `MAIL_*` values (read in `services/mail.py`, with placeholder defaults), and the `STRIPE_*` group only matter on the paths that use them. `validate_billing_config()` fails closed **only** when `BILLING_ENABLED=true`, and returns immediately otherwise.
+- **Trusted-forwarding is implicitly permissive for private peers.** `_client_ip` honours `X-Forwarded-For` whenever the direct peer is loopback or RFC 1918 private, and for a public peer only when it matches `TRUSTED_PROXY_IPS` (`services/ratelimit.py:~150–205`). Loopback and private addresses need no configuration, and an invalid header entry falls back to the socket address.
+- **CORS is a parsed comma list with a credentials rule.** `CORS_ORIGINS` defaults to `*`; the list is split on commas, and `allow_credentials` is enabled only when it is not exactly `["*"]` (`main.py:91–93`). `allow_methods` and `allow_headers` are wildcards, and `X-Widget-Version` is exposed.
+- **The rate limiter has two backends and a documented fallback.** `RATE_LIMIT_BACKEND` defaults to `memory` (per process, reset on restart); `redis` shares one sliding window across processes and, when Redis is unreachable, falls back to the in-process cap and reports `rate_limiter.degraded` on `/health` (`services/ratelimit.py`). The per-session and daily message caps are separate Redis counters that fail open during an outage.
+- **API documentation is always on.** `FastAPI(...)` sets `docs_url="/docs"` and `redoc_url="/redoc"` with no condition (`main.py:74–75`), and the default schema is served at `/openapi.json`; nothing in the deployment gates them.
+- **Session and embed posture are settings, not constants.** `SESSION_TOKEN_MODE` and `EMBED_TOKEN_MODE` default to `compat`, which keeps legacy tokenless reads working (K4/K18 remain accepted).
+- **No log configuration exists.** Neither `main.py` nor `worker.py` calls `logging.basicConfig` or `dictConfig`; the worker reports with `print`, so level, format and destination are whatever the process's stdout is attached to.
+
+### Options and consequences
+
+#### 1. Where configuration and secrets live
+
+| Option | What it means | Consequences to accept |
+|---|---|---|
+| **A — environment variables injected at deploy** | The operator supplies every value on the process environment of the API and the worker. | No new dependency and no code change; but nothing records which values are required, rotation is a redeploy, the worker and API can silently disagree, and a shell history or a plain env file becomes a credential store unless the deploy tooling keeps it out of one. |
+| **B — a secret manager read at start-up** | Values are fetched from a managed store and injected into the process. | Rotation and access review become auditable and the values leave the host's disk, at the cost of a boot-time dependency on the store (and its own availability), a bootstrap credential for that store, one more egress destination, and a decision about what happens when the store is unreachable at start. |
+| **C — files on disk, mounted per environment** | A root-owned file (or per-secret files) is mounted and parsed at start. | Simple and works without a network at boot; but file permissions become the control, rotation is a redeploy plus a file change, and the same file can be copied between hosts and environments unless something prevents it. |
+
+#### 2. How a missing or placeholder value is handled
+
+| Option | What it means | Consequences to accept |
+|---|---|---|
+| **A — advisory only (today)** | Missing values fall back to defaults and the service starts. | Nothing breaks during development and no operator workflow changes, but a production start with the fallback JWT key, an empty pepper or an empty webhook secret succeeds silently, and the weakness is discovered only by an attacker or an audit. |
+| **B — fail closed in production, keep development usable** | A start-up validator refuses to run when a required value is missing, empty or a known placeholder, keyed on an explicit environment signal. | Turns every silent weakness into a failed boot and forces the environment signal in §6; it must name settings without printing values, must not break the suites or the gate scripts, and requires the exact required-set to be decided rather than guessed. |
+| **C — fail closed always, no environment signal** | The validator runs unconditionally. | Strongest and simplest to reason about, but it breaks local development, `tests/` and `scripts/gate_v5_5g` unless every one of them supplies the full production set — a large change to the developer workflow that the approver would be accepting. |
+
+#### 3. Trusted proxies and the client address
+
+| Option | What it means | Consequences to accept |
+|---|---|---|
+| **A — private peers trusted implicitly (today)** | Loopback and RFC 1918 peers may supply `X-Forwarded-For`; public peers only when listed. | Correct for a proxy on the same host or VPC and requires no configuration; but any container or process that can reach the API from a private address can choose the client IP the limiter keys on, and a public load balancer is ignored until it is listed. |
+| **B — explicit operator list plus private defaults** | The edge addresses are recorded in `TRUSTED_PROXY_IPS` and the private-address trust is kept. | Fixes the public-load-balancer case (otherwise every visitor shares one bucket), at the cost of maintenance when the edge's addresses change and a documented rule that only that edge may forward. |
+| **C — never trust a forwarded header** | The socket address is always the client address. | Cannot be spoofed, but behind any proxy every request carries the proxy's address, so the limiter collapses to one bucket and the approach only works with a per-connection edge that terminates the TCP session itself. |
+
+#### 4. CORS origins
+
+| Option | What it means | Consequences to accept |
+|---|---|---|
+| **A — wildcard (today's default)** | `CORS_ORIGINS=*`; credentials are disabled automatically. | Zero configuration, but any site may call the API from a browser, and the moment someone needs credentialed requests the wildcard has to go — so the deployed value is a security decision, not a convenience. |
+| **B — an explicit list of the console and marketing origins** | Exactly the origins that host the SPA. | Restricts browser callers to the approved surfaces and enables the credentials path; it must be updated whenever the frontend moves, and it does **not** restrict the widget, whose authorization is the origin/host check and the embed token rather than CORS. |
+| **C — explicit list plus a separate rule for embeds** | B, with a stated policy that widget endpoints are governed by the website-origin check and are not added to the CORS list. | Keeps the two mechanisms from being confused and documents why the widget keeps working while CORS is narrow; requires the distinction to be written down where frontend work will read it. |
+
+#### 5. Rate-limit backend
+
+| Option | What it means | Consequences to accept |
+|---|---|---|
+| **A — per-process memory** | The limiter counts in each process. | No Redis dependency for the limit itself and no shared state to operate, but limits multiply by the process count, reset on every restart, and differ per API instance — only coherent if there is exactly one API process. |
+| **B — shared Redis window** | One budget across processes, surviving restarts. | Correct with more than one instance, at the cost of Redis being on every limited request's path; during a Redis outage the code falls back to the per-process cap and reports the degradation on `/health`, which the approver must accept as the documented behaviour rather than assume a hard failure. |
+| **C — shared Redis window with a fail-closed rule** | B, but a Redis outage refuses traffic instead of falling back. | A predictable guarantee and no silent softening of the limit, at the cost of turning a Redis incident into a full outage — a change of behaviour that needs a code change, not a setting, and has to be weighed against D3. |
+
+#### 6. API documentation exposure
+
+| Option | What it means | Consequences to accept |
+|---|---|---|
+| **A — open on the public origin (today)** | `/docs`, `/redoc` and `/openapi.json` answer anyone. | Convenient for integrators and free to operate; it also publishes the full route and schema surface — including the admin API — to anonymous callers, and nothing about the routes is secret enough to make that fatal, but it is exposure the approver should accept knowingly. |
+| **B — disabled in the production process** | `docs_url`, `redoc_url` and `openapi_url` are switched off by configuration. | Removes the surface from the public origin, at the cost of a code change (the values are currently hard-coded) or a deployment-time conditional, and integrators lose the live reference — an offline copy then has to be published deliberately. |
+| **C — reachable only through the operator path** | Documentation stays enabled but is not exposed by the public ingress. | Keeps the reference for the team without publishing it, at the cost of a route the ingress must special-case and a dependence on D2's ingress shape and D5's operator control. |
+
+#### 7. Environment separation
+
+| Option | What it means | Consequences to accept |
+|---|---|---|
+| **A — one deployment, production values only** | No separate non-production environment; changes are rehearsed locally and shipped. | Cheapest to operate, but there is nowhere to rehearse a deploy, a rollback, a migration or a restore (V6-40/V6-42 need exactly that), and any test pointed at it is production. |
+| **B — a separate non-production environment with its own secrets and data** | A second deployment, same artifact, different values and no production data. | Makes the rehearsals possible and keeps production credentials out of tests; it doubles the configuration surface, so every required value has to be recorded per environment and the validator has to know which set applies where. |
+| **C — B plus an explicit environment signal in the application** | The process is told which environment it runs in and can key validation, docs exposure and other behaviour on it. | Enables §2's fail-closed-in-production option without breaking development; it introduces a value that must never be wrong (a production process believing it is development is the failure mode), so the signal's source and default need to be part of the approval. |
+
+### Cross-checks an approval must satisfy
+
+- **D2 decides the shape these settings describe.** Whether `RATE_LIMIT_BACKEND=redis` is mandatory follows from the instance count; whether `TRUSTED_PROXY_IPS` must be set follows from where TLS terminates; option 6C needs an ingress that can special-case a path.
+- **D5 is not replaced by any of it.** Narrowing docs, CORS or proxies does not authenticate the operator boundary; the approved MFA/SSO or private-network control still has to be enforced before the application.
+- **D8 inherits the redaction rule and the destination.** This row decides where logs come from and whether a log configuration exists at all; it must not put a secret in a start-up error message.
+- **D1 decides whether the Stripe group is required**, because `validate_billing_config` is the only fail-closed check today and it only fires with billing on.
+- **D13 owns the session and embed posture.** `SESSION_TOKEN_MODE` and `EMBED_TOKEN_MODE` are configuration, but whether `enforce` is required for the launch cohort is that row's decision.
+- **D7 covers anything these settings cause to be retained** — a secret manager's audit trail and an edge's request logs are personal-data stores in their own right.
+
+### Exact evidence an approver must sign
+
+1. The complete required-value inventory for the production process, by name (JWT signing key, API-key pepper, model-provider credentials, mail credentials, integration webhook secret, session/embed modes, CORS list, trusted proxies, rate-limit backend, and — only with billing on — the Stripe group), each marked required, optional or must-be-empty.
+2. For each required value: where it lives, who can read it, how it is rotated and what a rotation interrupts — with the confirmation that no value is printed in a start-up error, a log line or `/health`.
+3. The behaviour on a missing, empty or placeholder value in production: refuse to start, warn, or proceed — stated per value, with the environment signal that decides it (§2, §7).
+4. The `TRUSTED_PROXY_IPS` value and the rule behind it: which peers may forward, what happens to an unlisted public edge, and the accepted consequence for the limiter during a Redis outage.
+5. The exact `CORS_ORIGINS` value and the statement that credentialed browser access is enabled only if the list is explicit; plus whether widget endpoints are governed by CORS or by the website-origin and embed-token checks.
+6. The rate-limit backend for this deployment and the accepted failure mode (§5), consistent with the instance count in D2.
+7. The documentation decision (§6): which paths answer, from where, and — if disabled — where the reference lives instead.
+8. The environment list and separation rule: which environments exist, which values differ, and the guarantee that no production data or credential appears in a non-production one.
+9. Confirmation that development, the unit suites and `scripts/gate_v5_5g` still run under the approved policy — a validator that breaks them is not signable as written.
+10. The names of the settings whose absence the deployment must treat as fatal, agreed with the operator who will run the start-up, so the validator can be written against a signed list rather than an engineering guess.
+11. The approver's role, date and a link or path to the signed evidence — recorded in this row and copied into `plans/PLAN_V6.md` §4 and into risk R1 (secure boot) and R4 (operational ownership) of `docs/risk-register-v6.md`.
+
+### What an approval changes
+
+Only the D4 row moves from **UNAPPROVED** to **APPROVED**, which unblocks V6-10 (the production-mode validator needs a signed required-set and a defined failure mode) and supplies the configuration half of V6-02's operating model. Gate V6-0G still needs D1, D2, D3, D7, D11 and the remaining decisions, so Wave 1 stays closed.
