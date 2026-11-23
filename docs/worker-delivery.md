@@ -36,3 +36,5 @@
 - Whether to add acknowledgement/visibility-timeout, a reliable Redis processing list, or a database outbox.
 - Retry limits, backoff, dead-letter ownership and the replay procedure.
 - Any further code change: finding 1's missing `await` was repaired as a standalone bug fix (it restored the behaviour the loop already claimed), and nothing else recorded here is a change, a policy choice or a D9 decision.
+
+The first three questions above are D9's, and the brief that now records their options is `docs/preflight-v6.md` → `Appendix — D9 decision brief`; D9 is still **UNAPPROVED**, so this document still decides none of them.
