@@ -79,7 +79,7 @@ Track B is an additional gate, not an assumption of Track A. It requires all Tra
 
 ## 4. Pre-flight decisions (blocking for the affected tasks)
 
-Record a decision owner, approver, date and evidence. A proposed default is not an approval. The live record for D1/D3/D7/D11 and D2/D4/D5/D6/D8/D13 is [`docs/preflight-v6.md`](../docs/preflight-v6.md), where every row is still **UNAPPROVED**; D1's options and the evidence an approver must sign are laid out in that document's appendix (`D1 decision brief`).
+Record a decision owner, approver, date and evidence. A proposed default is not an approval. The live record for D1/D3/D7/D11 and D2/D4/D5/D6/D8/D13 is [`docs/preflight-v6.md`](../docs/preflight-v6.md), where every row is still **UNAPPROVED**; D1 and D3 each have an appendix there (`D1 decision brief`, `D3 decision brief`) that lays out the options and the evidence an approver must sign.
 
 | ID | Decision | Required before |
 |---|---|---|
