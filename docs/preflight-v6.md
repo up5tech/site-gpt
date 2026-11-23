@@ -298,3 +298,122 @@ D3 §3 chooses the **shape** of coverage (one named contact / a shared rota / co
 ### What an approval changes
 
 Only the D11 row moves from **UNAPPROVED** to **APPROVED**, which supplies the support details V6-41 publishes and the support-ownership half of V6-02. Gate V6-0G still needs D1, D3, D7 and the architecture decisions, so Wave 1 stays closed.
+
+## Appendix — D2 decision brief
+
+**Status: D2 remains UNAPPROVED.** This brief lays out the hosting, network, deploy and rollback choices; it names no provider, region, instance size, hostname, certificate issuer or operator, and it recommends none of the options.
+
+### The question
+
+Which runtime shape runs this application in production: where the API process, the worker process, PostgreSQL with pgvector, Redis and the uploaded bytes live, what terminates TLS, what is reachable from the public internet and what is not, and how a change is deployed — and undone — so that V6-10's production-config validator and V6-40's deploy/rollback runbook have a concrete target. D2 is not a vendor choice by itself; it is the set of properties a vendor or a self-hosted arrangement has to satisfy.
+
+### What the code requires today (evidence, not a decision)
+
+- **Three runtime units, not one.** The API is the FastAPI app in `main.py` served by an ASGI server; the worker is a separate process (`python -m site_gpt.app.worker`) that consumes `queue:jobs`; the admin UI is a Vite build (`frontend/`) whose `VITE_BACKEND_URL` is baked in at build time. The API and the worker share `DATABASE_URL`, `REDIS_*`, `MAIL_*` and the model-provider keys, and the worker has no HTTP ingress of its own.
+- **PostgreSQL must carry pgvector.** The initial migration runs `CREATE EXTENSION IF NOT EXISTS vector`, RAG uses the `<->` operator, and embeddings are `Vector(EMBEDDING_DIMENSIONS)` (default 1536). The chain is linear with a single head, `0b22b30bf930`, applied out of band with `uv run alembic upgrade head`.
+- **Redis is on the request path, not only behind the worker.** The queue is `LPUSH queue:jobs` / `BRPOP` (`services/redis.py`, `worker.py`); `RATE_LIMIT_BACKEND=redis` shares the per-IP limiter across processes; the per-session and daily message caps are Redis counters that fail open on an outage; the inbox stream and presence leases are Redis pub/sub and keys. With Redis unreachable the worker consumes nothing and the inbox degrades, even though chat keeps answering until a cap check fails open.
+- **Uploaded bytes live on the local filesystem.** `api/upload.py` writes under `uploads/` relative to the process working directory, `services/retention.py::UPLOAD_ROOT` unlinks from the same place, and **no route serves those files** — there is no object-storage adapter and no static mount.
+- **The API origin is public and serves the widget surface.** `/widget.js` is a `FileResponse` from `./src/site_gpt/app/scripts/widget.js` (a path relative to the working directory, versioned by a content hash query), `GET /chat/{website_id}` returns the hosted page, and `/api/widget-config` serves embeds — so the API must be reachable from customer sites, not just from the admin app.
+- **The app never terminates TLS.** `README.md` §2 requires a TLS-terminating proxy, forwards `Host`/`X-Forwarded-For`/`X-Forwarded-Proto`, lists public proxy addresses in `TRUSTED_PROXY_IPS` (otherwise the limiter keys every visitor on the proxy's address), and disables response buffering for `/api/chat/stream`, `/api/chat/messages/stream` and `/api/inbox/events`.
+- **Some checks depend on the external origin, not the internal one.** The embed allowlist compares a request's `Origin`/`Referer` host with the website's and the hosted page's origin with `request.base_url` **exactly on scheme, host and port**, so what the proxy presents to the app is part of the security boundary, not cosmetics.
+- **No deployment artifact is tracked.** `git ls-files` contains no Dockerfile, compose file, Procfile, orchestration manifest or CI workflow; the only executable precedent is `scripts/gate_v5_5g/run_all.sh`, which starts a real `uvicorn` against a throwaway database for the gate. Deployment and rollback are therefore entirely a D2 answer, not an existing script to follow.
+- **Some migrations are not reversible in practice.** M11/M12 downgrades discard billing and operator state (documented in `README.md` §3), so a rollback that relies on `alembic downgrade` has a data cost that the approver must accept or exclude.
+
+### Options and consequences
+
+#### 1. Placement of the API and the worker
+
+| Option | What it means | Consequences to accept |
+|---|---|---|
+| **A — one host for API and worker** | Both processes (and, in the smallest shape, the data services) run on one machine. | Fewest moving parts and one deploy unit, but everything shares one failure domain and one restart: a worker crash-loop and an API restart are the same event, and capacity is raised by resizing rather than scaling out. Local upload bytes are trivially shared. |
+| **B — separate API and worker hosts** | The API serves requests on one host, the worker consumes the queue on another, both reading the same database and Redis. | A worker restart no longer interrupts requests, and each unit is sized separately, at the cost of two deploy units and a version-skew window: during a deploy the worker can see a job payload written by a newer API, so payload compatibility must hold in both directions for at least one release. |
+| **C — several API instances behind a load balancer** | More than one API process serves traffic; one or more workers consume the queue. | Forces `RATE_LIMIT_BACKEND=redis` (the memory limiter is per process, so limits would be multiplied by the instance count), forces the upload volume to be shared or uploads to be restricted (local disk on one instance is not visible to the others), and every instance needs the same `/widget.js` source path. SSE connections pin to one instance, so each instance and the proxy must keep buffering off. Two workers are safe for the claimed job types but duplicate the loop-driven producers (both `retention_loop` and `topic_loop` would queue the same work, which the claims make idempotent rather than free). |
+
+#### 2. PostgreSQL with pgvector
+
+| Option | What it means | Consequences to accept |
+|---|---|---|
+| **A — self-managed database server** | A database on a host the team operates, reached over the private network. | Extension availability and version upgrades are the team's responsibility; backups, restore rehearsal and point-in-time choices become D3/D7 obligations rather than a service feature; the host is another thing to patch. |
+| **B — managed database service** | A provider runs PostgreSQL with the pgvector extension. | Removes patching and some backup work, but the extension and its version must be confirmed available before the choice is signed, connection limits and pooling become a sizing decision that the API and worker share, and the provider's maintenance windows and backup retention constrain what D3 and D7 may promise. |
+| **C — primary plus a replica or standby** | A second copy exists for reads or for failover. | Bounds recovery time (D3) but adds a failover procedure with its own split-brain and data-loss rules, a decision about which reads may hit the replica (RAG search, analytics), and a rehearsal of both failover and fail-back — none of which exists in the code today. |
+
+#### 3. Redis
+
+| Option | What it means | Consequences to accept |
+|---|---|---|
+| **A — Redis on the API host** | A local instance serves the queue, caps, limiter and inbox. | Cheapest, but the queue shares the API's failure domain: restarting the host loses whatever is queued (the queue is a list in memory), and every chat message's cap check adds no network hop. |
+| **B — a separate Redis instance** | One Redis service reached over the private network by both API and worker. | Isolates the queue from an API restart and lets it be sized separately, at the cost of one more host to protect and back up decisions about persistence. |
+| **C — a managed Redis-compatible service** | A provider runs Redis. | Adds provider limits and a memory/eviction policy that matters: an eviction policy that drops queue keys loses jobs even though the process is healthy. Provider latency sits in front of every quota check, and a provider outage degrades the inbox and stalls the worker exactly like a local failure. No option removes Redis — the queue, the caps, the shared limiter and the inbox stream all require it. |
+
+#### 4. Where the uploaded bytes live
+
+| Option | What it means | Consequences to accept |
+|---|---|---|
+| **A — local directory on the API host** | The current code path: `uploads/` on the machine serving requests. | Works unchanged and keeps purge simple, but it pins the deployment to one API instance, the bytes must sit on a volume that survives a host replacement, and the backup story has to cover a directory as well as the database (D3/D7). A rebuild that discards the disk loses documents whose rows still exist. |
+| **B — a shared filesystem mounted on every instance** | The same `uploads/` path, backed by shared storage. | Preserves the code and allows several API instances, at the cost of a network dependency on every upload, read and purge, and a requirement that the share's semantics match what the code assumes (`os.unlink`, `..` rejection, batch-committed deletes). |
+| **C — object storage** | Bytes move to a bucket and the application addresses them by key. | **Requires code changes**: `api/upload.py` writes locally, `services/retention.py` unlinks locally, and nothing serves the files today. It also adds a credential, a new egress boundary and a second deletion path that D7 must describe — so this is a V6 task implied by D2, not a D2 setting. |
+
+#### 5. How the admin UI is delivered
+
+| Option | What it means | Consequences to accept |
+|---|---|---|
+| **A — the same proxy serves the built SPA** | `frontend/dist` is served under the API's origin. | One origin for CORS, one certificate, one deploy; but the build's baked `VITE_BACKEND_URL` must be that origin, and rolling the API back without rolling the frontend back (or the reverse) has to be tolerated or forbidden explicitly. |
+| **B — a separate static host or CDN** | The SPA is served from its own hostname. | Adds a second origin to `CORS_ORIGINS` and a second certificate, and makes cache invalidation for `index.html` a deployment step; the baked API URL becomes a recorded environment fact that changes with the topology. |
+| **C — the API serves the build itself** | A static mount in the application serves `dist/`. | One origin total and no second deploy system, but it is a code change, every API instance must carry the build artifact, and a static mount widens what the process serves — which V6-10's validator would have to cover. |
+
+#### 6. Ingress, TLS termination and network boundaries
+
+| Option | What it means | Consequences to accept |
+|---|---|---|
+| **A — proxy on the same host, app on loopback** | TLS terminates in a local reverse proxy; the ASGI server listens on loopback only. | Matches `README.md` §2 and needs no `TRUSTED_PROXY_IPS` entry (loopback is trusted already); one certificate to renew, and the proxy's forwarded-proto behaviour must be correct because the hosted page's origin is compared exactly. An SSE timeout at the proxy shorter than the stream's heartbeat silently breaks live replies. |
+| **B — load balancer or edge in front of private instances** | TLS terminates at a separate ingress; app instances are private. | Scales out cleanly, but the ingress addresses must be listed in `TRUSTED_PROXY_IPS` when they are public, or every visitor shares one rate-limit bucket; health checks need a path and readiness semantics (`/health` today returns a JSON body with `db`, `redis` and limiter state); and idle/streaming timeouts, buffering and body-size limits all move to the edge, where the upload limit and the SSE endpoints have to be kept consistent. |
+| **C — the application terminates TLS** | The ASGI server holds the certificate. | No proxy to configure and no forwarded headers, at the cost of certificate storage and reload in the app's environment, losing the proxy-level buffering controls the SSE endpoints depend on, and still needing an HTTP-to-HTTPS story. |
+
+Whichever shape is chosen, the boundary description has to say which of these is public: the API origin (including `/widget.js`, `/chat/{id}`, `/api/widget-config` and the chat endpoints), the admin SPA origin, and — for Track B only — the payment provider's webhook ingress. PostgreSQL, Redis and the upload volume should not be publicly reachable, and the worker should have no inbound path at all.
+
+#### 7. How a change is deployed
+
+| Option | What it means | Consequences to accept |
+|---|---|---|
+| **A — replace in place** | Stop, deploy, start. | Simplest and needs no extra machinery, but it accepts downtime and drops in-flight SSE connections; the API and worker restart together, so a slow migration is a visible outage. |
+| **B — rolling replacement** | Instances are replaced one at a time behind the health check. | Little or no visible downtime, at the cost of two versions serving simultaneously: every migration must be backward compatible for one release, the worker must tolerate jobs written by either version, and readiness has to mean something the ingress can act on. |
+| **C — immutable artifact promoted per environment** | One build is promoted from a non-production environment to production (blue-green or an equivalent switch). | Rollback becomes a switch back to the previous artifact and the rehearsed environment matches production, but it requires artifact storage, a promotion procedure and a rule that the database, Redis and upload volume are not part of the artifact — so a schema change can still make the old artifact unusable. |
+
+#### 8. Migrations and rollback
+
+| Option | What it means | Consequences to accept |
+|---|---|---|
+| **A — roll back the schema too** | `alembic downgrade` to the previous revision as part of the rollback. | Restores the matching schema, but M11/M12 downgrades discard billing and operator state, so the data cost must be accepted explicitly; the chain is linear, so the only target is the immediately previous revision; and the downgrade has to be rehearsed on a copy, not assumed. |
+| **B — restore code only, fix the schema forward** | Rollback redeploys the previous build; migrations are never reversed. | No data is discarded, but every migration must be safe for the previous code for at least one release (expand now, contract later), which is a review rule imposed on all future V6 work. |
+| **C — restore the database from a backup** | Rollback is a restore. | Only for a catastrophic change: it loses everything after the backup point (D3's recovery point), and it has to be reconciled against the upload volume, Redis state and any external side effects (sent email, provider calls, payments). |
+
+### Cross-checks an approval must satisfy
+
+- **D3 must promise against this topology.** A single-host option makes the availability statement a function of one machine; a standby option changes what recovery time is even measurable; worker restarts lose queued jobs unless something else covers them.
+- **D4's required settings follow from the topology.** `TRUSTED_PROXY_IPS`, whether `RATE_LIMIT_BACKEND=redis` is mandatory, the `CORS_ORIGINS` list and where secrets live are all consequences of the shape chosen here, not independent choices.
+- **D5 is not satisfied by a private network alone.** A separate operator ingress reduces exposure but the approved control (MFA/SSO or an operator-only network, enforced before the application) still has to be recorded and exercised.
+- **D6 and option 4C interact.** Scanning has to sit wherever the bytes actually land; choosing object storage moves the upload surface into a new code path and a new boundary.
+- **D7 needs the deletion map for wherever bytes live**, including a shared filesystem or a bucket whose own versioning or lifecycle rules may outlive the application's purge.
+- **D8 needs to know where logs and metrics are collected from** — which process writes them, whether the worker's `print` output is captured, and which ingress or host layer supplies request logs.
+- **D9 owns queue survivability**, but this row decides whether Redis persists, whether eviction can drop keys and whether a restart loses queued work; those facts belong in D9's answer.
+- **D1 decides whether Track B is in scope**, which adds the payment provider's webhook ingress and the operator console's origin to the boundary description.
+
+### Exact evidence an approver must sign
+
+1. A component inventory — API process, worker process, PostgreSQL with pgvector, Redis, upload volume, admin build, ingress/TLS — each marked self-managed or managed, with the operator who owns it. Any provider name, region and account belongs in this signed evidence; this brief deliberately contains none.
+2. The network boundary description: what is reachable from the public internet and on which paths, what is private, and the egress destinations required (model/embedding provider, SMTP, and for Track B the payment provider and its webhook ingress).
+3. The TLS termination point, certificate source and renewal owner, and the exact external scheme, host and port the application sees — because `GET /chat/{id}`'s embed allowlist compares `request.base_url` exactly.
+4. The `TRUSTED_PROXY_IPS` value and confirmation that `Host`, `X-Forwarded-For` and `X-Forwarded-Proto` are forwarded; without it the limiter keys on the proxy and every visitor shares a bucket.
+5. The `CORS_ORIGINS` list and the admin app's public URL (`FRONTEND_URL`), consistent with option 5.
+6. Sizing and capacity, as supplied by the operator and consistent with D3: API instance count, worker count, database size and connection budget, Redis memory and eviction policy, upload volume size and headroom.
+7. The upload volume's identity — local path, shared mount or bucket — whether it survives a host replacement, who backs it up, and, if it stays local, confirmation that only one API instance serves and purges it.
+8. The frontend pipeline: where the build is served, the `VITE_BACKEND_URL` baked into it, and how `index.html` and `/widget.js?v=…` are invalidated after a deploy.
+9. The deploy procedure: the artifact, the commands, the order relative to `alembic upgrade head`, whether requests are served during it, who executes it, and the record of a rehearsal in a non-production environment.
+10. The rollback procedure: how many previous artifacts are retained, the migration policy (downgrade, forward-fix or restore), the mixed-version rule for the API, worker and schema, and the record of a rehearsal — not a description.
+11. The environment list: production and whatever non-production environment exists, how secrets and data differ, and which data may never appear outside production (D7/D8).
+12. The health contract the ingress uses — `/health` as it exists today (JSON with `db`, `redis` and limiter state) or a separate readiness path — plus the proxy's buffering and idle-timeout settings for the three SSE endpoints.
+13. The approver's role, date and a link or path to the signed evidence — recorded in this row and copied into `plans/PLAN_V6.md` §4 and into risk R4 (topology verification) and R8 (TLS, private networking, backups) of `docs/risk-register-v6.md`.
+
+### What an approval changes
+
+Only the D2 row moves from **UNAPPROVED** to **APPROVED**, which unblocks V6-10 (the validator needs to know which settings are required in this environment) and V6-40 (a deploy/rollback runbook needs a mechanism to describe), and supplies the topology half of V6-02's operating model. Gate V6-0G still needs D1, D3, D7, D11 and the remaining architecture decisions, so Wave 1 stays closed.
