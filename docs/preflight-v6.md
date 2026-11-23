@@ -49,7 +49,7 @@ An index of the thirteen decisions in this record: each question in a line, the 
 | **D12** | Track B only: are V5's commercial answers D2–D9 signed and how, which merchant account receives payment, how the catalog is published, who activates billing, and who owns refunds, disputes, reconciliation and webhook failures? V5 D10–D12 (operator boundary) are not carried. | **UNAPPROVED** | R3 |  |  |  |  |
 | **D13** | Are tenant MFA/SSO, broader admin audit, a session-revocation UI and origin-bound widget auth required or deferred? | **UNAPPROVED** | R10, R11, R12 |  |  |  |  |
 
-**Signing a row.** Put the approver's name, role and date in the row, put the evidence path or link in the last cell, and change the status cell from **UNAPPROVED** to **APPROVED**. Then copy the same four facts into `plans/PLAN_V6.md` §4 and into the risk rows named in the register, as “How an approval gets recorded” below describes. A row that is PROPOSED or BLOCKED stays unsigned, and no task whose decision is unsigned may start.
+**Signing a row.** Put the approver's name, role and date in the row, put the evidence path or link in the last cell, and change the status cell from **UNAPPROVED** to **APPROVED**. Then copy the same four facts into [`plans/PLAN_V6.md` §4](../plans/PLAN_V6.md#4-pre-flight-decisions-blocking-for-the-affected-tasks) and into the risk rows named in the register, as “How an approval gets recorded” below describes. A row that is PROPOSED or BLOCKED stays unsigned, and no task whose decision is unsigned may start.
 
 ## Status vocabulary
 
@@ -63,16 +63,16 @@ An index of the thirteen decisions in this record: each question in a line, the 
 - Gate V6-0G stays unsigned and Wave 1 does not start: no production-config validator (V6-10), no platform-console work (V6-11), no tenant-identity, session, upload or audit work (V6-12…V6-16).
 - `BILLING_ENABLED=false` and `PLATFORM_CONSOLE_ENABLED=false`; `/api/platform` remains a 404.
 - No production deployment, no release tag, and no SLO, support promise or pricing statement is published.
-- Wave 0's only completed task remains V6-04, whose baseline and gate evidence are recorded in `plans/PLAN_V6.md`.
+- Wave 0's only completed task remains V6-04, whose baseline and gate evidence are recorded in [`plans/PLAN_V6.md`](../plans/PLAN_V6.md).
 
 ## Out of scope of this record
 
-Every decision `plans/PLAN_V6.md` §4 lists now has an appendix here, D12 included. D12 is in scope only if Track B is chosen: while Track A is the launch track it is out of scope, billing stays off and the paid surfaces stay 404. D9 and D10 are briefed here even though they gate Wave 2 and Wave 3 tasks, because R5 and R7 have no other decision to wait on; D12 gates paid activation (V6-51/gate V6-6G), not the Wave 0 gate, and carries only V5's commercial answers D2–D9: V5 D10–D12 are the operator boundary, V6 D5 takes only the console's authentication requirement, and the rest stays open in `plans/PLAN_V5.md` §3.
+Every decision [`plans/PLAN_V6.md` §4](../plans/PLAN_V6.md#4-pre-flight-decisions-blocking-for-the-affected-tasks) lists now has an appendix here, D12 included. D12 is in scope only if Track B is chosen: while Track A is the launch track it is out of scope, billing stays off and the paid surfaces stay 404. D9 and D10 are briefed here even though they gate Wave 2 and Wave 3 tasks, because R5 and R7 have no other decision to wait on; D12 gates paid activation (V6-51/gate V6-6G), not the Wave 0 gate, and carries only V5's commercial answers D2–D9: V5 D10–D12 are the operator boundary, V6 D5 takes only the console's authentication requirement, and the rest stays open in `plans/PLAN_V5.md` §3.
 
 ## How an approval gets recorded
 
 1. The named approver supplies the decision, the date and the evidence (path or link) in the row.
-2. The row's status changes from UNAPPROVED to APPROVED, and the same facts are copied into `plans/PLAN_V6.md` §4.
+2. The row's status changes from UNAPPROVED to APPROVED, and the same facts are copied into [`plans/PLAN_V6.md` §4](../plans/PLAN_V6.md#4-pre-flight-decisions-blocking-for-the-affected-tasks).
 3. Only then may the dependent task start; a task whose dependency is PROPOSED or BLOCKED stays unticked.
 
 ## Appendix — D1 decision brief
@@ -101,11 +101,11 @@ Which launch is being approved — **Track A** (hosted core, billing and platfor
 6. For the cohort's pricing surface: accept the empty-catalog being-finalised state at launch, or record that the catalog content will be approved under D12 before any price is published (required for B or both).
 7. For B or both: the statement that the V5 commercial answers (D2–D9), the merchant account, the operational owner and the live-activation authority are D12 prerequisites that this row does not approve, and that D12 must be signed before V6-51 and gate V6-6G.
 8. Sign-off on launch copy: no price, guarantee, SLO, certification or feature claim beyond the approved scope.
-9. The approver's role, the date, and a link or path to the signed evidence — recorded in this row and copied into `plans/PLAN_V6.md` §4 and into risk R3 (the track a paid launch still waits on) of `docs/risk-register-v6.md`.
+9. The approver's role, the date, and a link or path to the signed evidence — recorded in this row and copied into [`plans/PLAN_V6.md` §4](../plans/PLAN_V6.md#4-pre-flight-decisions-blocking-for-the-affected-tasks) and into [risk R3](risk-register-v6.md#r3) (the track a paid launch still waits on) of `docs/risk-register-v6.md`.
 
 ### What an approval changes
 
-Only the D1 row moves from **UNAPPROVED** to **APPROVED**, which unblocks V6-01 and the scope half of V6-02. Gate V6-0G still needs D3, D7, D11 and the architecture decisions, so Wave 1 stays closed.
+Only [the D1 row](#decision-register--one-page-to-sign) moves from **UNAPPROVED** to **APPROVED**, which unblocks V6-01 and the scope half of V6-02. Gate V6-0G still needs D3, D7, D11 and the architecture decisions, so Wave 1 stays closed.
 
 ## Appendix — D3 decision brief
 
@@ -162,11 +162,11 @@ For uploads the same three options exist only in weaker forms — snapshot or ob
 7. The §3 support coverage: who answers, through which channel, in which hours, and the escalation target. (D11 names the support owner; this decision records the coverage the promise needs.)
 8. The exclusions the promise relies on: which third-party dependencies, customer-side causes and events are outside it.
 9. Where status and incidents are communicated, if the promise includes any.
-10. The approver's role, date and a link or path to the signed evidence — recorded in this row and copied into `plans/PLAN_V6.md` §4 and into risk R4 (operational ownership), R6 (the alert thresholds) and R8 (the approved RPO/RTO) of `docs/risk-register-v6.md`.
+10. The approver's role, date and a link or path to the signed evidence — recorded in this row and copied into [`plans/PLAN_V6.md` §4](../plans/PLAN_V6.md#4-pre-flight-decisions-blocking-for-the-affected-tasks) and into [risk R4](risk-register-v6.md#r4) (operational ownership), [R6](risk-register-v6.md#r6) (the alert thresholds) and [R8](risk-register-v6.md#r8) (the approved RPO/RTO) of `docs/risk-register-v6.md`.
 
 ### What an approval changes
 
-Only the D3 row moves from **UNAPPROVED** to **APPROVED**, which unblocks the objective half of V6-02 and gives V6-21 its alert thresholds and V6-42 its restore targets. Gate V6-0G still needs D1, D7, D11 and the architecture decisions, so Wave 1 stays closed.
+Only [the D3 row](#decision-register--one-page-to-sign) moves from **UNAPPROVED** to **APPROVED**, which unblocks the objective half of V6-02 and gives V6-21 its alert thresholds and V6-42 its restore targets. Gate V6-0G still needs D1, D7, D11 and the architecture decisions, so Wave 1 stays closed.
 
 ## Appendix — D7 decision brief
 
@@ -236,11 +236,11 @@ What data-handling policy applies: the default retention for a company and its c
 6. The legal or contractual exceptions that outlive deletion, stated explicitly rather than implied.
 7. The privacy-notice wording that matches the behaviour above (V6-41), with no promise the code cannot keep.
 8. The owner and channel for data-subject requests and how they are recorded (adjacent to D11).
-9. The approver's role, date and a link or path to the signed evidence — recorded in this row and copied into `plans/PLAN_V6.md` §4 and into risk R8 (backup expiry and restore) and R10 (audit retention) of `docs/risk-register-v6.md`.
+9. The approver's role, date and a link or path to the signed evidence — recorded in this row and copied into [`plans/PLAN_V6.md` §4](../plans/PLAN_V6.md#4-pre-flight-decisions-blocking-for-the-affected-tasks) and into [risk R8](risk-register-v6.md#r8) (backup expiry and restore) and [R10](risk-register-v6.md#r10) (audit retention) of `docs/risk-register-v6.md`.
 
 ### What an approval changes
 
-Only the D7 row moves from **UNAPPROVED** to **APPROVED**, which unblocks V6-41 and the retention side of V6-42, and settles the retention questions inside V6-14 and V6-15. Gate V6-0G still needs D1, D3, D11 and the architecture decisions, so Wave 1 stays closed.
+Only [the D7 row](#decision-register--one-page-to-sign) moves from **UNAPPROVED** to **APPROVED**, which unblocks V6-41 and the retention side of V6-42, and settles the retention questions inside V6-14 and V6-15. Gate V6-0G still needs D1, D3, D11 and the architecture decisions, so Wave 1 stays closed.
 
 ## Appendix — D11 decision brief
 
@@ -318,11 +318,11 @@ D3 §3 chooses the **shape** of coverage (one named contact / a shared rota / co
 6. The support-side data access: which staff or vendor may read which tenant data, through which tool, and how that access is audited — or the explicit statement that it is not audited and the residual accepted against R10.
 7. The exact published text for the marketing footer, the app and the privacy notice, containing no promise the owner has not accepted.
 8. The value to set in `platform_settings.support_contact_email`, and the person who maintains it; until it is set the footer correctly shows no address.
-9. The approver's role, date and evidence path — recorded in the D11 row, copied into `plans/PLAN_V6.md` §4 and into risk R4 (named support and incident ownership) of `docs/risk-register-v6.md`.
+9. The approver's role, date and evidence path — recorded in [the D11 row](#decision-register--one-page-to-sign), copied into [`plans/PLAN_V6.md` §4](../plans/PLAN_V6.md#4-pre-flight-decisions-blocking-for-the-affected-tasks) and into [risk R4](risk-register-v6.md#r4) (named support and incident ownership) of `docs/risk-register-v6.md`.
 
 ### What an approval changes
 
-Only the D11 row moves from **UNAPPROVED** to **APPROVED**, which supplies the support details V6-41 publishes and the support-ownership half of V6-02. Gate V6-0G still needs D1, D3, D7 and the architecture decisions, so Wave 1 stays closed.
+Only [the D11 row](#decision-register--one-page-to-sign) moves from **UNAPPROVED** to **APPROVED**, which supplies the support details V6-41 publishes and the support-ownership half of V6-02. Gate V6-0G still needs D1, D3, D7 and the architecture decisions, so Wave 1 stays closed.
 
 ## Appendix — D2 decision brief
 
@@ -420,7 +420,7 @@ Whichever shape is chosen, the boundary description has to say which of these is
 - **D6 and option 4C interact.** Scanning has to sit wherever the bytes actually land; choosing object storage moves the upload surface into a new code path and a new boundary.
 - **D7 needs the deletion map for wherever bytes live**, including a shared filesystem or a bucket whose own versioning or lifecycle rules may outlive the application's purge.
 - **D8 needs to know where logs and metrics are collected from** — which process writes them, whether the worker's `print` output is captured, and which ingress or host layer supplies request logs.
-- **D9 owns queue survivability**, but this row decides whether Redis persists, whether eviction can drop keys and whether a restart loses queued work; those facts belong in the D9 brief.
+- **D9 owns queue survivability**, but this row decides whether Redis persists, whether eviction can drop keys and whether a restart loses queued work; those facts belong in [the D9 brief](#appendix--d9-decision-brief).
 - **D1 decides whether Track B is in scope**, which adds the payment provider's webhook ingress and the operator console's origin to the boundary description.
 
 ### Exact evidence an approver must sign
@@ -437,11 +437,11 @@ Whichever shape is chosen, the boundary description has to say which of these is
 10. The rollback procedure this row selects: how many previous artifacts are retained, the migration policy (downgrade, forward-fix or restore), and the mixed-version rule for the API, worker and schema, with the rehearsal's pass conditions stated — the record itself is V6-40 evidence, not a description.
 11. The environment list: production and whatever non-production environment exists, how secrets and data differ, and which data may never appear outside production (D7/D8).
 12. The health contract the ingress uses — `/health` as it exists today (JSON with `db`, `redis` and limiter state) or a separate readiness path — plus the proxy's buffering and idle-timeout settings for the three SSE endpoints.
-13. The approver's role, date and a link or path to the signed evidence — recorded in this row and copied into `plans/PLAN_V6.md` §4 and into risk R4 (topology verification), R6 (the deployment workflow behind `/health`) and R8 (TLS, private networking, backups) of `docs/risk-register-v6.md`.
+13. The approver's role, date and a link or path to the signed evidence — recorded in this row and copied into [`plans/PLAN_V6.md` §4](../plans/PLAN_V6.md#4-pre-flight-decisions-blocking-for-the-affected-tasks) and into [risk R4](risk-register-v6.md#r4) (topology verification), [R6](risk-register-v6.md#r6) (the deployment workflow behind `/health`) and [R8](risk-register-v6.md#r8) (TLS, private networking, backups) of `docs/risk-register-v6.md`.
 
 ### What an approval changes
 
-Only the D2 row moves from **UNAPPROVED** to **APPROVED**, which unblocks V6-10 (the validator needs to know which settings are required in this environment) and V6-40 (a deploy/rollback runbook needs a mechanism to describe), and supplies the topology half of V6-02's operating model. Gate V6-0G still needs D1, D3, D7, D11 and the remaining architecture decisions, so Wave 1 stays closed.
+Only [the D2 row](#decision-register--one-page-to-sign) moves from **UNAPPROVED** to **APPROVED**, which unblocks V6-10 (the validator needs to know which settings are required in this environment) and V6-40 (a deploy/rollback runbook needs a mechanism to describe), and supplies the topology half of V6-02's operating model. Gate V6-0G still needs D1, D3, D7, D11 and the remaining architecture decisions, so Wave 1 stays closed.
 
 ## Appendix — D4 decision brief
 
@@ -543,11 +543,11 @@ Which settings a production deployment must have, where each value comes from, a
 8. The environment list and separation rule: which environments exist, which values differ, and the guarantee that no production data or credential appears in a non-production one.
 9. The requirement that the approved policy leave development, the unit suites and `scripts/gate_v5_5g` runnable without production secrets, and the demonstration V6-10 must produce — a validator that breaks them is not acceptable. The demonstration is V6-10 evidence, after this signature.
 10. The names of the settings whose absence the deployment must treat as fatal, agreed with the operator who will run the start-up, so the validator can be written against a signed list rather than an engineering guess.
-11. The approver's role, date and a link or path to the signed evidence — recorded in this row and copied into `plans/PLAN_V6.md` §4 and into risk R1 (secure boot) of `docs/risk-register-v6.md`.
+11. The approver's role, date and a link or path to the signed evidence — recorded in this row and copied into [`plans/PLAN_V6.md` §4](../plans/PLAN_V6.md#4-pre-flight-decisions-blocking-for-the-affected-tasks) and into [risk R1](risk-register-v6.md#r1) (secure boot) of `docs/risk-register-v6.md`.
 
 ### What an approval changes
 
-Only the D4 row moves from **UNAPPROVED** to **APPROVED**, which unblocks V6-10 (the production-mode validator needs a signed required-set and a defined failure mode) and supplies the configuration half of V6-02's operating model. Gate V6-0G still needs D1, D2, D3, D7, D11 and the remaining decisions, so Wave 1 stays closed.
+Only [the D4 row](#decision-register--one-page-to-sign) moves from **UNAPPROVED** to **APPROVED**, which unblocks V6-10 (the production-mode validator needs a signed required-set and a defined failure mode) and supplies the configuration half of V6-02's operating model. Gate V6-0G still needs D1, D2, D3, D7, D11 and the remaining decisions, so Wave 1 stays closed.
 
 ## Appendix — D5 decision brief
 
@@ -640,11 +640,11 @@ Which enforceable control protects the platform-owner boundary — a second fact
 8. The exposure decision: console enabled or disabled for the launch cohort, and if enabled, from where — public ingress, private path or operator proxy — consistent with D2.
 9. The audit expectations for operator access: which events are recorded, who may read them, and how that is verified rather than assumed.
 10. The acceptance scenarios V6-11 must demonstrate in a non-production environment — sign-in, refusal for a tenant account, a grant, a mutation, a revocation and a recovery — agreed now, with the evidence path recorded. The demonstration is V6-11 evidence, after this signature.
-11. The approver's role, date and a link or path to the signed evidence — recorded in this row and copied into `plans/PLAN_V6.md` §4 and into risk R2 (operator security) and R3 (the operator half of the paid-launch row) of `docs/risk-register-v6.md`.
+11. The approver's role, date and a link or path to the signed evidence — recorded in this row and copied into [`plans/PLAN_V6.md` §4](../plans/PLAN_V6.md#4-pre-flight-decisions-blocking-for-the-affected-tasks) and into [risk R2](risk-register-v6.md#r2) (operator security) and [R3](risk-register-v6.md#r3) (the operator half of the paid-launch row) of `docs/risk-register-v6.md`.
 
 ### What an approval changes
 
-Only the D5 row moves from **UNAPPROVED** to **APPROVED**, which is the condition for exposing the platform console at all (V6-11) and supplies the operator half of V6-02's ownership model. Gate V6-0G still needs D1, D2, D3, D4, D7, D11 and the remaining decisions, so Wave 1 stays closed; until then `PLATFORM_CONSOLE_ENABLED=false` remains the only operating control.
+Only [the D5 row](#decision-register--one-page-to-sign) moves from **UNAPPROVED** to **APPROVED**, which is the condition for exposing the platform console at all (V6-11) and supplies the operator half of V6-02's ownership model. Gate V6-0G still needs D1, D2, D3, D4, D7, D11 and the remaining decisions, so Wave 1 stays closed; until then `PLATFORM_CONSOLE_ENABLED=false` remains the only operating control.
 
 ## Appendix — D6 decision brief
 
@@ -659,7 +659,7 @@ What happens to a file a customer supplies before it becomes knowledge the assis
 - **Five entry points, all behind the same login.** `api/upload.py` exposes `POST /api/uploads/` (multipart), `/url`, `/youtube`, `/notion` and `/google-drive`, and every one depends on `get_current_user` — **any** authenticated account of any role in any company, not only an admin or manager. Nothing in `/api/v1` exposes uploads.
 - **No format check on the file itself.** The multipart route derives the extension from the supplied filename (`os.path.splitext`) and stores `file.content_type` as sent; there is no allowlist of extensions or MIME types anywhere on the upload path, so a file named `.pdf` is accepted as a PDF and anything else named `.txt` is accepted as text.
 - **One size limit, enforced while streaming.** `MAX_UPLOAD_MB` (default `20`) becomes `MAX_UPLOAD_BYTES` (`core/config.py:258–259`) and the multipart route aborts mid-stream, deleting the partial file; the four import routes enforce the same ceiling on the declared or streamed length (`services/sources.py`). There is no per-company quota on stored uploads.
-- **Nothing scans anything.** There is no antivirus, malware or content-scanning code in the tree; the only match for “scan” on this path is a comment about a remote provider's own warning page. `docs/security.md` states plainly that uploads are **not** virus-scanned, and risk R9 records it as accept-with-owner.
+- **Nothing scans anything.** There is no antivirus, malware or content-scanning code in the tree; the only match for “scan” on this path is a comment about a remote provider's own warning page. `docs/security.md` states plainly that uploads are **not** virus-scanned, and [risk R9](risk-register-v6.md#r9) records it as accept-with-owner.
 - **Parsing happens later, in the worker.** The upload routes store bytes under `uploads/` and create an `Attachment` row; text extraction (`services/parse.py::extract_text_from_file`) runs in `worker.py:316` during ingestion, using `pypdf`, `python-docx`, `python-pptx` or BeautifulSoup depending on the extension. A hostile file is therefore stored first and parsed out of process, and the extracted text becomes an `extra_documents` row the assistant can quote.
 - **Nothing serves the stored bytes.** No route returns an uploaded file (D2 records the same fact), so the browser-delivery risk is absent; what a bad file can reach is the parser and, through extracted text, an answer.
 - **Deletion is the retention path.** `services/retention.py` unlinks expired attachments and deletes their documents; erasing a conversation or contact is a separate path that does not remove a document an admin uploaded.
@@ -731,11 +731,11 @@ Whichever is chosen, the size limit has to be stated per entry point, because th
 9. The audit or log event a refusal produces, its retention and its redaction (D8/D7).
 10. The residual risk statement if option 2A is chosen: what a malicious file can reach (the parser process and the extracted text an answer may quote), who accepts it, and when it is reviewed.
 11. The acceptance test V6-13 must pass: a known-bad fixture uploaded through each chosen entry point, ending accepted, quarantined or refused as decided, in a non-production environment, with the evidence path recorded. The result is V6-13 evidence, after this signature.
-12. The approver's role, date and a link or path to the signed evidence — recorded in this row and copied into `plans/PLAN_V6.md` §4 and into risk R9 of `docs/risk-register-v6.md`.
+12. The approver's role, date and a link or path to the signed evidence — recorded in this row and copied into [`plans/PLAN_V6.md` §4](../plans/PLAN_V6.md#4-pre-flight-decisions-blocking-for-the-affected-tasks) and into [risk R9](risk-register-v6.md#r9) of `docs/risk-register-v6.md`.
 
 ### What an approval changes
 
-Only the D6 row moves from **UNAPPROVED** to **APPROVED**, which unblocks V6-13 and turns R9 from an unowned P1 into either a mitigated control or a signed acceptance. Gate V6-0G still needs D1, D2, D3, D4, D5, D7, D11 and the remaining decisions, so Wave 1 stays closed; until then uploads keep their current behaviour and R9 keeps its blank owner.
+Only [the D6 row](#decision-register--one-page-to-sign) moves from **UNAPPROVED** to **APPROVED**, which unblocks V6-13 and turns R9 from an unowned P1 into either a mitigated control or a signed acceptance. Gate V6-0G still needs D1, D2, D3, D4, D5, D7, D11 and the remaining decisions, so Wave 1 stays closed; until then uploads keep their current behaviour and R9 keeps its blank owner.
 
 ## Appendix — D8 decision brief
 
@@ -836,11 +836,11 @@ The thresholds themselves are deliberately absent here: they follow from D3's SL
 9. The behaviour while telemetry is unavailable (§6), including any local buffer bound.
 10. The worker's `print` calls: whether they are converted, left, or removed, and what happens to a job failure that is currently only printed.
 11. The dry run V6-21/V6-22 must demonstrate in a non-production environment — one request, one failed job and one alert reaching the destination — agreed now, with the evidence path recorded. The dry run itself is that task's evidence, after this signature.
-12. The approver's role, date and a link or path to the signed evidence — recorded in this row and copied into `plans/PLAN_V6.md` §4 and into risk R6 of `docs/risk-register-v6.md`.
+12. The approver's role, date and a link or path to the signed evidence — recorded in this row and copied into [`plans/PLAN_V6.md` §4](../plans/PLAN_V6.md#4-pre-flight-decisions-blocking-for-the-affected-tasks) and into [risk R6](risk-register-v6.md#r6) of `docs/risk-register-v6.md`.
 
 ### What an approval changes
 
-Only the D8 row moves from **UNAPPROVED** to **APPROVED**, which unblocks V6-21 and V6-22 and turns R6's "no observability vendor config" into either a named destination or a signed decision to keep telemetry in-house. Gate V6-0G still needs D1, D2, D3, D4, D5, D6, D7, D11 and the remaining decisions, so Wave 1 stays closed; until then the worker keeps printing, the logs keep going wherever the host sends them, and `docs/release-v5.md` row 9 stays pending.
+Only [the D8 row](#decision-register--one-page-to-sign) moves from **UNAPPROVED** to **APPROVED**, which unblocks V6-21 and V6-22 and turns R6's "no observability vendor config" into either a named destination or a signed decision to keep telemetry in-house. Gate V6-0G still needs D1, D2, D3, D4, D5, D6, D7, D11 and the remaining decisions, so Wave 1 stays closed; until then the worker keeps printing, the logs keep going wherever the host sends them, and `docs/release-v5.md` row 9 stays pending.
 
 ## Appendix — D13 decision brief (sessions and security response)
 
@@ -928,11 +928,11 @@ None of these removes the K18 caveat that a public value in a customer's page is
 9. The residual that remains after the chosen option — the K18 public-value caveat cannot be removed by any of these — and the row it is recorded against.
 10. The role and permission model each answer implies (`admin`, `manager`, `user`), so a control cannot be bypassed by a role that was not considered.
 11. The demonstration each **require** answer must produce in a non-production environment — an unenrolled login refused, an audited action producing one row, a revoked session refused on its next request, an off-origin read refused — agreed now as acceptance criteria, with the evidence path recorded. The demonstrations are V6-12/V6-14/V6-15/V6-16 evidence, checked after this signature.
-12. The approver's role, date and a link or path to the signed evidence — recorded in this row and copied into `plans/PLAN_V6.md` §4 and into R10, R11 and R12 of `docs/risk-register-v6.md`.
+12. The approver's role, date and a link or path to the signed evidence — recorded in this row and copied into [`plans/PLAN_V6.md` §4](../plans/PLAN_V6.md#4-pre-flight-decisions-blocking-for-the-affected-tasks) and into [R10](risk-register-v6.md#r10), [R11](risk-register-v6.md#r11) and [R12](risk-register-v6.md#r12) of `docs/risk-register-v6.md`.
 
 ### What an approval changes
 
-Only the D13 row moves from **UNAPPROVED** to **APPROVED** — as four recorded require-or-defer answers, not as one blanket "yes" — which unblocks V6-12, V6-14 and V6-16, settles the embed/session posture V6-15 must follow, and turns R10, R11 and R12 from unnamed residuals into either controls or signed acceptances with an expiry. With D13 recorded, every decision row that V6-01…V6-03 wait on has a brief; gate V6-0G still needs the approvals themselves, so Wave 1 stays closed and no control in this brief is implemented until an approver signs it. Until then sessions stay bearer-only, tenant admin actions stay unaudited, the widget keeps its soft origin check, and `EMBED_TOKEN_MODE`/`SESSION_TOKEN_MODE` stay at `compat`.
+Only [the D13 row](#decision-register--one-page-to-sign) moves from **UNAPPROVED** to **APPROVED** — as four recorded require-or-defer answers, not as one blanket "yes" — which unblocks V6-12, V6-14 and V6-16, settles the embed/session posture V6-15 must follow, and turns R10, R11 and R12 from unnamed residuals into either controls or signed acceptances with an expiry. With D13 recorded, every decision row that V6-01…V6-03 wait on has a brief; gate V6-0G still needs the approvals themselves, so Wave 1 stays closed and no control in this brief is implemented until an approver signs it. Until then sessions stay bearer-only, tenant admin actions stay unaudited, the widget keeps its soft origin check, and `EMBED_TOKEN_MODE`/`SESSION_TOKEN_MODE` stay at `compat`.
 
 ## Appendix — D9 decision brief
 
@@ -1002,15 +1002,15 @@ What delivery guarantee applies to the jobs on `queue:jobs` — `ingest`, `diges
 6. For `digest` specifically: whether a duplicate send is accepted for the launch cohort, and if not, the guard that closes the window between the mail server accepting and `sent_at` committing.
 7. The crash-window pass conditions V6-20 will be judged by, agreed now: which cases must pass — crash before the handler, during it, after an external send and before the job is acknowledged or removed, after a commit, and on a provider failure — on disposable infrastructure, never against data that matters, and where each result is recorded. The results are V6-20 and gate V6-2G evidence, checked after this signature because this decision is what unblocks them.
 8. The retention rule for settled job records or dead-letter entries, if either is durable (adjacent D7).
-9. The approver's role, the date and a link or path to the signed evidence — recorded in this row and copied into `plans/PLAN_V6.md` §4 and into risk R5 of `docs/risk-register-v6.md`.
+9. The approver's role, the date and a link or path to the signed evidence — recorded in this row and copied into [`plans/PLAN_V6.md` §4](../plans/PLAN_V6.md#4-pre-flight-decisions-blocking-for-the-affected-tasks) and into [risk R5](risk-register-v6.md#r5) of `docs/risk-register-v6.md`.
 
 ### What an approval changes
 
-Only the D9 row moves from **UNAPPROVED** to **APPROVED**, which unblocks V6-20 and turns R5 from an unowned P1 into a stated guarantee with a tested recovery path. V6-20 is a Wave 2 task, so this signature does not open Wave 1: gate V6-0G still needs D1, D2, D3, D4, D5, D6, D7, D8, D11 and D13, and V6-20 starts only once V6-0G is signed as well. Until then the queue keeps its at-most-once behaviour and R5 keeps its blank owner.
+Only [the D9 row](#decision-register--one-page-to-sign) moves from **UNAPPROVED** to **APPROVED**, which unblocks V6-20 and turns R5 from an unowned P1 into a stated guarantee with a tested recovery path. V6-20 is a Wave 2 task, so this signature does not open Wave 1: gate V6-0G still needs D1, D2, D3, D4, D5, D6, D7, D8, D11 and D13, and V6-20 starts only once V6-0G is signed as well. Until then the queue keeps its at-most-once behaviour and R5 keeps its blank owner.
 
 ## Appendix — D10 decision brief
 
-**Status: D10 remains UNAPPROVED.** This brief lays out the choices for where the project's checks run; it names no vendor or product, sets no severity threshold, retention period or owner, and recommends none of the options. The commands and counts it quotes are what the checkout does today, recorded in `AGENTS.md` and `plans/PLAN_V6.md` §8 as evidence, not as a proposal.
+**Status: D10 remains UNAPPROVED.** This brief lays out the choices for where the project's checks run; it names no vendor or product, sets no severity threshold, retention period or owner, and recommends none of the options. The commands and counts it quotes are what the checkout does today, recorded in `AGENTS.md` and [`plans/PLAN_V6.md`](../plans/PLAN_V6.md) §8 as evidence, not as a proposal.
 
 ### The question
 
@@ -1018,7 +1018,7 @@ Where do the checks the project already has run, which of them must pass before 
 
 ### What the code does today (evidence, not a decision)
 
-- **No tracked workflow.** The checkout has no workflow directory, no CI configuration file and no `Makefile`: the commands in `AGENTS.md` and `plans/PLAN_V6.md` §8 are run on a developer's machine and their results transcribed into a document. Nothing runs on a push, and no result is attached to a commit.
+- **No tracked workflow.** The checkout has no workflow directory, no CI configuration file and no `Makefile`: the commands in `AGENTS.md` and [`plans/PLAN_V6.md`](../plans/PLAN_V6.md) §8 are run on a developer's machine and their results transcribed into a document. Nothing runs on a push, and no result is attached to a commit.
 - **The checks that exist.** `uv run python -m unittest discover -s tests` (63 modules / 1102 tests at the last recording), `node --test tests/*.mjs` (46), `uv run python -c "import site_gpt.app.main; import site_gpt.app.worker"`, `cd frontend && npm run build && npm run lint` (`tsc && vite build` and `eslint … --max-warnings 0`), `uv run alembic current` = `uv run alembic heads` = `0b22b30bf930`, `trail build`, plus the gate scripts under `scripts/`. `scripts/gate_v5_5g/run_all.sh` creates, migrates to head and drops its own `v5_gate_5g` database, refusing a name that does not start with `v5_gate_5g`, and needs no provider; `scripts/gate_v3_4g`, `scripts/gate_v4_4g` and `scripts/gate_v4_5g` regress earlier versions and need inputs this checkout does not have (a prior version's tree, fixed Redis ports, live providers).
 - **Two runtimes, and a test that skips instead of failing.** `tests/test_widget_markdown.py` shells out to `node` and calls `skipTest` when it is absent, so a Python run on a machine without Node reports success with the widget checks skipped. `frontend/package.json` deliberately has no `test` script, so the frontend's only automated checks are build and lint.
 - **Lockfiles are committed; runtime versions are prose.** `uv.lock` and `frontend/package-lock.json` exist, while Python 3.13.13 and Node v24.19.0 are recorded in documents and there is no `.python-version` or `.nvmrc` file for a runner to read.
@@ -1079,11 +1079,11 @@ The review V6-33 asks for covers vulnerability advisories and licence terms, and
 6. The credentials a workflow or runner may hold, their scope, and the guarantee that no production or live-provider secret is available to a job triggered by a change.
 7. Which gate scripts run where; for `gate_v5_5g`, the name guard that keeps it on its own disposable database; for `gate_v3_4g`, the `GATE_DB` its own script drops and recreates; for `gate_v4_4g`/`gate_v4_5g`, the empty throwaway database the caller creates and drops; and the explicit recording of the gates whose inputs this checkout lacks — blocked, never passed.
 8. Where the Python and Node versions are pinned so a runner matches the recorded environment, and the lockfiles it installs from.
-9. The approver's role, the date and a link or path to the signed evidence — recorded in this row and copied into `plans/PLAN_V6.md` §4 and into risk R7 of `docs/risk-register-v6.md`.
+9. The approver's role, the date and a link or path to the signed evidence — recorded in this row and copied into [`plans/PLAN_V6.md` §4](../plans/PLAN_V6.md#4-pre-flight-decisions-blocking-for-the-affected-tasks) and into [risk R7](risk-register-v6.md#r7) of `docs/risk-register-v6.md`.
 
 ### What an approval changes
 
-Only the D10 row moves from **UNAPPROVED** to **APPROVED**, which unblocks V6-30 and supplies the execution, browser, dependency and artifact rules V6-32 and V6-33 apply, and turns R7 from an unowned P1 into a defined workflow with a recorded result per commit. It opens no wave: V6-30 is a Wave 3 task, and gate V6-0G still needs D1, D2, D3, D4, D5, D6, D7, D8, D11 and D13. Until then the checks stay local, the browser journey stays recorded as blocked and R7 keeps its blank owner.
+Only [the D10 row](#decision-register--one-page-to-sign) moves from **UNAPPROVED** to **APPROVED**, which unblocks V6-30 and supplies the execution, browser, dependency and artifact rules V6-32 and V6-33 apply, and turns R7 from an unowned P1 into a defined workflow with a recorded result per commit. It opens no wave: V6-30 is a Wave 3 task, and gate V6-0G still needs D1, D2, D3, D4, D5, D6, D7, D8, D11 and D13. Until then the checks stay local, the browser journey stays recorded as blocked and R7 keeps its blank owner.
 
 ## Appendix — D12 decision brief
 
@@ -1106,7 +1106,7 @@ If Track B is chosen, what has to be approved before a customer can be charged: 
 
 #### 1. Which commercial answers are signed, and how
 
-`plans/PLAN_V6.md`'s D12 row asks for V5's commercial answers, D2–D9: catalog and terms (D2), Stripe and merchant readiness (D3), trial/free tier and registration (D4), lifecycle (D5), existing-company rollout (D6), enforcement (D7), legal content (D8) and branding (D9). V5 D10–D12 are the operator boundary and are not part of this decision: V6 D5 carries only the console's authentication requirement, and the rest stays open in `plans/PLAN_V5.md` §3, so this brief carries none of it.
+[`plans/PLAN_V6.md`](../plans/PLAN_V6.md)'s D12 row asks for V5's commercial answers, D2–D9: catalog and terms (D2), Stripe and merchant readiness (D3), trial/free tier and registration (D4), lifecycle (D5), existing-company rollout (D6), enforcement (D7), legal content (D8) and branding (D9). V5 D10–D12 are the operator boundary and are not part of this decision: V6 D5 carries only the console's authentication requirement, and the rest stays open in `plans/PLAN_V5.md` §3, so this brief carries none of it.
 
 | Option | What it means | Consequences to accept |
 |---|---|---|
@@ -1156,8 +1156,8 @@ If Track B is chosen, what has to be approved before a customer can be charged: 
 6. Legal and support content approved (V5 D8/D9, plus V6 D7/D11 where they touch retention and support), the pages each appears on, and the support contact a paying customer is given.
 7. The §4 activation scope: who may change the flag, for which cohort, the abort thresholds, the exact configuration change and the rollback owner — plus the statement that a deploy does not enable billing by itself.
 8. The pass conditions the rehearsal will be judged by (V6-51), agreed now: which cases must pass — Checkout, signed webhook, duplicate, out-of-order, invalid signature, provider failure, Portal cancel-at-period-end, entitlement boundaries and flag-off parity — how each result is recorded and who attests it, with fixture-only tests recorded as fixtures, never as a live Stripe run. The results are V6-51 and gate V6-6G evidence, checked after this signature because this decision is what unblocks them, not before it.
-9. The §5 owner for refunds, disputes, reconciliation and webhook failures with the procedure each follows, and the approver's role, date and signed-evidence link — recorded in this row and copied into `plans/PLAN_V6.md` §4 and into risk R3 of `docs/risk-register-v6.md`.
+9. The §5 owner for refunds, disputes, reconciliation and webhook failures with the procedure each follows, and the approver's role, date and signed-evidence link — recorded in this row and copied into [`plans/PLAN_V6.md` §4](../plans/PLAN_V6.md#4-pre-flight-decisions-blocking-for-the-affected-tasks) and into [risk R3](risk-register-v6.md#r3) of `docs/risk-register-v6.md`.
 
 ### What an approval changes
 
-Only the D12 row moves from **UNAPPROVED** to **APPROVED**, and only for Track B: it is one of the conditions gate V6-6G and V6-51 wait on, and it neither opens Wave 1 nor authorizes a charge by itself — the activation scope it records in §4 is part of this row (and under §4's option C there is none), so what remains between this signature and a customer's card is V6-51's rehearsal and gate V6-6G's own evidence. A deploy does not enable billing on its own. Under Track A nothing changes: billing stays off, the catalog stays unpublished, the paid surfaces answer 404 and R3 stays mitigated by configuration alone.
+Only [the D12 row](#decision-register--one-page-to-sign) moves from **UNAPPROVED** to **APPROVED**, and only for Track B: it is one of the conditions gate V6-6G and V6-51 wait on, and it neither opens Wave 1 nor authorizes a charge by itself — the activation scope it records in §4 is part of this row (and under §4's option C there is none), so what remains between this signature and a customer's card is V6-51's rehearsal and gate V6-6G's own evidence. A deploy does not enable billing on its own. Under Track A nothing changes: billing stays off, the catalog stays unpublished, the paid surfaces answer 404 and R3 stays mitigated by configuration alone.
