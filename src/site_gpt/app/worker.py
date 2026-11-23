@@ -115,6 +115,42 @@ async def requeue_stuck_ingests(
         db.close()
 
 
+# Strong references to the scheduler loops. asyncio keeps only weak references
+# to tasks, so a loop created without one can be garbage-collected mid-run and
+# that scheduler would stop silently. Holding each task here until it finishes
+# also lets a completed loop be collected.
+_background_tasks: set[asyncio.Task] = set()
+
+
+def _keep_task(task: asyncio.Task) -> asyncio.Task:
+    """Hold a strong reference to `task` until it completes."""
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+    return task
+
+
+def start_background_loops() -> list[asyncio.Task]:
+    """Create the scheduler loops and keep every task referenced.
+
+    Called once by `worker()` at startup. The digest loop stays opt-in behind
+    `DIGEST_ENABLED`, so a deployment that never enabled digests runs exactly
+    the other loops; every loop only reads settings until the interval elapses.
+    """
+    coros = [scheduler_loop()]  # periodic re-crawl, keeps knowledge fresh
+    if DIGEST_ENABLED:
+        coros.append(digest_loop())
+    coros.extend(
+        [
+            delivery_loop(),  # outbound integration retries, always on
+            retention_loop(),  # daily purge for companies with a policy
+            topic_loop(),  # clustering for companies that opted in
+            sitemap_loop(),  # daily sitemap diff scan, opt-in
+            insight_loop(),  # conversation insights, opt-in
+        ]
+    )
+    return [_keep_task(asyncio.create_task(coro)) for coro in coros]
+
+
 async def worker():
     print("Worker started, waiting for jobs...")
     # Pick up ingests orphaned by a previous process before consuming jobs.
@@ -122,30 +158,10 @@ async def worker():
         await requeue_stuck_ingests()
     except Exception as e:
         print(f"[worker] stuck-ingest recovery failed: {e}")
-    # Periodic re-crawl scheduler (keeps knowledge fresh).
-    asyncio.create_task(scheduler_loop())
-    # Weekly digest scheduler. Off unless DIGEST_ENABLED is set, so a deployment
-    # that never opted in runs exactly the V1 loops.
-    if DIGEST_ENABLED:
-        asyncio.create_task(digest_loop())
-    # Retries for outbound integration deliveries that failed or were queued
-    # while the endpoint was down. Always on: an event must not be lost because
-    # the receiver had a bad minute.
-    asyncio.create_task(delivery_loop())
-    # Daily retention purge for companies that set a policy. Queued rather than
-    # run inline so a large delete does not stall the job loop.
-    asyncio.create_task(retention_loop())
-    # Topic clustering for companies that opted in (`topic_clustering_enabled`).
-    # The loop only reads settings, so with nobody opted in it makes no provider
-    # call and no job is ever queued.
-    asyncio.create_task(topic_loop())
-    # Daily sitemap diff scan for companies that opted in (`sitemap_scan_enabled`,
-    # V4 F4). Reads settings only, so an untouched deployment queues nothing.
-    asyncio.create_task(sitemap_loop())
-    # Conversation insights for companies that opted in
-    # (`conversation_insights_enabled`, V4 F2). This loop only reads settings; the
-    # run it queues is what bounds the provider cost.
-    asyncio.create_task(insight_loop())
+    # Scheduler loops. `start_background_loops` keeps a strong reference to every
+    # task: the event loop holds only weak references, so an unreferenced loop
+    # could be garbage-collected mid-run and stop silently.
+    start_background_loops()
     while True:
         try:
             _, job = await redis_client.brpop("queue:jobs")  # type: ignore

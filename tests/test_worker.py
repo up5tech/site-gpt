@@ -417,6 +417,64 @@ class WorkerToDigestTests(unittest.TestCase):
         self.assertIn("Named from 2 of 2 visitor questions", body)
 
 
+class BackgroundLoopRetentionTests(unittest.TestCase):
+    """The scheduler loops must stay referenced for as long as they run.
+
+    asyncio keeps only weak references to tasks, and `worker()` used to create
+    the loops without storing them, so one could be garbage-collected mid-run
+    and stop silently.
+    """
+
+    def _start_then_cancel(self):
+        async def scenario():
+            tasks = worker.start_background_loops()
+            self.assertTrue(all(task in worker._background_tasks for task in tasks))
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            for _ in range(3):
+                await asyncio.sleep(0)
+            return tasks
+
+        return asyncio.run(scenario())
+
+    def test_every_scheduler_task_is_held_until_it_finishes(self):
+        tasks = self._start_then_cancel()
+
+        # the six always-on loops; the digest loop is opt-in
+        self.assertEqual(len(tasks), 6)
+        self.assertEqual(worker._background_tasks, set())
+
+    def test_the_digest_loop_is_added_when_enabled(self):
+        with patch.object(worker, "DIGEST_ENABLED", True):
+            tasks = self._start_then_cancel()
+
+        self.assertEqual(len(tasks), 7)
+
+    def test_the_worker_starts_the_kept_loops(self):
+        # `worker()` never returns on its own; cancelling the queue read ends it
+        # after startup, leaving the loops it created behind for inspection.
+        async def scenario():
+            with patch.object(worker, "requeue_stuck_ingests", new=AsyncMock()):
+                with patch.object(
+                    worker.redis_client,
+                    "brpop",
+                    new=AsyncMock(side_effect=asyncio.CancelledError),
+                ):
+                    with self.assertRaises(asyncio.CancelledError):
+                        await worker.worker()
+            tasks = list(worker._background_tasks)
+            self.assertEqual(len(tasks), 6)
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            for _ in range(3):
+                await asyncio.sleep(0)
+
+        asyncio.run(scenario())
+        self.assertEqual(worker._background_tasks, set())
+
+
 class EnqueueDueRetentionTests(unittest.TestCase):
     """The daily scheduler must actually push one job per company with a policy.
 

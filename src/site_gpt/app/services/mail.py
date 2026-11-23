@@ -1,13 +1,34 @@
 import asyncio
+import logging
 import os
 
 from dotenv import load_dotenv
 
 load_dotenv()
 
+logger = logging.getLogger(__name__)
+
 # Strong references to fire-and-forget tasks so they are not garbage
 # collected before they finish sending.
 _pending_tasks: set[asyncio.Task] = set()
+
+
+def _log_failed_send(task: asyncio.Task) -> None:
+    """Release the task reference and log a failure nobody is awaiting.
+
+    When `send_email` schedules the send because a loop is running, no caller
+    can see the result. Without this callback an SMTP failure surfaced only as
+    asyncio's garbage-collection warning and the email was lost silently;
+    retrieving the exception here also marks it as observed, so asyncio stops
+    warning about it. The message stays out of the log: recipients are personal
+    data.
+    """
+    _pending_tasks.discard(task)
+    if task.cancelled():
+        return
+    error = task.exception()
+    if error is not None:
+        logger.error("background email send failed: %s", error)
 
 
 def _email_settings():
@@ -108,4 +129,4 @@ def send_email(
 
     task = loop.create_task(coro)
     _pending_tasks.add(task)
-    task.add_done_callback(_pending_tasks.discard)
+    task.add_done_callback(_log_failed_send)
