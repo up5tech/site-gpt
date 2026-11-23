@@ -958,7 +958,7 @@ What delivery guarantee applies to the jobs on `queue:jobs` — `ingest`, `diges
 |---|---|---|
 | **A — no queue-level guarantee (today)** | `LPUSH`/`BRPOP`, with each handler's claim, unique row or scheduler tick as the only recovery. | No new mechanism, no migration and no change to the job payloads; but the guarantee differs per job type, two types have none, a crash always loses the message, and recovery waits for a stale window or the next tick — a day for `retention`, a whole scan interval for a lost `sitemap_scan`. |
 | **B — reliable Redis delivery** | A popped message moves to a per-worker processing list and is removed only after the handler returns; a reaper returns entries whose worker stopped. | Reuses the Redis the queue already runs on — no second datastore and no migration — and makes the queue at-least-once, so every handler must tolerate a repeat; but a flush, an eviction or a restart can still lose the main list and the processing lists together, and it needs a reaper interval plus a rule for a job whose worker vanished mid-send. |
-| **C — durable job record** | Each job is a database row (written in the producer's transaction where one exists) and the worker claims rows with `FOR UPDATE SKIP LOCKED`, the pattern `integration_deliveries` already uses. | Survives a Redis loss and makes the backlog queryable and countable; requires a migration — making the plan's “no migration by default” an explicit decision — a poll interval instead of a blocking pop, a settle/purge rule for finished rows (adjacent D7) and an index for the claim. |
+| **C — durable job record** | Each job is a database row (written in the producer's transaction where one exists) and the worker claims rows with `FOR UPDATE SKIP LOCKED`, the pattern `integration_deliveries` already uses. | Survives a Redis loss and makes the backlog queryable and countable; requires a migration — which this row must then place in scope for V6-20 — a poll interval instead of a blocking pop, a settle/purge rule for finished rows (adjacent D7) and an index for the claim. |
 
 #### 2. Which duplicate and loss cases are acceptable, by job type
 
@@ -994,13 +994,13 @@ What delivery guarantee applies to the jobs on `queue:jobs` — `ingest`, `diges
 
 ### Exact evidence an approver must sign
 
-1. The §1 mechanism, and — if a durable record is chosen — the approval that a migration is now in scope for V6.
+1. The §1 mechanism, and — if a durable record is chosen — the statement in this row that a migration is in scope for V6-20.
 2. The §2 statement, at the granularity chosen — one rule, three classes or six individual answers — covering each of the six job types, the rule for a job type added later, whether a crash may lose it or run it twice, and what makes an allowed repeat safe.
 3. The §3 retry rule — the attempt limit or the elapsed deadline, the backoff, and where a stopped job rests and what clears it.
 4. The §4 destination for a terminal job, who may read it, its retention or expiry, and which parts of its payload are redacted.
 5. The §5 replay authority and procedure, the idempotency key each replay relies on, and — where the replay is recorded — where the audit row is written and who may read it.
 6. For `digest` specifically: whether a duplicate send is accepted for the launch cohort, and if not, the guard that closes the window between the mail server accepting and `sent_at` committing.
-7. The crash-window tests to be run and where their evidence is recorded — crash before the handler, during it, after an external send and before the job is acknowledged or removed, after a commit, and on a provider failure — on disposable infrastructure, never against data that matters.
+7. The crash-window pass conditions V6-20 will be judged by, agreed now: which cases must pass — crash before the handler, during it, after an external send and before the job is acknowledged or removed, after a commit, and on a provider failure — on disposable infrastructure, never against data that matters, and where each result is recorded. The results are V6-20 and gate V6-2G evidence, checked after this signature because this decision is what unblocks them.
 8. The retention rule for settled job records or dead-letter entries, if either is durable (adjacent D7).
 9. The approver's role, the date and a link or path to the signed evidence — recorded in this row and copied into `plans/PLAN_V6.md` §4 and into risk R5 of `docs/risk-register-v6.md`.
 
@@ -1041,7 +1041,7 @@ Where do the checks the project already has run, which of them must pass before 
 |---|---|---|
 | **A — none required** | Every check is advisory; a change lands on review alone. | No waiting and no setup; but the suites and gate scripts that exist protect nothing at merge time, and the only record of a regression is someone noticing it later. |
 | **B — a fast subset required, the rest scheduled** | The unit suites, node checks, imports and build/lint block; the database gate scripts and whatever §3 chooses for the browser run on a schedule or before a release. | Keeps the wait per change short and still catches the expensive regressions; but the schedule lags the change, so a defect those gates would catch lands first, and someone has to read the scheduled result. |
-| **C — everything required** | Both suites, the imports, build/lint, the migration check, the gate scripts and the §3 browser run all block. | Nothing lands unchecked and every change is recorded the same way; but a change waits on a database-dropping gate and a browser run, and the gates that need inputs this checkout lacks have to be made self-contained first or they block every change. |
+| **C — everything required** | Both suites, the imports, build/lint, the migration check, the gate scripts and whatever §3 chooses for the browser all block. | Nothing lands unchecked and every change is recorded the same way; but a change waits on a database-dropping gate and a browser run, and the gates that need inputs this checkout lacks have to be made self-contained first or they block every change. |
 
 #### 3. How the browser journey runs
 
@@ -1053,7 +1053,7 @@ Where do the checks the project already has run, which of them must pass before 
 
 #### 4. Dependency review
 
-Both questions V6-33 names are in scope — vulnerability advisories and licence terms — and the options differ in when a person looks and whether a finding can stop a change.
+The review V6-33 asks for covers vulnerability advisories and licence terms, and the options differ in when a person looks and whether a finding can stop a change; V6-33's SBOM question is recorded in evidence item 5.
 
 | Option | What it means | Consequences to accept |
 |---|---|---|
@@ -1073,11 +1073,11 @@ Both questions V6-33 names are in scope — vulnerability advisories and licence
 
 1. The §1 environment and the role or team that operates it.
 2. The §2 blocking set: which of the commands above must pass before a change lands, which run on a schedule, and what a failure blocks.
-3. The §3 browser choice and where its result is recorded; if none is chosen, the recorded statement that the V5 browser item stays blocked, never a pass.
+3. The §3 browser choice and where its results will be recorded; if none is chosen, the recorded statement that the V5 browser item stays blocked, never a pass. The result itself is V6-32 evidence, checked after this signature because this decision is what unblocks the runner.
 4. The §4 rule: what is reviewed (vulnerability advisories and licences, application dependencies, frontend dependencies or both), on what cadence, who reads it, and which severity stops a change.
 5. The §5 deploy authority: who may deploy from a passing run, which artifacts and reports are retained (including whether an SBOM is emitted), for how long, and whether a digest or signature is required.
 6. The credentials a workflow or runner may hold, their scope, and the guarantee that no production or live-provider secret is available to a job triggered by a change.
-7. Which gate scripts run where, the guard that keeps each one on its own disposable database, and the explicit recording of the gates whose inputs this checkout lacks — blocked, never passed.
+7. Which gate scripts run where; for `gate_v5_5g`, the name guard that keeps it on its own disposable database; for `gate_v3_4g`, the `GATE_DB` its own script drops and recreates; for `gate_v4_4g`/`gate_v4_5g`, the empty throwaway database the caller creates and drops; and the explicit recording of the gates whose inputs this checkout lacks — blocked, never passed.
 8. Where the Python and Node versions are pinned so a runner matches the recorded environment, and the lockfiles it installs from.
 9. The approver's role, the date and a link or path to the signed evidence — recorded in this row and copied into `plans/PLAN_V6.md` §4 and into risk R7 of `docs/risk-register-v6.md`.
 
