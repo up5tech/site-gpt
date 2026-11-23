@@ -33,12 +33,12 @@ An index of the ten decisions in this record: each question in a line, the risk 
 | ID | Question | Status | Risk rows | Approver | Role | Date | Evidence path |
 |---|---|---|---|---|---|---|---|
 | **D1** | Which launch track, cohort, regions, data types and registration mode? | **UNAPPROVED** | R3 |  |  |  |  |
-| **D2** | Which hosting/runtime topology, network boundaries and deploy/rollback mechanism? | **UNAPPROVED** | R4 |  |  |  |  |
-| **D3** | Which availability/support promise, SLOs, RPO/RTO and capacity assumptions? | **UNAPPROVED** | R4 |  |  |  |  |
+| **D2** | Which hosting/runtime topology, network boundaries and deploy/rollback mechanism? | **UNAPPROVED** | R4, R6, R8 |  |  |  |  |
+| **D3** | Which availability/support promise, SLOs, RPO/RTO and capacity assumptions? | **UNAPPROVED** | R4, R6, R8 |  |  |  |  |
 | **D4** | Which production security profile — secrets/config, proxy trust, CORS, limiter backend, docs exposure? | **UNAPPROVED** | R1 |  |  |  |  |
 | **D5** | Which enforceable control protects platform-owner access, and who owns bootstrap, recovery and revocation? | **UNAPPROVED** | R2 |  |  |  |  |
 | **D6** | Which upload policy for untrusted files — scanning, formats, quarantine, outage behaviour — or restriction/disablement? | **UNAPPROVED** | R9 |  |  |  |  |
-| **D7** | Which retention, audit-retention, backup-expiry and deletion semantics, and which privacy/legal owner? | **UNAPPROVED** | R8 |  |  |  |  |
+| **D7** | Which retention, audit-retention, backup-expiry and deletion semantics, and which privacy/legal owner? | **UNAPPROVED** | R8, R10 |  |  |  |  |
 | **D8** | Which logs, error tracking, metrics and alerting; what reaches which vendor; redaction, access and retention? | **UNAPPROVED** | R6 |  |  |  |  |
 | **D11** | Who owns customer support, through which channel, with what coverage, escalation and response expectation? | **UNAPPROVED** | R4 |  |  |  |  |
 | **D13** | Are tenant MFA/SSO, broader admin audit, a session-revocation UI and origin-bound widget auth required or deferred? | **UNAPPROVED** | R10, R11, R12 |  |  |  |  |
@@ -95,7 +95,7 @@ Which launch is being approved — **Track A** (hosted core, billing and platfor
 6. For the cohort's pricing surface: accept the empty-catalog being-finalised state, or approve plan content before launch (required for B or both).
 7. For B or both: confirmation that each V5 decision has an owner, that the V6-6G conditions are accepted, and the named merchant-account owner and live-activation authority.
 8. Sign-off on launch copy: no price, guarantee, SLO, certification or feature claim beyond the approved scope.
-9. The approver's role, the date, and a link or path to the signed evidence — recorded in this row and copied into `plans/PLAN_V6.md` §4.
+9. The approver's role, the date, and a link or path to the signed evidence — recorded in this row and copied into `plans/PLAN_V6.md` §4 and into risk R3 (the track a paid launch still waits on) of `docs/risk-register-v6.md`.
 
 ### What an approval changes
 
@@ -156,7 +156,7 @@ For uploads the same three options exist only in weaker forms — snapshot or ob
 7. The §3 support coverage: who answers, through which channel, in which hours, and the escalation target. (D11 names the support owner; this decision records the coverage the promise needs.)
 8. The exclusions the promise relies on: which third-party dependencies, customer-side causes and events are outside it.
 9. Where status and incidents are communicated, if the promise includes any.
-10. The approver's role, date and a link or path to the signed evidence — recorded in this row and copied into `plans/PLAN_V6.md` §4 and into risk R4 of `docs/risk-register-v6.md`.
+10. The approver's role, date and a link or path to the signed evidence — recorded in this row and copied into `plans/PLAN_V6.md` §4 and into risk R4 (operational ownership), R6 (the alert thresholds) and R8 (the approved RPO/RTO) of `docs/risk-register-v6.md`.
 
 ### What an approval changes
 
@@ -230,7 +230,7 @@ What data-handling policy applies: the default retention for a company and its c
 6. The legal or contractual exceptions that outlive deletion, stated explicitly rather than implied.
 7. The privacy-notice wording that matches the behaviour above (V6-41), with no promise the code cannot keep.
 8. The owner and channel for data-subject requests and how they are recorded (adjacent to D11).
-9. The approver's role, date and a link or path to the signed evidence — recorded in this row and copied into `plans/PLAN_V6.md` §4 and into risk R8 of `docs/risk-register-v6.md`.
+9. The approver's role, date and a link or path to the signed evidence — recorded in this row and copied into `plans/PLAN_V6.md` §4 and into risk R8 (backup expiry and restore) and R10 (audit retention) of `docs/risk-register-v6.md`.
 
 ### What an approval changes
 
@@ -312,7 +312,7 @@ D3 §3 chooses the **shape** of coverage (one named contact / a shared rota / co
 6. The support-side data access: which staff or vendor may read which tenant data, through which tool, and how that access is audited.
 7. The exact published text for the marketing footer, the app and the privacy notice, containing no promise the owner has not accepted.
 8. The value to set in `platform_settings.support_contact_email`, and the person who maintains it; until it is set the footer correctly shows no address.
-9. The approver's role, date and evidence path — recorded in the D11 row, copied into `plans/PLAN_V6.md` §4 and into risk R4 (and R3 if Track B is chosen) of `docs/risk-register-v6.md`.
+9. The approver's role, date and evidence path — recorded in the D11 row, copied into `plans/PLAN_V6.md` §4 and into risk R4 (named support and incident ownership) of `docs/risk-register-v6.md`.
 
 ### What an approval changes
 
@@ -431,7 +431,7 @@ Whichever shape is chosen, the boundary description has to say which of these is
 10. The rollback procedure: how many previous artifacts are retained, the migration policy (downgrade, forward-fix or restore), the mixed-version rule for the API, worker and schema, and the record of a rehearsal — not a description.
 11. The environment list: production and whatever non-production environment exists, how secrets and data differ, and which data may never appear outside production (D7/D8).
 12. The health contract the ingress uses — `/health` as it exists today (JSON with `db`, `redis` and limiter state) or a separate readiness path — plus the proxy's buffering and idle-timeout settings for the three SSE endpoints.
-13. The approver's role, date and a link or path to the signed evidence — recorded in this row and copied into `plans/PLAN_V6.md` §4 and into risk R4 (topology verification) and R8 (TLS, private networking, backups) of `docs/risk-register-v6.md`.
+13. The approver's role, date and a link or path to the signed evidence — recorded in this row and copied into `plans/PLAN_V6.md` §4 and into risk R4 (topology verification), R6 (the deployment workflow behind `/health`) and R8 (TLS, private networking, backups) of `docs/risk-register-v6.md`.
 
 ### What an approval changes
 
@@ -537,7 +537,7 @@ Which settings a production deployment must have, where each value comes from, a
 8. The environment list and separation rule: which environments exist, which values differ, and the guarantee that no production data or credential appears in a non-production one.
 9. Confirmation that development, the unit suites and `scripts/gate_v5_5g` still run under the approved policy — a validator that breaks them is not signable as written.
 10. The names of the settings whose absence the deployment must treat as fatal, agreed with the operator who will run the start-up, so the validator can be written against a signed list rather than an engineering guess.
-11. The approver's role, date and a link or path to the signed evidence — recorded in this row and copied into `plans/PLAN_V6.md` §4 and into risk R1 (secure boot) and R4 (operational ownership) of `docs/risk-register-v6.md`.
+11. The approver's role, date and a link or path to the signed evidence — recorded in this row and copied into `plans/PLAN_V6.md` §4 and into risk R1 (secure boot) of `docs/risk-register-v6.md`.
 
 ### What an approval changes
 
@@ -634,7 +634,7 @@ Which enforceable control protects the platform-owner boundary — a second fact
 8. The exposure decision: console enabled or disabled for the launch cohort, and if enabled, from where — public ingress, private path or operator proxy — consistent with D2.
 9. The audit expectations for operator access: which events are recorded, who may read them, and how that is verified rather than assumed.
 10. Confirmation that the chosen control was exercised end to end in a non-production environment — sign-in, refusal for a tenant account, a grant, a mutation, a revocation and a recovery — with the evidence path recorded.
-11. The approver's role, date and a link or path to the signed evidence — recorded in this row and copied into `plans/PLAN_V6.md` §4 and into risk R2 (operator security) and R4 (operational ownership) of `docs/risk-register-v6.md`.
+11. The approver's role, date and a link or path to the signed evidence — recorded in this row and copied into `plans/PLAN_V6.md` §4 and into risk R2 (operator security) of `docs/risk-register-v6.md`.
 
 ### What an approval changes
 
