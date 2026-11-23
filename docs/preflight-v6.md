@@ -26,6 +26,25 @@ are why gate V6-0G is unsigned and Wave 1 has not started.
 | **D11** | Who owns customer support, through which channel, with what coverage window, escalation target and response expectation? | Support owner (business) — **not yet named** | A named owner, contact channel, coverage window, escalation path and response expectation that the owner accepts — no engineering default promoted into a promise. | **UNAPPROVED** — no approver recorded. Blocks V6-02/V6-41. |
 | **D13** | Are tenant MFA/SSO, broader admin audit, a session-revocation UI and origin-bound widget authentication required for this cohort, or explicitly deferred? | Security owner with product owner — **not yet named** | An explicit require/defer decision per item with rationale, affected tasks and — for deferrals — the accepted residual risk and an expiry or review date. | **UNAPPROVED** — no approver recorded. Blocks V6-12/V6-14/V6-15. |
 
+## Decision register — one page to sign
+
+An index of the ten decisions in this record: each question in a line, the risk rows it moves, and a sign-off slot in the same row. The options, their consequences and the exact evidence an approver must supply are in that row's appendix below; nothing here restates, narrows or recommends them, and an empty sign-off cell is not an approval. D9 (background-job delivery), D10 (CI and browser execution) and D12 (Track B commercial readiness) are deliberately absent: they have no appendix here and block later tasks or apply only to Track B.
+
+| ID | Question | Status | Risk rows | Approver | Role | Date | Evidence path |
+|---|---|---|---|---|---|---|---|
+| **D1** | Which launch track, cohort, regions, data types and registration mode? | **UNAPPROVED** | R3 |  |  |  |  |
+| **D2** | Which hosting/runtime topology, network boundaries and deploy/rollback mechanism? | **UNAPPROVED** | R4 |  |  |  |  |
+| **D3** | Which availability/support promise, SLOs, RPO/RTO and capacity assumptions? | **UNAPPROVED** | R4 |  |  |  |  |
+| **D4** | Which production security profile — secrets/config, proxy trust, CORS, limiter backend, docs exposure? | **UNAPPROVED** | R1 |  |  |  |  |
+| **D5** | Which enforceable control protects platform-owner access, and who owns bootstrap, recovery and revocation? | **UNAPPROVED** | R2 |  |  |  |  |
+| **D6** | Which upload policy for untrusted files — scanning, formats, quarantine, outage behaviour — or restriction/disablement? | **UNAPPROVED** | R9 |  |  |  |  |
+| **D7** | Which retention, audit-retention, backup-expiry and deletion semantics, and which privacy/legal owner? | **UNAPPROVED** | R8 |  |  |  |  |
+| **D8** | Which logs, error tracking, metrics and alerting; what reaches which vendor; redaction, access and retention? | **UNAPPROVED** | R6 |  |  |  |  |
+| **D11** | Who owns customer support, through which channel, with what coverage, escalation and response expectation? | **UNAPPROVED** | R4 |  |  |  |  |
+| **D13** | Are tenant MFA/SSO, broader admin audit, a session-revocation UI and origin-bound widget auth required or deferred? | **UNAPPROVED** | R10, R11, R12 |  |  |  |  |
+
+**Signing a row.** Put the approver's name, role and date in the row, put the evidence path or link in the last cell, and change the status cell from **UNAPPROVED** to **APPROVED**. Then copy the same four facts into `plans/PLAN_V6.md` §4 and into the risk rows named in the register, as “How an approval gets recorded” below describes. A row that is PROPOSED or BLOCKED stays unsigned, and no task whose decision is unsigned may start.
+
 ## Status vocabulary
 
 - **UNAPPROVED** — no approver, date or evidence recorded. The state of every row today.
