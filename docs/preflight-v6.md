@@ -143,6 +143,80 @@ For uploads the same three options exist only in weaker forms — snapshot or ob
 
 Only the D3 row moves from **UNAPPROVED** to **APPROVED**, which unblocks the objective half of V6-02 and gives V6-21 its alert thresholds and V6-42 its restore targets. Gate V6-0G still needs D1, D7, D11 and the architecture decisions, so Wave 1 stays closed.
 
+## Appendix — D7 decision brief
+
+**Status: D7 remains UNAPPROVED.** This brief lays out the choices; it supplies no retention period, audit period, backup window, deletion promise or owner.
+
+### The question
+
+What data-handling policy applies: the default retention for a company and its conversations, how long audit rows and backups live, and what deletion means for a user, a company and the data derived from them. The answer decides the privacy-notice wording in V6-41, what V6-42's restore is allowed to bring back, and whether the existing erasure endpoints and the retention worker keep their current behaviour.
+
+### What the code does today (evidence, not a decision)
+
+- Retention is **off unless a company opts in**: `retention_days` defaults to `0` (`api/setting.py:69`), and `retention.companies_with_policy` selects only companies above zero.
+- A purge deletes `chat_messages`, `chat_feedback`, `handoff_requests`, `contacts`, `digest_log`, `conversations`, `attachments` rows plus their files, and expired `extra_documents` with their embeddings (`services/retention.py::purge_company`); the company admin can preview it with the dry-run `POST /api/privacy/retention`.
+- Conversation erasure and contact erasure exist as endpoints (`api/privacy.py`), and an export is available before deletion.
+- `platform_audit_logs` is append-only and **has no pruning path** in the code today.
+- Backups are an operator responsibility; nothing in the application expires them, and a restore is not currently reconciled against deletions.
+
+### Options and consequences
+
+#### 1. Default retention for a new company
+
+| Option | What it means | Consequences to accept |
+|---|---|---|
+| **A — off by default (current behaviour)** | Every company starts with retention disabled and opts in per company. | No data is ever deleted by accident and no migration is needed, but personal data is kept indefinitely unless someone configures a policy, which is the largest privacy exposure of the three and has to be stated honestly in the notice. |
+| **B — one default applied to every company** | New companies start with the approver's retention period and may adjust it within limits. | Data minimisation happens without a customer action, but the deletion is irreversible, so a period that is too aggressive destroys transcripts and knowledge customers may rely on; existing companies need an explicit grandfathering decision. |
+| **C — default by plan or cohort** | Different starting periods per plan or cohort. | Aligns retention with commercial terms, but it requires the approved plan set (Track B) and makes the public notice, export and erasure copy conditional; mixing policies also complicates any later consolidation. |
+
+#### 2. Audit retention
+
+| Option | What it means | Consequences to accept |
+|---|---|---|
+| **A — keep the audit log indefinitely** | The append-only `platform_audit_logs` is never pruned. | Best evidence for an incident investigation and the least engineering, but unbounded growth and a long-lived record of operator actions that the privacy notice must disclose. |
+| **B — fixed expiry** | Audit rows older than the approved period are removed by a scheduled job. | Bounded storage and a shorter disclosure, but the job needs implementing (none exists), and an expiry that is too short can destroy the evidence of an incident that is still open — so the rule for an open investigation must be part of the decision. |
+| **C — expiry by action class** | Security-relevant actions are kept longer than routine ones. | Preserves the evidence that matters while bounding volume, at the cost of a classification the code does not have today and a rule for reclassifying an action later. |
+
+#### 3. Backup expiry and restore semantics
+
+| Option | What it means | Consequences to accept |
+|---|---|---|
+| **A — backups expire before the data would** | Backup retention is shorter than the data-retention period. | A deleted record leaves the backup estate quickly and the promise "deleted means deleted" is nearly true, but the recovery window is short and an incident older than the backup window cannot be investigated from backups. |
+| **B — backups outlive retention, with restore reconciliation** | Backups are kept longer than the data, and a restore is followed by re-applying deletions. | Recovery stays strong, but a restore can resurrect erased data unless the re-deletion step is defined, owned and rehearsed — this is the option that requires the most evidence, not the least. |
+| **C — long-term archive with restricted access** | A separate, tightly access-controlled archive kept beyond normal backups. | Supports legal or contractual holds, but adds an access-review obligation and a second place where deletion has to be enforced; it is only coherent if the deletion exceptions are written down. |
+
+#### 4. Deletion of a user or a company
+
+| Option | What it means | Consequences to accept |
+|---|---|---|
+| **A — soft delete, then scheduled purge** | Deactivation first, physical removal on the retention schedule. | Mistakes are reversible and support can restore an account, but deletion is not immediate and the promise has to say so; a company with several users needs a rule for what one admin's action does to the others. |
+| **B — immediate hard delete** | The request deletes the data at once. | Strongest promise and simplest copy, but it is irreversible, must still define what happens to billing records and audit rows, and cannot undo a wrong request. |
+| **C — export-then-delete with a verification window** | The data is exported, then deleted after a window the approver sets. | Safer for account closure and gives the customer a record, but needs a cancel path, a status the customer can see, and a decision about what happens if the export fails. |
+
+#### 5. Derived data and shared records
+
+| Option | What it means | Consequences to accept |
+|---|---|---|
+| **A — cascade everything derived** | Deleting the source also deletes embeddings, topic clusters, insight labels and delivery payloads. | Matches the current foreign-key cascades and needs no new job, but it removes analytics history along with the personal data and can change a company's reports retroactively. |
+| **B — keep aggregates without content** | Counts and labels without transcript text survive. | Preserves reporting, but the claim that an aggregate is no longer personal data has to be justified per field and stated in the notice, and some labels (a summary of one conversation) are themselves content. |
+| **C — bounded retention for derived data** | Derived rows expire on their own clock after the source is gone. | A middle path, at the cost of a second schedule and a rule for what a report shows once its derived rows have expired. |
+
+### Exact evidence an approver must sign
+
+1. The default retention for a new company (on or off, and the period if on), who may change it, and whether existing companies are migrated or left as they are.
+2. A per-class deletion map: for transcripts, contact details, inbox state, feedback, handoffs, uploaded files and extracted text, embeddings, topic clusters, insight labels, integration delivery payloads, audit rows and billing records — deleted, kept, or aggregated.
+3. The audit-retention period, who may read the log, and how expiry is executed and verified (noting that no pruning path exists in the code today).
+4. Backup expiry, backup access control, and the restore-time rule for data deleted after the backup was taken — with evidence that the re-deletion step was practised, not just described.
+5. The deletion path and actor for a user and for a company (tenant admin, support, platform owner), whether it is immediate or pending, and the evidence a customer receives.
+6. The legal or contractual exceptions that outlive deletion, stated explicitly rather than implied.
+7. The privacy-notice wording that matches the behaviour above (V6-41), with no promise the code cannot keep.
+8. The owner and channel for data-subject requests and how they are recorded (adjacent to D11).
+9. The approver's role, date and a link or path to the signed evidence — recorded in this row and copied into `plans/PLAN_V6.md` §4 and into risk R8 of `docs/risk-register-v6.md`.
+
+### What an approval changes
+
+Only the D7 row moves from **UNAPPROVED** to **APPROVED**, which unblocks V6-41 and the retention side of V6-42, and settles the retention questions inside V6-14 and V6-15. Gate V6-0G still needs D1, D3, D11 and the architecture decisions, so Wave 1 stays closed.
+
 ## Appendix — D11 decision brief
 
 **Status: D11 remains UNAPPROVED.** This brief supplies no support owner, channel, coverage window, escalation target, response time or contact address. Every option below is a shape to choose, not a proposal.
