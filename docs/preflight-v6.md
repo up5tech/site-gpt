@@ -566,7 +566,7 @@ Which enforceable control protects the platform-owner boundary — a second fact
 
 | Option | What it means | Consequences to accept |
 |---|---|---|
-| **A — tenant account plus grant (today)** | The operator signs in as an ordinary user and the grant adds operator rights. | One identity system, no new tables, and tenant and operator duties can share an accountant; but the operator's session is an ordinary session — its lifetime, storage and revocation are the tenant ones, and an operator's tenant role and operator role cannot be suspended independently. |
+| **A — tenant account plus grant (today)** | The operator signs in as an ordinary user and the grant adds operator rights. | One identity system, no new tables, and tenant and operator duties can share one account; but the operator's session is an ordinary session — its lifetime, storage and revocation are the tenant ones. The two are separable in one direction only: revoking the grant ends operator access on the next request while the tenant login keeps working, but suspending the tenant account also removes the operator's login, and an already-issued token stays valid for tenant routes until it expires or the signing secret is rotated. |
 | **B — a separate operator identity realm** | Operators are a distinct identity class, even if backed by the same login. | Cleaner separation and clearer audit attribution, at the cost of a second provisioning and recovery path (and a second thing that can be locked out). |
 | **C — short-lived, out-of-band credentials for the console** | Access is granted per session, from the operator's own tooling, with a short validity. | Shrinks the window a leaked credential is useful and makes every elevation a deliberate act; but it needs an issuance mechanism, a store, and a story for the incident where issuance is unavailable — and it is the most code of the three. |
 
@@ -607,7 +607,7 @@ Which enforceable control protects the platform-owner boundary — a second fact
 
 1. The control chosen (§1) and, if more than one, which is authoritative and which is defence in depth.
 2. The enforcement point (§2) and the proof of it: for an edge or proxy, the configuration; for the application, the route inventory showing every platform route depends on the check; plus the statement that a direct path to the application does not bypass it.
-3. The identity model (§3): whether operators are tenant accounts with grants or a separate identity class, and how an operator's tenant access and operator access are suspended independently.
+3. The identity model (§3): whether operators are tenant accounts with grants or a separate identity class, and how each of the two is suspended — noting that grant revocation ends operator access without ending the tenant login, while suspending the tenant account also removes the operator's login and leaves any issued token valid until expiry or secret rotation.
 4. The session lifetime and re-authentication rule (§4) for ordinary and high-impact actions, with the period supplied by the approver — not derived here.
 5. The bootstrap path (§5), who may execute it, what credential it needs, and the statement that no HTTP route mints operator access (or an explicit decision to change that non-goal).
 6. The recovery procedure (§6) for a lost operator, for total operator lockout and for a stolen session token, including the credential that makes each possible and who holds it.
