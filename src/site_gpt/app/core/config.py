@@ -369,6 +369,7 @@ def _production_values() -> dict[str, Any]:
         "INTEGRATION_WEBHOOK_SECRET": INTEGRATION_WEBHOOK_SECRET,
         "TRUSTED_PROXY_IPS": TRUSTED_PROXY_IPS,
         "DOCS_ENABLED": DOCS_ENABLED,
+        "PLATFORM_CONSOLE_ENABLED": PLATFORM_CONSOLE_ENABLED,
     }
 
 
@@ -407,6 +408,15 @@ def production_config_errors(
 
     if "DOCS_ENABLED" not in source or _truthy(source.get("DOCS_ENABLED")):
         problems.append("DOCS_ENABLED")
+
+    # V6-11 / D5: the operator console's approved state for this launch is off,
+    # and no approved MFA/SSO or operator-only network is enforced at the
+    # ingress. A production boot with the switch on would therefore expose an
+    # operator surface protected by nothing but a tenant JWT plus an out-of-band
+    # grant, so refuse to start rather than trust a deployment to leave it off.
+    # Reopening the console needs a new D5 answer and a verified ingress control.
+    if _truthy(source.get("PLATFORM_CONSOLE_ENABLED")):
+        problems.append("PLATFORM_CONSOLE_ENABLED")
 
     return problems
 
