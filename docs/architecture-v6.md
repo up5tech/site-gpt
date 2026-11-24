@@ -31,12 +31,14 @@ flowchart LR
 **Components**
 
 - **Managed ingress**: terminates TLS, forwards `Host`, `X-Forwarded-For`, `X-Forwarded-Proto`, keeps buffering off for `/api/chat/stream`, `/api/chat/messages/stream` and `/api/inbox/events`, and enforces the upload body limit consistently with `MAX_UPLOAD_BYTES` (20 MB default).
-- **API container**: `site_gpt.app.main:app` under uvicorn. Public surface: `/health`, `/widget.js`, `/chat/{website_id}`, `/api/widget-config`, the chat/embed and auth routes, and the tenant admin API. Multiple instances are assumed, so `RATE_LIMIT_BACKEND=redis` is mandatory and no request state lives in process memory.
-- **Worker container**: `python -m site_gpt.app.worker`, no inbound path, consumes `queue:jobs` and runs the scheduler loops (`digest`, `retention`, `topic_clusters`, `sitemap_scan`, `insights`). Its delivery guarantees are still **undecided** (D9 open) and are the subject of V6-20.
+- **API container**: `site_gpt.app.main:app` under uvicorn. Public surface: `/health` (unchanged contract), the additive `/health/live` and `/health/ready` probes, `/widget.js`, `/chat/{website_id}`, `/api/widget-config`, the chat/embed and auth routes, and the tenant admin API; the operator snapshot `GET /api/ops/status` answers 404 unless `OPS_STATUS_TOKEN` is set and then requires that header (V6-21). Multiple instances are assumed, so `RATE_LIMIT_BACKEND=redis` is mandatory and no request state lives in process memory.
+- **Worker container**: `python -m site_gpt.app.worker`, no inbound path, consumes `queue:jobs` and runs the scheduler loops (`digest`, `retention`, `topic_clusters`, `sitemap_scan`, `insights`). It publishes `ops:worker:heartbeat` every `WORKER_HEARTBEAT_INTERVAL_SECONDS` (TTL of three intervals), stamps `ops:queue:last_pop` on every consume and counts failed jobs in `ops:worker:job_failures`; those three keys plus `LLEN queue:jobs` are what the alerts read (V6-21). Its delivery guarantees are still **undecided** (D9 open) and are the subject of V6-20.
 - **PostgreSQL with pgvector**: private network only. Schema is applied out of band with `uv run alembic upgrade head`; the chain is linear with head `0b22b30bf930`.
 - **Redis**: private network only; queue, rate limiter, quota counters, inbox pub/sub and presence leases. Persistence/eviction policy must never drop `queue:jobs` keys while the worker depends on them.
 - **Admin SPA**: `frontend/dist` on a CDN, with `VITE_BACKEND_URL` baked at build time to the API origin. `index.html` is not cached across releases.
 - **Object storage**: the approved target for uploaded bytes. **No adapter exists**: `api/upload.py` writes `uploads/` locally and `services/retention.py` unlinks locally. V6-13 restricts uploads to tenant admins and the D6 format list, but an adapter is still required for a durable volume, so uploads stay closed for the launch cohort until it lands.
+
+**Telemetry scope (V6-21).** The signals are per process, not aggregate. The 5xx window lives in the API process's memory, and `/api/ops/status` answers from whichever instance the caller reaches, so behind the ingress each snapshot reports *that* instance: `api.error_rate` is not the fleet's rate, and it resets on every restart or rolling deploy. The worker keys are one document and one pop timestamp, overwritten by every heartbeat and every consume, so they prove that *a* worker is alive and that the queue is being drained — not how many workers exist or which one is stuck; only the queue depth is shared, because `queue:jobs` is one list. `scripts/ops_status.py` therefore proves the instance it reached serves, reaches the database, and sees a fresh heartbeat and a draining queue; it does not prove fleet-wide error rate or per-replica/per-worker health. Nothing aggregates or exports these numbers because D8 chose no vendor; a fleet view needs an external collector or Redis-side counters (V6-23/V6-40).
 
 ## 2. Network boundaries
 
@@ -60,7 +62,7 @@ flowchart LR
 ## 4. Deploy, migration and rollback
 
 - **Artifact**: one immutable build per release, promoted from staging; API and worker are separate deploy units from the same commit.
-- **Deploy order**: migrate (expand-only), then worker, then API, then SPA; readiness is `/health` (existing contract) with liveness separate if the orchestrator needs it.
+- **Deploy order**: migrate (expand-only), then worker, then API, then SPA; readiness is `/health/ready` (503 only without the database; Redis is reported as `degraded` on a 200 because the API still serves), liveness is `/health/live` (no dependency check, so a degraded process is not restarted in a crash loop), and `/health` keeps its original contract for existing checks.
 - **Migrations**: must be backward compatible for one release (expand now, contract later), because API and worker can run different versions during a rolling deploy.
 - **Rollback**: redeploy the previous artifact and fix the schema forward. `alembic downgrade` is **not** the rollback path because M11/M12 downgrades discard billing and operator state. A restore from backup is the catastrophic path and loses everything after the 24h RPO point.
 - **Untested today**: there is no manifest, no staging environment and no rehearsal; V6-40/V6-42/V6-44 must produce that evidence. This document is the target, not proof.
@@ -74,7 +76,7 @@ flowchart LR
 | R3 unapproved paid launch | mitigated | Track A chosen; billing and console off | V6-6G stays closed |
 | R4 operational ownership | fix-before-launch | Owners/objectives now named; restore and incident rehearsals missing | V6-42/V6-43 |
 | R5 background job loss | fix-before-launch | Destructive `BRPOP`, no ack/visibility timeout | V6-20 (D9 open) |
-| R6 health/telemetry | fix-before-launch | Structured JSON logs with request/job ids and central redaction are in (V6-22); alerts, worker heartbeat and queue visibility are not (V6-21) | V6-21 |
+| R6 health/telemetry | fix-before-launch | Structured JSON logs with request/job ids and central redaction are in (V6-22); the liveness/readiness split, worker heartbeat, queue depth/age and the D8 alert set are implemented (V6-21) but have not been fault-injected on a staging environment, and the API error window and heartbeat view are per-process rather than fleet-wide (see §1 Telemetry scope) | V6-21 (staging half in V6-40; fleet aggregation in V6-23/V6-40) |
 | R7 regression coverage | fix-before-launch | No CI or browser runner | V6-30/V6-32 (D10 open) |
 | R8 data protection ops | fix-before-launch | Backups/restore and private networking unverified | V6-42 |
 | R9 uploads unscanned | accept-with-owner-and-expiry | Admin-only, format/size limited, no scanner | 2027-02-28 |
