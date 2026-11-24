@@ -18,6 +18,16 @@ every relative link the four documents carry, and fails on:
   changing. The rows are read from the register itself, so a row added later is
   checked without this script being edited.
 
+It also checks the decision-to-risk mapping the record keeps in three places,
+and fails when they disagree: the risks an appendix actually references must be
+exactly the risks its register cell lists, each of those risk rows must name the
+decision back in its evidence cell, and the appendix's sign-off item must copy
+the approval into every risk the cell names. A risk mention in an appendix only
+counts as a reference when it links to the row or when its sentence introduces
+it as this decision's risk row or a recorded residual, so an incidental "see R3
+for the gate" cannot widen a cell. References written "V5 D10–D12" name V5's
+decisions and are ignored.
+
 External links (`http:`, `https:`, `mailto:`) are counted and skipped: this is
 an offline check with no network access.
 
@@ -50,6 +60,7 @@ DOCUMENTS = (
     "docs/release-v5.md",
 )
 
+PREFLIGHT = "docs/preflight-v6.md"
 RISK_REGISTER = "docs/risk-register-v6.md"
 # A risk row is a table line whose ID cell is the bold `**RN**` label, with the
 # row's anchor — when it has one — sitting in front of it.
@@ -59,6 +70,23 @@ RISK_ROW = re.compile(r'^\| (?:<a name="([^"]+)"></a>)?\*\*(R\d+)\*\* \|', re.MU
 LINK = re.compile(r'(?<!!)\[[^\]]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)')
 CUSTOM_ANCHOR = re.compile(r'<a name="([^"]+)"></a>')
 EXTERNAL = re.compile(r"^(?:[a-z][a-z0-9+.-]*:|//)", re.IGNORECASE)
+
+# The decision register's header, the appendix headings and the sign-off item
+# that copies an approval into the risk rows.
+REGISTER_HEADER = "| ID | Question | Status | Risk rows |"
+APPENDIX_HEADING = re.compile(r"^## Appendix — (D\d+) decision brief", re.MULTILINE)
+RISK = re.compile(r"\bR(\d+)\b")
+DECISION = re.compile(r"\bD(\d+)\b")
+COPY_LIST = "copied into"
+# "V5 D10–D12" and "V5 D11" are V5's decision numbers, not this record's.
+V5_DECISION = re.compile(r"V5 D\d+(?:\s*[–—-]\s*D\d+)?")
+# A mention counts as a reference only as a link to the row, or in a sentence
+# that introduces it as this decision's row or a residual recorded against it.
+RISK_REFERENCE = re.compile(r"\[(?:risk )?R\d+\]\(risk-register-v6\.md#r\d+\)")
+FRAMING = re.compile(
+    r"risk rows?|the rows\b|residual|recorded against|accepted against", re.IGNORECASE
+)
+SENTENCE = re.compile(r"(?<=[.!?])\s+|\n+")
 
 
 def github_slug(heading: str) -> str:
@@ -87,6 +115,146 @@ def custom_anchors(text: str) -> set[str]:
 def risk_rows(text: str) -> list[tuple[str, str | None]]:
     """Each risk row in the register as (row name, anchor found in its ID cell)."""
     return [(match.group(2), match.group(1)) for match in RISK_ROW.finditer(text)]
+
+
+def by_number(name: str) -> int:
+    """Sort key for D1..D13 / R1..R12, so 10 comes after 9."""
+    return int(name[1:])
+
+
+def plain_risks(text: str) -> set[str]:
+    """Every risk ID in the text, however it is written."""
+    return {f"R{number}" for number in RISK.findall(text)}
+
+
+def referenced_risks(text: str) -> set[str]:
+    """The risks an appendix refers to, ignoring incidental mentions.
+
+    A sentence counts when it links to the row or frames the mention as this
+    decision's risk row or a residual recorded against it; a passing "see R3
+    for the gate" elsewhere in the section does not.
+    """
+    found: set[str] = set()
+    for sentence in SENTENCE.split(text):
+        if RISK_REFERENCE.search(sentence) or FRAMING.search(sentence):
+            found |= plain_risks(sentence)
+    return found
+
+
+def v6_decisions(text: str) -> set[str]:
+    return {f"D{number}" for number in DECISION.findall(V5_DECISION.sub("", text))}
+
+
+def decision_register(text: str) -> dict[str, set[str]]:
+    """Each register row as decision -> the risks its Risk rows cell names."""
+    lines = text.splitlines()
+    header = next(
+        (index for index, line in enumerate(lines) if line.startswith(REGISTER_HEADER)),
+        None,
+    )
+    if header is None:
+        return {}
+    rows: dict[str, set[str]] = {}
+    for line in lines[header + 2 :]:
+        if not line.startswith("|"):
+            break
+        cells = line.split("|")
+        if len(cells) < 5:
+            continue
+        decision = v6_decisions(cells[1])
+        if len(decision) != 1:
+            continue
+        rows[decision.pop()] = plain_risks(cells[4])
+    return rows
+
+
+def appendix_sections(text: str) -> dict[str, str]:
+    """Each appendix body, keyed by its decision, without the heading itself."""
+    matches = list(APPENDIX_HEADING.finditer(text))
+    sections: dict[str, str] = {}
+    for index, match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        sections[match.group(1)] = text[match.end() : end]
+    return sections
+
+
+def risk_row_decisions(text: str) -> dict[str, set[str]]:
+    """Each register row as risk -> the decisions its own row names."""
+    rows: dict[str, set[str]] = {}
+    for line in text.splitlines():
+        match = RISK_ROW.match(line)
+        if match:
+            rows[match.group(2)] = v6_decisions(line)
+    return rows
+
+
+def mapping_failures(register_text: str, preflight_text: str) -> tuple[list[str], int]:
+    """Return the disagreements between the register and the appendices."""
+    cells = decision_register(preflight_text)
+    sections = appendix_sections(preflight_text)
+    backwards = risk_row_decisions(register_text)
+    failures: list[str] = []
+
+    if not cells:
+        failures.append(f"{PREFLIGHT}: no decision register table found to check")
+    if not sections:
+        failures.append(f"{PREFLIGHT}: no appendix headings found to check")
+
+    pairings = 0
+    for decision in sorted(cells, key=by_number):
+        risks = cells[decision]
+        pairings += len(risks)
+        section = sections.get(decision)
+        if section is None:
+            failures.append(f"{PREFLIGHT}: {decision} has a register row but no appendix")
+            continue
+
+        referenced = referenced_risks(section)
+        unlisted = sorted(referenced - risks, key=by_number)
+        unreferenced = sorted(risks - referenced, key=by_number)
+        if unlisted:
+            failures.append(
+                f"{PREFLIGHT}: {decision}'s appendix names {', '.join(unlisted)}"
+                " but its register cell does not"
+            )
+        if unreferenced:
+            failures.append(
+                f"{PREFLIGHT}: {decision}'s register cell names {', '.join(unreferenced)}"
+                " but its appendix does not reference it"
+            )
+
+        for risk in sorted(risks, key=by_number):
+            if decision not in backwards.get(risk, set()):
+                failures.append(
+                    f"{RISK_REGISTER}: {risk} does not name {decision} back in its row"
+                )
+
+        copies = [line for line in section.splitlines() if COPY_LIST in line]
+        if not copies:
+            failures.append(
+                f"{PREFLIGHT}: {decision} has no sign-off item copying the approval"
+                " into its risk rows"
+            )
+            continue
+        omitted = sorted(risks - plain_risks("\n".join(copies)), key=by_number)
+        if omitted:
+            failures.append(
+                f"{PREFLIGHT}: {decision}'s sign-off copy list omits {', '.join(omitted)}"
+            )
+
+    for decision in sorted(sections, key=by_number):
+        if decision not in cells:
+            failures.append(f"{PREFLIGHT}: {decision} has an appendix but no register row")
+
+    for risk in sorted(backwards, key=by_number):
+        for decision in sorted(backwards[risk], key=by_number):
+            if risk not in cells.get(decision, set()):
+                failures.append(
+                    f"{RISK_REGISTER}: {risk} names {decision}, whose register cell"
+                    f" does not list {risk}"
+                )
+
+    return failures, pairings
 
 
 class Document:
@@ -171,6 +339,12 @@ def check(files: list[str], root: Path) -> list[str]:
                     f' anchor in its ID cell, expected <a name="{expected}"></a>'
                 )
 
+    preflight = root / PREFLIGHT
+    if preflight.is_file() and register.is_file():
+        failures.extend(
+            mapping_failures(document(register).text, document(preflight).text)[0]
+        )
+
     return failures
 
 
@@ -201,16 +375,20 @@ def report(files: list[str], root: Path) -> int:
 
     register = documents.get(root / RISK_REGISTER)
     rows = len(risk_rows(register.text)) if register else 0
+    preflight = documents.get(root / PREFLIGHT)
+    cells = decision_register(preflight.text) if preflight else {}
+    pairings = sum(len(risks) for risks in cells.values())
     print(
         f"\n{relative} relative links ({fragments} with a fragment), "
-        f"{external} external links skipped, {rows} risk rows checked"
+        f"{external} external links skipped, {rows} risk rows and "
+        f"{len(cells)} decisions ({pairings} decision-risk pairings) checked"
     )
     if failures:
         print(f"\nFAILED — {len(failures)} problem(s):")
         for failure in failures:
             print(f"  {failure}")
         return 1
-    print("OK — every relative link and fragment resolves")
+    print("OK — every link resolves and the decision-risk mapping agrees")
     return 0
 
 
