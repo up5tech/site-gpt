@@ -116,9 +116,10 @@ class QuotaUnitTests(unittest.TestCase):
 
     def test_redis_failure_fails_open(self):
         website_id = uuid4()
-        with patch("builtins.print") as printed:
+        # V6-22: the outage is a structured event, not a print.
+        with self.assertLogs("site_gpt.app", level="WARNING") as captured:
             self.assertTrue(self.run_consume(BrokenRedis(), website_id, limit=1))
-        self.assertIn("could not count message", printed.call_args[0][0])
+        self.assertIn("quota.count_failed", "\n".join(captured.output))
 
     def test_default_limit_comes_from_config(self):
         redis = FakeRedis()

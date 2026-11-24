@@ -110,16 +110,17 @@ class SiteMapEndpointTests(unittest.TestCase):
             website_api,
             "extract_urls_from_sitemap",
             side_effect=UnsafeUrl(UNSAFE_DETAIL),
-        ), patch("builtins.print") as printed:
-            response = self.sync()
+        ):
+            with self.assertLogs("site_gpt.app", level="WARNING") as captured:
+                response = self.sync()
 
         self.assertEqual(response.status_code, 400, response.text)
         detail = response.json()["detail"]
         self.assertIn("public http(s)", detail)
         for leak in ("127.0.0.1", "resolves", "UnsafeUrl"):
             self.assertNotIn(leak, detail)
-        # The reason is still logged server-side for debugging.
-        self.assertIn("refused", printed.call_args[0][0])
+        # The reason is still logged server-side as a structured event.
+        self.assertIn("sitemap.refused_unsafe_url", "\n".join(captured.output))
 
     def test_fetch_failure_is_400_without_internal_text(self):
         with patch.object(
@@ -148,17 +149,18 @@ class SiteMapEndpointTests(unittest.TestCase):
             website_api, "extract_urls_from_sitemap", return_value=list(SITEMAP_URLS)
         ), patch.object(
             self.db, "commit", side_effect=RuntimeError("disk full")
-        ), patch.object(self.db, "rollback") as rollback, patch(
-            "builtins.print"
-        ) as printed:
-            response = self.sync()
+        ), patch.object(self.db, "rollback") as rollback:
+            with self.assertLogs("site_gpt.app", level="ERROR") as captured:
+                response = self.sync()
 
         self.assertEqual(response.status_code, 500, response.text)
         detail = response.json()["detail"]
         self.assertIn("Could not save the sitemap pages", detail)
         self.assertNotIn("disk full", detail)
         rollback.assert_called_once()
-        self.assertIn("disk full", printed.call_args[0][0])
+        # V6-22: the reason survives server-side as a structured event.
+        self.assertIn("sitemap.save_failed", "\n".join(captured.output))
+        self.assertIn("disk full", captured.records[0].fields["error_message"])
 
 
 class SitemapSyncCapTests(unittest.TestCase):
