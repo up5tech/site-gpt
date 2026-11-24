@@ -15,6 +15,7 @@ VALID_PRODUCTION = {
     "INTEGRATION_WEBHOOK_SECRET": "webhook-secret-value",
     "TRUSTED_PROXY_IPS": ("203.0.113.10",),
     "DOCS_ENABLED": False,
+    "PLATFORM_CONSOLE_ENABLED": False,
 }
 
 
@@ -178,6 +179,40 @@ class ProductionConfigTests(unittest.TestCase):
             "DOCS_ENABLED",
             config.production_config_errors(_with(DOCS_ENABLED=False)),
         )
+
+    def test_platform_console_cannot_be_enabled_in_production(self):
+        # V6-11 / D5: the console's approved state for this launch is off, and
+        # nothing at the ingress enforces the MFA/SSO or operator network a
+        # re-opened console would need, so production refuses the switch rather
+        # than serving an operator surface behind a tenant JWT and a grant.
+        for value in (True, "true", "1", "on"):
+            with self.subTest(value=value):
+                self.assertEqual(
+                    config.production_config_errors(
+                        _with(PLATFORM_CONSOLE_ENABLED=value)
+                    ),
+                    ["PLATFORM_CONSOLE_ENABLED"],
+                )
+
+    def test_platform_console_off_or_absent_is_accepted(self):
+        # Absent means the default (off), so a profile written before V6-11 must
+        # not start failing.
+        for value in (False, "false", "0", None):
+            with self.subTest(value=value):
+                self.assertEqual(
+                    config.production_config_errors(
+                        _with(PLATFORM_CONSOLE_ENABLED=value)
+                    ),
+                    [],
+                )
+
+    def test_production_startup_names_the_console_switch(self):
+        with self.assertRaises(RuntimeError) as raised:
+            config.ensure_production_config(
+                env="production", values=_with(PLATFORM_CONSOLE_ENABLED=True)
+            )
+
+        self.assertIn("PLATFORM_CONSOLE_ENABLED", str(raised.exception))
 
     def test_development_startup_needs_no_production_configuration(self):
         # Pin the profile: an APP_ENV=production shell must not turn this

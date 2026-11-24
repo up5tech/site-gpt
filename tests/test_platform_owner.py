@@ -158,6 +158,114 @@ class ConsoleFlagTests(PlatformTestBase):
             )
 
 
+class ConsoleOffAtTheIngressTests(PlatformTestBase):
+    """V6-11: the switch is process configuration, not a host or proxy header.
+
+    D5 keeps the console off for this launch. These cases pin both halves of
+    that answer: the switch hides every route from every caller — a granted
+    operator included — and no `Host`, `X-Forwarded-*` or `Origin` header can
+    stand in for the ingress-level control a re-opened console would need.
+    """
+
+    ALT_ORIGIN_HEADERS = {
+        "Host": "platform.internal.example",
+        "X-Forwarded-Host": "platform.internal.example",
+        "X-Forwarded-Proto": "https",
+        "X-Forwarded-For": "203.0.113.10",
+        "Origin": "https://platform.internal.example",
+    }
+
+    def _routes(self):
+        routes = [
+            route
+            for route in platform_api.router.routes
+            if getattr(route, "path", "").startswith("/api/platform")
+        ]
+        self.assertTrue(routes, "the platform router should expose routes")
+        return routes
+
+    def _call(self, route, user, headers=None):
+        path = route.path
+        while "{" in path:
+            start = path.index("{")
+            end = path.index("}", start)
+            path = f"{path[:start]}{self.company.id}{path[end + 1:]}"
+        method = "GET" if "GET" in route.methods else sorted(route.methods)[0]
+        self.acting_user = user
+        if method == "GET":
+            return self.client.request(method, path, headers=headers or {})
+        return self.client.request(method, path, json={}, headers=headers or {})
+
+    def _carries_console_gate(self, dependant, seen=None):
+        seen = seen if seen is not None else set()
+        for dependency in dependant.dependencies:
+            if dependency.call is platform_api.platform_console_enabled:
+                return True
+            if id(dependency) not in seen:
+                seen.add(id(dependency))
+                if self._carries_console_gate(dependency, seen):
+                    return True
+        return False
+
+    def test_every_route_hides_behind_the_switch_for_every_caller(self):
+        self._grant()
+        with patch.object(config, "PLATFORM_CONSOLE_ENABLED", False):
+            for route in self._routes():
+                for label, user in (
+                    ("owner", self.owner),
+                    ("tenant admin", self.admin),
+                ):
+                    with self.subTest(path=route.path, caller=label):
+                        response = self._call(route, user)
+                        self.assertEqual(response.status_code, 404)
+                        self.assertEqual(response.json(), {"detail": "Not found"})
+
+    def test_the_switch_is_not_derived_from_host_or_proxy_headers(self):
+        self._grant()
+        with patch.object(config, "PLATFORM_CONSOLE_ENABLED", False):
+            for path in (
+                "/api/platform/session",
+                "/api/platform/overview",
+                "/api/platform/audit",
+            ):
+                with self.subTest(path=path):
+                    response = self._get(
+                        path, self.owner, headers=self.ALT_ORIGIN_HEADERS
+                    )
+                    self.assertEqual(response.status_code, 404)
+
+    def test_an_alternate_hostname_does_not_replace_the_owner_check(self):
+        # With the switch on, the same headers buy a tenant admin nothing.
+        with patch.object(config, "PLATFORM_CONSOLE_ENABLED", True):
+            response = self._get(
+                "/api/platform/session",
+                self.admin,
+                headers=self.ALT_ORIGIN_HEADERS,
+            )
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_every_route_carries_the_console_gate(self):
+        # A route added later without the dependency would answer 401/403 and
+        # so reveal the surface; this is the structural half of the switch.
+        for route in self._routes():
+            with self.subTest(path=route.path):
+                self.assertTrue(self._carries_console_gate(route.dependant))
+
+    def test_disabling_and_re_enabling_the_switch_keeps_grants(self):
+        self._grant()
+        audit_before = self.db.query(models.PlatformAuditLog).count()
+        self.assertEqual(self._get("/api/platform/session", self.owner).status_code, 200)
+
+        with patch.object(config, "PLATFORM_CONSOLE_ENABLED", False):
+            self.assertEqual(self._get("/api/platform/session", self.owner).status_code, 404)
+
+        self.assertEqual(self._get("/api/platform/session", self.owner).status_code, 200)
+        self.assertEqual(
+            self.db.query(models.PlatformAuditLog).count(), audit_before
+        )
+
+
 class AuthorizationTests(PlatformTestBase):
     def test_anonymous_callers_are_refused(self):
         self.assertIn(
