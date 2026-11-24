@@ -263,7 +263,7 @@ class YoutubeEndpointTests(unittest.TestCase):
         app = FastAPI()
         app.include_router(upload_api.router, prefix="/api/uploads")
         app.dependency_overrides[get_db] = lambda: MagicMock()
-        app.dependency_overrides[get_current_user] = lambda: MagicMock(id=uuid4())
+        app.dependency_overrides[get_current_user] = lambda: MagicMock(id=uuid4(), role="admin")
         self.client = TestClient(app)
         self.addCleanup(self._remove_written_files)
         self.uploads_before = self._upload_files()

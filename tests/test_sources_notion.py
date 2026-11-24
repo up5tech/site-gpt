@@ -593,7 +593,7 @@ class NotionEndpointTests(unittest.TestCase):
         app = FastAPI()
         app.include_router(upload_api.router, prefix="/api/uploads")
         app.dependency_overrides[get_db] = lambda: MagicMock()
-        app.dependency_overrides[get_current_user] = lambda: MagicMock(id=uuid4())
+        app.dependency_overrides[get_current_user] = lambda: MagicMock(id=uuid4(), role="admin")
         self.client = TestClient(app)
         self.stub = NotionStub()
         self.addCleanup(self.stub.install().stop)

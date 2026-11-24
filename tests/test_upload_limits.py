@@ -135,7 +135,9 @@ class UploadEndpointTests(unittest.TestCase):
         app = FastAPI()
         app.include_router(upload_api.router, prefix="/api/uploads")
         app.dependency_overrides[get_db] = lambda: MagicMock()
-        app.dependency_overrides[get_current_user] = lambda: MagicMock(id=uuid4())
+        app.dependency_overrides[get_current_user] = lambda: MagicMock(
+            id=uuid4(), role="admin"
+        )
         self.client = TestClient(app)
 
     def test_oversized_upload_returns_413_and_writes_nothing(self):
@@ -161,7 +163,9 @@ class UploadEndpointTests(unittest.TestCase):
         app = FastAPI()
         app.include_router(upload_api.router, prefix="/api/uploads")
         app.dependency_overrides[get_db] = lambda: db
-        app.dependency_overrides[get_current_user] = lambda: MagicMock(id=uuid4())
+        app.dependency_overrides[get_current_user] = lambda: MagicMock(
+            id=uuid4(), role="admin"
+        )
         client = TestClient(app)
         before = set(os.listdir("uploads")) if os.path.isdir("uploads") else set()
         mime = (
@@ -200,6 +204,103 @@ class UploadEndpointTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 413)
         self.assertIn("1 MB", response.json()["detail"])
+
+
+def _uploads() -> set[str]:
+    return set(os.listdir("uploads")) if os.path.isdir("uploads") else set()
+
+
+class UploadPolicyTests(unittest.TestCase):
+    """D6 (V6-13): tenant admins only, the supported formats, the size ceiling."""
+
+    def _client(self, role: str):
+        app = FastAPI()
+        app.include_router(upload_api.router, prefix="/api/uploads")
+        db = MagicMock()
+        app.dependency_overrides[get_db] = lambda: db
+        app.dependency_overrides[get_current_user] = lambda: MagicMock(
+            id=uuid4(), role=role
+        )
+        return TestClient(app), db
+
+    def test_only_an_admin_may_use_any_upload_route(self):
+        routes = (
+            ("/api/uploads/", {"files": {"file": ("doc.txt", b"body")}}),
+            ("/api/uploads/url", {"json": {"url": "https://example.com/a.pdf"}}),
+            ("/api/uploads/youtube", {"json": {"url": "https://youtu.be/x"}}),
+            (
+                "/api/uploads/notion",
+                {"json": {"url": "https://www.notion.so/x", "token": "t"}},
+            ),
+            (
+                "/api/uploads/google-drive",
+                {"json": {"file_id": "f", "access_token": "t"}},
+            ),
+        )
+        for role in ("user", "manager"):
+            for path, kwargs in routes:
+                with self.subTest(role=role, path=path):
+                    client, db = self._client(role)
+                    response = client.post(path, **kwargs)
+                    self.assertEqual(response.status_code, 403, response.text)
+                    db.add.assert_not_called()
+
+    def test_a_local_upload_with_an_unsupported_extension_is_refused(self):
+        for name in ("notes.csv", "data.json", "legacy.doc", "a.zip", "noext"):
+            with self.subTest(name=name):
+                client, db = self._client("admin")
+                before = _uploads()
+                response = client.post(
+                    "/api/uploads/", files={"file": (name, b"body")}
+                )
+                self.assertEqual(response.status_code, 400, response.text)
+                self.assertIn("Allowed:", response.json()["detail"])
+                self.assertEqual(_uploads() - before, set())
+                db.add.assert_not_called()
+
+    def test_a_local_upload_of_a_supported_format_is_accepted(self):
+        names = (
+            "guide.pdf",
+            "policy.docx",
+            "deck.pptx",
+            "notes.txt",
+            "readme.md",
+            "page.html",
+        )
+        client, _ = self._client("admin")
+        before = _uploads()
+        try:
+            for name in names:
+                with self.subTest(name=name):
+                    response = client.post(
+                        "/api/uploads/", files={"file": (name, b"body")}
+                    )
+                    self.assertEqual(response.status_code, 200, response.text)
+                    self.assertEqual(response.json()["filename"], name)
+        finally:
+            for written in _uploads() - before:
+                os.remove(os.path.join("uploads", written))
+
+    def test_a_remote_import_of_an_unsupported_format_is_refused(self):
+        class CsvProvider:
+            async def acquire(self, ref, token=None):
+                return sources.AcquiredFile(
+                    content=b"a,b",
+                    filename="sheet.csv",
+                    content_type="text/csv",
+                )
+
+        client, db = self._client("admin")
+        before = _uploads()
+        with patch.object(upload_api, "get_provider", return_value=CsvProvider()):
+            response = client.post(
+                "/api/uploads/url", json={"url": "https://example.com/sheet.csv"}
+            )
+
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertIn(".csv", response.json()["detail"])
+        self.assertEqual(_uploads() - before, set())
+        db.add.assert_not_called()
 
 
 class UrlProviderStreamingTests(unittest.TestCase):
