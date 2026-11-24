@@ -931,7 +931,7 @@ provided: SOC 2 Type II, a HIPAA BAA, a signed DPA, or any GDPR certification.
 | `DOCS_ENABLED` | `true` | set `false` — hides `/docs`, `/redoc` and `/openapi.json` |
 | `RATE_LIMIT_BACKEND` | `memory` | set `redis` — a shared limiter is required once more than one API process runs |
 | `API_KEY_PEPPER` | *(empty)* | required — pepper for stored API-key hashes |
-| `INTEGRATION_WEBHOOK_SECRET` | *(empty)* | required — HMAC secret for outbound webhook signatures |
+| `INTEGRATION_WEBHOOK_SECRET` | *(empty)* | required in production — HMAC secret for outbound webhook signatures; `/api/integrations` is always mounted, so a tenant can enable a webhook at any time |
 
 `CORS_ORIGINS` is parsed as a comma-separated list. `allow_credentials` is disabled
 automatically while the value is `*`, so an explicit list is also what enables
@@ -944,6 +944,11 @@ V6-10/D4) refuses the known JWT development fallback, a wildcard or malformed
 `TRUSTED_PROXY_IPS`, and `DOCS_ENABLED=true`. The error lists **setting names
 only** — never a value — so it is safe to paste into an issue. Development and
 test profiles return immediately and need none of these values.
+
+`INTEGRATION_WEBHOOK_SECRET` is required even when no tenant has configured a
+webhook: the integrations routes are mounted for every profile and a tenant
+admin can enable one after boot, while an empty key makes the outbound
+signature recomputable (and therefore forgeable) by anyone.
 
 ### 2. TLS and reverse proxy
 
