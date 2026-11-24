@@ -3,6 +3,7 @@ from unittest import mock
 
 from fastapi.testclient import TestClient
 
+from site_gpt.app import main as main_module
 from site_gpt.app.core import config
 from site_gpt.app.main import app
 
@@ -23,6 +24,44 @@ def _with(**overrides):
     values = dict(VALID_PRODUCTION)
     values.update(overrides)
     return values
+
+
+class OpsStatusTokenTests(unittest.TestCase):
+    """An unset ops token is a 404 by design, not a production boot failure."""
+
+    def test_only_a_production_boot_without_the_token_is_flagged(self):
+        self.assertTrue(
+            config.ops_status_disabled_in_production(env="production", token="")
+        )
+        self.assertTrue(
+            config.ops_status_disabled_in_production(env="prod", token="   ")
+        )
+        self.assertFalse(
+            config.ops_status_disabled_in_production(env="production", token="s3cret")
+        )
+        self.assertFalse(
+            config.ops_status_disabled_in_production(env="development", token="")
+        )
+
+    def test_the_validator_does_not_require_it(self):
+        # The route is fail-closed by absence. Refusing to boot would take a
+        # working API offline over a monitoring gap, not an exposure.
+        self.assertEqual(config.production_config_errors(_with()), [])
+        self.assertNotIn("OPS_STATUS_TOKEN", config.production_config_errors(_with()))
+
+    def test_a_production_boot_warns_once_and_still_serves(self):
+        with mock.patch.object(
+            main_module, "ops_status_disabled_in_production", return_value=True
+        ):
+            with self.assertLogs("site_gpt.app", level="WARNING") as captured:
+                with TestClient(app) as client:
+                    response = client.get("/api/ops/status")
+
+        self.assertEqual(response.status_code, 404)
+        self.assertIn(
+            "config.ops_status_disabled",
+            [record.getMessage() for record in captured.records],
+        )
 
 
 class ProductionConfigTests(unittest.TestCase):
