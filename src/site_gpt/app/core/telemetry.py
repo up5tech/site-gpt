@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import threading
 import time
 from collections import deque
@@ -54,7 +55,12 @@ from site_gpt.app.core.config import (
 )
 
 #: One JSON document per key, each written by the worker and read by the API.
+#: The legacy key is still written for one release; the per-worker keys below
+#: are what a worker can be judged by (V6-23).
 HEARTBEAT_KEY = "ops:worker:heartbeat"
+#: One key per worker, so a dead process' key expires instead of being
+#: overwritten by a live peer.
+WORKER_HEARTBEAT_PREFIX = "ops:worker:heartbeat:"
 LAST_POP_KEY = "ops:queue:last_pop"
 JOB_FAILURES_KEY = "ops:worker:job_failures"
 
@@ -241,16 +247,39 @@ async def fleet_window(client: Any, *, now: float | None = None) -> dict[str, An
 # -- worker-written Redis keys ---------------------------------------------
 
 
+def worker_key(*, host: str | None = None, pid: int | None = None) -> str:
+    """The key one worker owns: the host names the container, the pid the process.
+
+    Two workers on one host (a supervisor running two processes, or a test)
+    stay distinct, and a container's hostname is what the deployment already
+    uses to tell replicas apart.
+    """
+    name = host if host is not None else socket.gethostname()
+    process = pid if pid is not None else os.getpid()
+    return f"{WORKER_HEARTBEAT_PREFIX}{name}:{process}"
+
+
 async def write_heartbeat(client: Any, *, loops: list[str]) -> bool:
-    """Publish one heartbeat; False when Redis is unreachable."""
+    """Publish one heartbeat; False when Redis is unreachable.
+
+    Written twice (V6-23): under the worker's own key so a dead peer cannot be
+    hidden by a live one, and under the legacy key so a reader that predates
+    the per-worker keys still sees that *a* worker is alive.
+    """
+    identity = f"{socket.gethostname()}:{os.getpid()}"
     payload = {
         "at": _iso(datetime.now(UTC)),
         "pid": os.getpid(),
         "loops": list(loops),
+        "worker": identity,
     }
+    encoded = json.dumps(payload)
     try:
+        await client.set(HEARTBEAT_KEY, encoded, ex=HEARTBEAT_TTL_SECONDS)
         await client.set(
-            HEARTBEAT_KEY, json.dumps(payload), ex=HEARTBEAT_TTL_SECONDS
+            f"{WORKER_HEARTBEAT_PREFIX}{identity}",
+            encoded,
+            ex=HEARTBEAT_TTL_SECONDS,
         )
     except Exception:  # noqa: BLE001 - a failed heartbeat is visible as one
         return False
@@ -285,6 +314,51 @@ async def note_job_failure(client: Any) -> int | None:
     return int(count)
 
 
+async def _worker_snapshots(client: Any, moment: datetime) -> list[dict[str, Any]]:
+    """Every per-worker heartbeat key, with its identity and age.
+
+    `SCAN`, never `KEYS`, and a read failure leaves the list empty rather than
+    failing the snapshot: the legacy key still proves that *a* worker is alive,
+    it just cannot say which or how many.
+    """
+    workers: list[dict[str, Any]] = []
+    try:
+        keys = [
+            key
+            async for key in client.scan_iter(match=f"{WORKER_HEARTBEAT_PREFIX}*")
+        ]
+    except Exception:  # noqa: BLE001 - the legacy view is still readable
+        return workers
+
+    for key in keys:
+        try:
+            raw = await client.get(key)
+        except Exception:  # noqa: BLE001 - one unreadable key is not the fleet
+            continue
+        if not raw:
+            continue
+        try:
+            payload = json.loads(raw)
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        identity = payload.get("worker")
+        if not isinstance(identity, str) or not identity:
+            identity = str(key)[len(WORKER_HEARTBEAT_PREFIX) :]
+        loops = payload.get("loops")
+        workers.append(
+            {
+                "worker": identity,
+                "age_seconds": _age_seconds(payload.get("at"), moment),
+                "loops": (
+                    [str(name) for name in loops] if isinstance(loops, list) else []
+                ),
+            }
+        )
+    return sorted(workers, key=lambda worker: worker["worker"])
+
+
 async def redis_snapshot(client: Any, *, now: datetime | None = None) -> dict[str, Any]:
     """Read the worker heartbeat, queue depth and counters. Never raises."""
     moment = now or datetime.now(UTC)
@@ -295,6 +369,7 @@ async def redis_snapshot(client: Any, *, now: datetime | None = None) -> dict[st
         "queue_depth": None,
         "queue_age_seconds": None,
         "job_failures": 0,
+        "workers": [],
     }
     try:
         raw_heartbeat = await client.get(HEARTBEAT_KEY)
@@ -323,6 +398,9 @@ async def redis_snapshot(client: Any, *, now: datetime | None = None) -> dict[st
         snapshot["heartbeat_loops"] = (
             [str(name) for name in loops] if isinstance(loops, list) else []
         )
+
+    # V6-23: per-worker keys beside the legacy document, worst-first detection.
+    snapshot["workers"] = await _worker_snapshots(client, moment)
 
     # Age only means something while there is something waiting.
     if snapshot["queue_depth"]:
@@ -375,6 +453,35 @@ def evaluate(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
         depth = snapshot["redis"].get("queue_depth")
         queue_age = snapshot["redis"].get("queue_age_seconds")
         failures = snapshot["redis"].get("job_failures") or 0
+
+        # V6-23: each worker's own key, so a dead worker is named even while a
+        # peer keeps the legacy document fresh.
+        for worker in snapshot["redis"].get("workers") or []:
+            if not isinstance(worker, dict):
+                continue
+            identity = str(worker.get("worker") or "unknown")
+            age = worker.get("age_seconds")
+            if age is None:
+                alerts.append(
+                    _alert(
+                        "worker.heartbeat_missing",
+                        "critical",
+                        "A worker's heartbeat key carries no usable timestamp.",
+                        worker=identity,
+                    )
+                )
+            elif age > WORKER_HEARTBEAT_STALE_SECONDS:
+                alerts.append(
+                    _alert(
+                        "worker.heartbeat_stale",
+                        "critical",
+                        "A worker's heartbeat is stale: that process may be "
+                        "stopped or hung.",
+                        worker=identity,
+                        age_seconds=round(age, 1),
+                        threshold_seconds=WORKER_HEARTBEAT_STALE_SECONDS,
+                    )
+                )
 
         if heartbeat_age is None:
             alerts.append(
@@ -506,6 +613,7 @@ __all__ = [
     "JOB_FAILURES_KEY",
     "LAST_POP_KEY",
     "REQUESTS_BUCKET_PREFIX",
+    "WORKER_HEARTBEAT_PREFIX",
     "build_snapshot",
     "evaluate",
     "fleet_window",
@@ -516,5 +624,6 @@ __all__ = [
     "redis_snapshot",
     "request_window",
     "reset_request_window",
+    "worker_key",
     "write_heartbeat",
 ]
