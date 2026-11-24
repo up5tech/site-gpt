@@ -36,7 +36,7 @@ flowchart LR
 - **PostgreSQL with pgvector**: private network only. Schema is applied out of band with `uv run alembic upgrade head`; the chain is linear with head `0b22b30bf930`.
 - **Redis**: private network only; queue, rate limiter, quota counters, inbox pub/sub and presence leases. Persistence/eviction policy must never drop `queue:jobs` keys while the worker depends on them.
 - **Admin SPA**: `frontend/dist` on a CDN, with `VITE_BACKEND_URL` baked at build time to the API origin. `index.html` is not cached across releases.
-- **Object storage**: the approved target for uploaded bytes. **No adapter exists**: `api/upload.py` writes `uploads/` locally and `services/retention.py` unlinks locally. Until an adapter lands, containers have no durable upload volume and uploads must stay disabled.
+- **Object storage**: the approved target for uploaded bytes. **No adapter exists**: `api/upload.py` writes `uploads/` locally and `services/retention.py` unlinks locally. V6-13 restricts uploads to tenant admins and the D6 format list, but an adapter is still required for a durable volume, so uploads stay closed for the launch cohort until it lands.
 
 ## 2. Network boundaries
 

@@ -61,9 +61,9 @@ An index of the thirteen decisions in this record: each question in a line, the 
 
 ## What the approved scope keeps off
 
-- Wave 1 has started with V6-10 (production-config validation); no platform-console work (V6-11) and no tenant-identity, session, upload or audit work (V6-12…V6-16) is implemented by this record.
+- Wave 1 has started with V6-10 (production-config validation) and V6-13 (D6 upload enforcement); no platform-console work (V6-11) and no tenant-identity, session or audit work (V6-12, V6-14…V6-16) is implemented by this record.
 - `BILLING_ENABLED=false` and `PLATFORM_CONSOLE_ENABLED=false`; `/api/platform` remains a 404. Track B and D12 are out of scope.
-- Uploads stay disabled for the public launch cohort until V6-13 enforces the admin-only, format- and size-limited policy recorded in D6.
+- Uploads follow the admin-only, format- and size-limited policy recorded in D6, enforced by V6-13 on all five upload routes; they still land in the local `uploads/` directory, so the public launch cohort also needs a durable storage adapter.
 - No production deployment, no release tag, and no SLO, support promise or pricing statement is published; D3's 99.5%/24h/8h target is an internal operating target until V6-41 approves customer-facing copy.
 - Wave 0's tasks are V6-01…V6-04, all completed; their evidence is in [`plans/PLAN_V6.md`](../plans/PLAN_V6.md) §6 and gate V6-0G.
 
@@ -102,7 +102,7 @@ The launch track is **Track A (hosted core, billing off)**; **D12 is not applica
 - Approver/date: Jacky, 2026-11-24. Unblocks V6-10's validator target and V6-40's runbook.
 - Consequences: `RATE_LIMIT_BACKEND=redis` is mandatory (more than one instance); `TRUSTED_PROXY_IPS` must list the ingress addresses; `CORS_ORIGINS` lists the exact API/SPA origins; PostgreSQL and Redis are private-network only; the worker has no inbound path; the proxy must not buffer `/api/chat/stream`, `/api/chat/messages/stream` or `/api/inbox/events`.
 - Deploy is a rolling replacement of immutable artifacts with backward-compatible migrations (expand now, contract later); rollback redeploys the previous artifact and fixes the schema forward rather than running `alembic downgrade`, because M11/M12 downgrades discard billing and operator state.
-- **Object storage is not implemented today.** `api/upload.py` writes to a local `uploads/` directory and `services/retention.py` unlinks from it. Enabling uploads therefore requires an object-storage adapter (a V6-40 prerequisite) **and** the D6 admin-only policy; until both exist on the managed containers, uploads stay disabled for the launch cohort.
+- **Object storage is not implemented today.** `api/upload.py` writes to a local `uploads/` directory and `services/retention.py` unlinks from it. The D6 admin-only policy has been enforced since V6-13, so the remaining requirement is the object-storage adapter (a V6-40 prerequisite): until it exists on the managed containers, uploads stay closed for the launch cohort.
 - The architecture and threat-model classification this decision feeds is [`docs/architecture-v6.md`](architecture-v6.md).
 
 ### Recorded decision D3
@@ -139,7 +139,7 @@ The launch track is **Track A (hosted core, billing off)**; **D12 is not applica
 
 - Approver/date: Jacky, 2026-11-24. Unblocks V6-13; turns R9 into a signed acceptance.
 - Consequences: the four remote-import routes (`/api/uploads/url`, `/youtube`, `/notion`, `/google-drive`) follow the same admin-only rule; unsupported extensions and oversize files are refused; there is no quarantine because there is no scanner, and the "scanner unavailable" case stays out of scope until a scanner is approved.
-- **Not yet implemented:** today any authenticated user may upload and no extension/MIME allowlist exists. Until V6-13 enforces this decision, uploads must stay disabled for the launch cohort.
+- **Implemented by V6-13 (2026-11-24):** all five upload routes now require a tenant admin, the extension allowlist refuses every format outside the list before a byte is written, and the 20 MB ceiling is unchanged. Residual: no scanner and no MIME-versus-extension cross-check; uploads still write to the local `uploads/` directory until a durable object-storage adapter exists.
 - Residual owner Jacky, expiry 2027-02-28, recorded against R9.
 
 ### Recorded decision D7
@@ -840,7 +840,7 @@ Whichever is chosen, the size limit has to be stated per entry point, because th
 
 ### What an approval changes
 
-Only [the D6 row](#decision-register--one-page-to-sign) moves from **UNAPPROVED** to **APPROVED**, which unblocks V6-13 and turns R9 from an unowned P1 into either a mitigated control or a signed acceptance. Gate V6-0G was signed on 2026-11-24; until V6-13 enforces the admin-only policy, uploads must stay disabled for the launch cohort and R9 is carried with an owner and a 2027-02-28 expiry.
+Only [the D6 row](#decision-register--one-page-to-sign) moves from **UNAPPROVED** to **APPROVED**, which unblocks V6-13 and turns R9 from an unowned P1 into either a mitigated control or a signed acceptance. Gate V6-0G was signed on 2026-11-24 and V6-13 enforced the admin-only policy on the same day; R9 is carried as a signed acceptance with an owner and a 2027-02-28 expiry.
 
 ## Appendix — D8 decision brief
 

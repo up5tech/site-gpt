@@ -880,17 +880,19 @@ stay open for Waves 2–3. The recorded answers, owners and consequences are in
 [`docs/preflight-v6.md`](docs/preflight-v6.md), the target topology and
 threat-model classification in [`docs/architecture-v6.md`](docs/architecture-v6.md),
 and the owned risk register in [`docs/risk-register-v6.md`](docs/risk-register-v6.md).
-The baseline is 64 Python test modules / 1114 tests, 46 node checks, clean
+The baseline is 64 Python test modules / 1120 tests, 46 node checks, clean
 build/lint/imports and Alembic head `0b22b30bf930`; the provider-free V5-5G gate
-recorded 72/72 checks passed with 2 blocked. **Wave 1 has started with V6-10:**
-`APP_ENV=production` now fails closed at startup on the unsafe defaults from D4
-(dev JWT secret, wildcard/malformed CORS, `SQL_ECHO` on, per-process limiter,
-missing API-key pepper/webhook secret, empty trusted proxies, docs enabled) and
-reports setting names only; `/docs`, `/redoc` and `/openapi.json` follow
-`DOCS_ENABLED`. Development and test profiles are unchanged. Uploads stay
-disabled for the launch cohort until V6-13 and a durable storage adapter exist,
-no other Wave 1 task has started, no dependency or migration was added, and both
-flags stay false. The decisions still open are listed in
+recorded 72/72 checks passed with 2 blocked. **Wave 1 has started with V6-10 and
+V6-13:** `APP_ENV=production` now fails closed at startup on the unsafe defaults
+from D4 (dev JWT secret, wildcard/malformed CORS, `SQL_ECHO` on, per-process
+limiter, missing API-key pepper/webhook secret, empty trusted proxies, docs
+enabled) and reports setting names only; `/docs`, `/redoc` and `/openapi.json`
+follow `DOCS_ENABLED`. Uploads now follow D6 (V6-13): all five upload routes
+require a tenant admin, only PDF/DOCX/PPTX/TXT/Markdown/HTML are accepted, and
+the 20 MB ceiling is unchanged. Development and test profiles are unchanged.
+The other Wave 1 tasks have not started, no dependency or migration was added,
+and both flags stay false. Uploads still land in the local `uploads/` directory,
+so the launch cohort also needs the durable storage adapter. The decisions still open are listed in
 [`docs/preflight-v6.md`](docs/preflight-v6.md).
 
 ## Dev commands
