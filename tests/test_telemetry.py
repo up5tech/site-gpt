@@ -31,11 +31,12 @@ NOW = datetime(2026, 11, 24, 12, 0, tzinfo=UTC)
 class _Client:
     """Just enough async Redis for the telemetry keys."""
 
-    def __init__(self, values=None, depth=0, fail=False, incr_to=1):
+    def __init__(self, values=None, depth=0, fail=False, incr_to=1, scan_fails=False):
         self.values = dict(values or {})
         self.depth = depth
         self.fail = fail
         self.incr_to = incr_to
+        self.scan_fails = scan_fails
         self.set_calls = []
         self.expires = []
 
@@ -73,6 +74,14 @@ class _Client:
 
     def pipeline(self):
         return _Pipeline(self)
+
+    async def scan_iter(self, match=None):
+        if self.fail or self.scan_fails:
+            raise RuntimeError("redis down")
+        prefix = (match or "").rstrip("*")
+        for key in list(self.values):
+            if key.startswith(prefix):
+                yield key
 
 
 class _Pipeline:
@@ -498,6 +507,137 @@ class FleetWindowTests(unittest.TestCase):
 
         self.assertEqual(snapshot["api"]["requests"], 5)
         self.assertEqual(snapshot["api"]["fleet"]["requests"], 50)
+
+
+class PerWorkerHeartbeatTests(unittest.TestCase):
+    """V6-23: one key per worker, so a dead peer cannot hide behind a live one."""
+
+    def _worker_key(self, identity):
+        return f"{telemetry.WORKER_HEARTBEAT_PREFIX}{identity}"
+
+    def _payload(self, identity, age_seconds, loops=None):
+        return json.dumps(
+            {
+                "at": (NOW - timedelta(seconds=age_seconds)).isoformat(),
+                "worker": identity,
+                "loops": loops or ["queue"],
+            }
+        )
+
+    def test_the_key_carries_the_host_and_the_pid(self):
+        self.assertEqual(
+            telemetry.worker_key(host="worker-a", pid=7),
+            "ops:worker:heartbeat:worker-a:7",
+        )
+
+    def test_a_heartbeat_writes_the_worker_key_beside_the_legacy_one(self):
+        client = _Client()
+
+        with (
+            patch.object(telemetry.socket, "gethostname", return_value="worker-a"),
+            patch.object(telemetry.os, "getpid", return_value=7),
+        ):
+            self.assertTrue(_write(client))
+
+        self.assertEqual(
+            [key for key, _, _ in client.set_calls],
+            [telemetry.HEARTBEAT_KEY, "ops:worker:heartbeat:worker-a:7"],
+        )
+        for _, value, ttl in client.set_calls:
+            self.assertEqual(ttl, telemetry.HEARTBEAT_TTL_SECONDS)
+            self.assertEqual(json.loads(value)["worker"], "worker-a:7")
+
+    def test_two_workers_are_reported_separately(self):
+        client = _Client(
+            values={
+                self._worker_key("worker-a:1"): self._payload("worker-a:1", 5),
+                self._worker_key("worker-b:2"): self._payload(
+                    "worker-b:2", 500, loops=["queue", "digest"]
+                ),
+            },
+            depth=0,
+        )
+
+        snapshot = _snapshot_of(client)
+
+        self.assertEqual(
+            [worker["worker"] for worker in snapshot["workers"]],
+            ["worker-a:1", "worker-b:2"],
+        )
+        self.assertAlmostEqual(snapshot["workers"][0]["age_seconds"], 5)
+        self.assertAlmostEqual(snapshot["workers"][1]["age_seconds"], 500)
+        self.assertEqual(snapshot["workers"][1]["loops"], ["queue", "digest"])
+
+    def test_a_stale_worker_alerts_only_itself(self):
+        client = _Client(
+            values={
+                self._worker_key("worker-a:1"): self._payload("worker-a:1", 5),
+                self._worker_key("worker-b:2"): self._payload("worker-b:2", 500),
+            },
+            depth=0,
+        )
+        snapshot = _snapshot_of(client)
+
+        with patch.object(telemetry, "WORKER_HEARTBEAT_STALE_SECONDS", 90):
+            alerts = telemetry.evaluate(_snapshot(redis=snapshot))
+
+        stale = [a for a in alerts if a["code"] == "worker.heartbeat_stale"]
+        self.assertEqual(len(stale), 1)
+        self.assertEqual(stale[0]["evidence"]["worker"], "worker-b:2")
+        self.assertNotIn("worker-a:1", json.dumps(stale))
+
+    def test_a_key_without_a_timestamp_is_missing_for_that_worker(self):
+        client = _Client(
+            values={
+                self._worker_key("worker-a:1"): json.dumps({"worker": "worker-a:1"}),
+                telemetry.HEARTBEAT_KEY: json.dumps({"at": NOW.isoformat()}),
+            },
+            depth=0,
+        )
+
+        snapshot = _snapshot_of(client)
+        missing = [
+            alert
+            for alert in telemetry.evaluate(_snapshot(redis=snapshot))
+            if alert["code"] == "worker.heartbeat_missing"
+        ]
+
+        self.assertEqual([alert["evidence"]["worker"] for alert in missing], ["worker-a:1"])
+
+    def test_a_scan_failure_keeps_the_legacy_view(self):
+        client = _Client(
+            values={
+                telemetry.HEARTBEAT_KEY: json.dumps(
+                    {"at": (NOW - timedelta(seconds=10)).isoformat()}
+                )
+            },
+            depth=0,
+            scan_fails=True,
+        )
+
+        snapshot = _snapshot_of(client)
+
+        self.assertTrue(snapshot["ok"])
+        self.assertAlmostEqual(snapshot["heartbeat_age_seconds"], 10)
+        self.assertEqual(snapshot["workers"], [])
+
+    def test_an_expired_worker_key_is_not_invented(self):
+        # A dead worker's key expires; without a deployment-fed expected count
+        # the snapshot cannot name it — a recorded limit, not a claim.
+        client = _Client(
+            values={
+                telemetry.HEARTBEAT_KEY: json.dumps({"at": NOW.isoformat()}),
+                self._worker_key("worker-a:1"): self._payload("worker-a:1", 0),
+            },
+            depth=0,
+        )
+
+        snapshot = _snapshot_of(client)
+
+        self.assertEqual(
+            [worker["worker"] for worker in snapshot["workers"]], ["worker-a:1"]
+        )
+        self.assertNotIn("worker.heartbeat_missing", _codes(_snapshot(redis=snapshot)))
 
 
 def _shared(client, status_code, now):
