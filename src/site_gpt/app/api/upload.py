@@ -1,11 +1,11 @@
 import os
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from site_gpt.app import models
-from site_gpt.app.core.auth import get_current_user
+from site_gpt.app.core.auth import get_admin_user
 from site_gpt.app.core.config import MAX_UPLOAD_BYTES, MAX_UPLOAD_MB
 from site_gpt.app.db.session import get_db
 from site_gpt.app.services.net_guard import UnsafeUrl
@@ -22,6 +22,41 @@ router = APIRouter()
 # Read uploads in small chunks so an oversized body is rejected without ever
 # being buffered in full (see MAX_UPLOAD_BYTES).
 UPLOAD_CHUNK_SIZE = 64 * 1024
+
+# D6 (V6-13): uploads accept only the formats the parsers support — PDF, DOCX,
+# PPTX, TXT/Markdown and HTML. `services/parse.py` reads a few more (CSV, JSON,
+# YAML, XML), but they stay refused: the approved policy is this list, not the
+# parser's capability. `doc` is excluded too — python-docx cannot read the
+# legacy binary format, so accepting it only moved the failure to ingest time.
+ALLOWED_UPLOAD_EXTENSIONS = (
+    "pdf",
+    "docx",
+    "pptx",
+    "txt",
+    "text",
+    "md",
+    "markdown",
+    "html",
+    "htm",
+)
+
+
+def _extension(filename: str | None) -> str:
+    """Lower-case extension without the dot, or "" when there is none."""
+    return os.path.splitext(os.path.basename(filename or ""))[1].lower().lstrip(".")
+
+
+def _reject_unsupported(filename: str | None) -> None:
+    """Fail closed on a format outside the D6 allowlist, before anything is saved."""
+    ext = _extension(filename)
+    if ext in ALLOWED_UPLOAD_EXTENSIONS:
+        return
+    allowed = ", ".join(f".{value}" for value in ALLOWED_UPLOAD_EXTENSIONS)
+    found = f".{ext}" if ext else "a file without an extension"
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail=f"Unsupported file type: {found}. Allowed: {allowed}.",
+    )
 
 
 def _too_large() -> HTTPException:
@@ -95,8 +130,14 @@ def _save_attachment(
     source_ref: str | None = None,
 ) -> dict:
     """Persist fetched bytes as a local file under uploads/ and create an
-    Attachment row. Returns the same shape the frontend already expects."""
+    Attachment row. Returns the same shape the frontend already expects.
+
+    Every remote-import route ends here, so the D6 format check lives here too:
+    a URL that serves a `.zip`, or a Drive file whose name is unsupported, is
+    refused before a byte is written.
+    """
     original_name = acquired.filename or "file"
+    _reject_unsupported(original_name)
     ext = os.path.splitext(original_name)[1]
     safe_name = f"{uuid4().hex}{ext}"
 
@@ -133,10 +174,13 @@ def _save_attachment(
 async def upload_file(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    user: models.User = Depends(get_current_user),
+    user: models.User = Depends(get_admin_user),
 ):
     # Store under a unique, sanitized name to avoid collisions / path traversal.
     original_name = os.path.basename(file.filename or "file")
+    # D6: the format is decided by the client-supplied name, so it is checked
+    # before the body is streamed anywhere.
+    _reject_unsupported(original_name)
     ext = os.path.splitext(original_name)[1]
     safe_name = f"{uuid4().hex}{ext}"
 
@@ -171,7 +215,7 @@ async def upload_file(
 async def upload_from_url(
     payload: UrlUploadIn,
     db: Session = Depends(get_db),
-    user: models.User = Depends(get_current_user),
+    user: models.User = Depends(get_admin_user),
 ):
     """Fetch a file from any HTTP(S) URL and store it like a local upload."""
     provider = get_provider("url")
@@ -190,7 +234,7 @@ async def upload_from_url(
 async def upload_from_youtube(
     payload: YoutubeUploadIn,
     db: Session = Depends(get_db),
-    user: models.User = Depends(get_current_user),
+    user: models.User = Depends(get_admin_user),
 ):
     """Import a video, playlist or channel as caption markdown attachments.
 
@@ -233,7 +277,7 @@ async def upload_from_youtube(
 async def upload_from_notion(
     payload: NotionUploadIn,
     db: Session = Depends(get_db),
-    user: models.User = Depends(get_current_user),
+    user: models.User = Depends(get_admin_user),
 ):
     """Import a Notion page, or every page of a database, as markdown files.
 
@@ -281,7 +325,7 @@ async def upload_from_notion(
 async def upload_from_google_drive(
     payload: GoogleDriveUploadIn,
     db: Session = Depends(get_db),
-    user: models.User = Depends(get_current_user),
+    user: models.User = Depends(get_admin_user),
 ):
     """Import a file from Google Drive given its file id + an access token."""
     provider = get_provider("google_drive")
