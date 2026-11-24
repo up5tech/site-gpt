@@ -454,6 +454,23 @@ def production_config_errors(
     return problems
 
 
+def ops_status_disabled_in_production(
+    env: str | None = None, token: str | None = None
+) -> bool:
+    """Whether a production boot runs without the operator snapshot route.
+
+    Deliberately not a `production_config_errors` entry: an unset token removes
+    the route entirely (404), so it exposes nothing — the gap is monitoring, not
+    security, and refusing to boot would take a working API offline over a
+    dashboard. `main.py` logs one warning instead, which is what makes the
+    missing alert path visible to whoever deployed it.
+    """
+    if not is_production(env):
+        return False
+    value = OPS_STATUS_TOKEN if token is None else token
+    return not str(value or "").strip()
+
+
 def ensure_production_config(
     env: str | None = None,
     values: Mapping[str, Any] | None = None,

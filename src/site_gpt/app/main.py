@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -30,9 +31,14 @@ from site_gpt.app.core.config import (
     CORS_ORIGINS,
     DOCS_ENABLED,
     ensure_production_config,
+    ops_status_disabled_in_production,
     validate_billing_config,
 )
-from site_gpt.app.core.logging import RequestContextMiddleware, configure_logging
+from site_gpt.app.core.logging import (
+    RequestContextMiddleware,
+    configure_logging,
+    log_event,
+)
 from site_gpt.app.services.embed_guard import (
     EmbedTokenRefused,
     embed_token_error_response,
@@ -70,6 +76,15 @@ async def lifespan(_app: FastAPI):
     # settings and reports setting names only. Development and test return
     # immediately, so existing local workflows need no production secrets.
     ensure_production_config()
+    # V6-21: an unset OPS_STATUS_TOKEN is not a validator error — the snapshot
+    # route 404s, so nothing is exposed — but a production deployment without it
+    # has no alert path at all, so say so once, at startup, with no secret.
+    if ops_status_disabled_in_production():
+        log_event(
+            "config.ops_status_disabled",
+            level=logging.WARNING,
+            environment="production",
+        )
     # Fail fast only when billing was explicitly enabled. The default/off path
     # remains independent of Stripe credentials and makes no provider calls.
     validate_billing_config()
