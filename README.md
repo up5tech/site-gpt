@@ -188,7 +188,9 @@ npm install && npm run dev   # :5173
 | `NOTION_MAX_BLOCKS` | `1000` | V4 (F3): most blocks one Notion page render fetches before the document is marked truncated; `0` disables the cap |
 | `NOTION_MAX_PAGES` | `25` | V4 (F3): most pages one Notion database import creates (one file per page); the response reports `added`/`total`/`truncated`/`total_exact`, and `0` disables the cap |
 | `NOTION_MAX_COUNT_PAGES` | `10` | V4 (F3): most database query pages read to make `total` exact (100 rows each); a larger database reports a lower bound with `total_exact: false` instead of paging to its end, and `0` never counts past what the import cap needs |
-| `CORS_ORIGINS` | `*` | comma-separated allowed origins; `allow_credentials` is disabled while it is `*` |
+| `APP_ENV` | `development` | deployment profile; `production` turns on the fail-closed startup validator (V6-10, D4) and refuses to boot on unsafe/missing settings, reporting setting names only |
+| `DOCS_ENABLED` | `true` | serve `/docs`, `/redoc` and `/openapi.json`; must be `false` in production |
+| `CORS_ORIGINS` | `*` | comma-separated allowed origins; `allow_credentials` is disabled while it is `*`; production requires an explicit origin list |
 | `TRUSTED_PROXY_IPS` | *(empty)* | comma-separated IPs/CIDRs of reverse proxies / load balancers whose `X-Forwarded-For` is trusted; loopback and private peers are trusted automatically |
 | `FRONTEND_URL` | `http://localhost:5173` | public admin URL, used in password-reset links |
 | `CRAWL_REFRESH_HOURS` | `24` | worker re-crawl interval; `0` disables the scheduler |
@@ -878,13 +880,18 @@ stay open for Waves 2–3. The recorded answers, owners and consequences are in
 [`docs/preflight-v6.md`](docs/preflight-v6.md), the target topology and
 threat-model classification in [`docs/architecture-v6.md`](docs/architecture-v6.md),
 and the owned risk register in [`docs/risk-register-v6.md`](docs/risk-register-v6.md).
-The baseline is 63 Python test modules / 1102 tests, 46 node checks, clean
+The baseline is 64 Python test modules / 1114 tests, 46 node checks, clean
 build/lint/imports and Alembic head `0b22b30bf930`; the provider-free V5-5G gate
-recorded 72/72 checks passed with 2 blocked. **Wave 1 is unblocked but not
-started:** uploads stay disabled for the launch cohort until V6-13 and a durable
-storage adapter exist, no production validator is written, no dependency or
-migration was added, and both flags stay false. The decisions still open are
-listed in [`docs/preflight-v6.md`](docs/preflight-v6.md).
+recorded 72/72 checks passed with 2 blocked. **Wave 1 has started with V6-10:**
+`APP_ENV=production` now fails closed at startup on the unsafe defaults from D4
+(dev JWT secret, wildcard/malformed CORS, `SQL_ECHO` on, per-process limiter,
+missing API-key pepper/webhook secret, empty trusted proxies, docs enabled) and
+reports setting names only; `/docs`, `/redoc` and `/openapi.json` follow
+`DOCS_ENABLED`. Development and test profiles are unchanged. Uploads stay
+disabled for the launch cohort until V6-13 and a durable storage adapter exist,
+no other Wave 1 task has started, no dependency or migration was added, and both
+flags stay false. The decisions still open are listed in
+[`docs/preflight-v6.md`](docs/preflight-v6.md).
 
 ## Dev commands
 
@@ -920,10 +927,23 @@ provided: SOC 2 Type II, a HIPAA BAA, a signed DPA, or any GDPR certification.
 | `MAIL_*` | Gmail placeholders | real SMTP host/port/user/password — password reset only works once set |
 | `FRONTEND_URL` | `http://localhost:5173` | public admin URL (used in reset links) |
 | `SQL_ECHO` | `false` | keep `false` |
+| `APP_ENV` | `development` | set `production` — startup then fails closed unless every production requirement below is met |
+| `DOCS_ENABLED` | `true` | set `false` — hides `/docs`, `/redoc` and `/openapi.json` |
+| `RATE_LIMIT_BACKEND` | `memory` | set `redis` — a shared limiter is required once more than one API process runs |
+| `API_KEY_PEPPER` | *(empty)* | required — pepper for stored API-key hashes |
+| `INTEGRATION_WEBHOOK_SECRET` | *(empty)* | required — HMAC secret for outbound webhook signatures |
 
 `CORS_ORIGINS` is parsed as a comma-separated list. `allow_credentials` is disabled
 automatically while the value is `*`, so an explicit list is also what enables
 credential/cookie flows.
+
+With `APP_ENV=production`, startup validation (`core/config.py::ensure_production_config`,
+V6-10/D4) refuses the known JWT development fallback, a wildcard or malformed
+`CORS_ORIGINS`, `SQL_ECHO=true`, a non-Redis `RATE_LIMIT_BACKEND`, an unset
+`API_KEY_PEPPER` or `INTEGRATION_WEBHOOK_SECRET`, an empty or invalid
+`TRUSTED_PROXY_IPS`, and `DOCS_ENABLED=true`. The error lists **setting names
+only** — never a value — so it is safe to paste into an issue. Development and
+test profiles return immediately and need none of these values.
 
 ### 2. TLS and reverse proxy
 
