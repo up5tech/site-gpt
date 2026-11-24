@@ -441,15 +441,15 @@ class BackgroundLoopRetentionTests(unittest.TestCase):
     def test_every_scheduler_task_is_held_until_it_finishes(self):
         tasks = self._start_then_cancel()
 
-        # the six always-on loops; the digest loop is opt-in
-        self.assertEqual(len(tasks), 6)
+        # the heartbeat plus the six always-on loops; the digest loop is opt-in
+        self.assertEqual(len(tasks), 7)
         self.assertEqual(worker._background_tasks, set())
 
     def test_the_digest_loop_is_added_when_enabled(self):
         with patch.object(worker, "DIGEST_ENABLED", True):
             tasks = self._start_then_cancel()
 
-        self.assertEqual(len(tasks), 7)
+        self.assertEqual(len(tasks), 8)
 
     def test_the_worker_starts_the_kept_loops(self):
         # `worker()` never returns on its own; cancelling the queue read ends it
@@ -464,7 +464,7 @@ class BackgroundLoopRetentionTests(unittest.TestCase):
                     with self.assertRaises(asyncio.CancelledError):
                         await worker.worker()
             tasks = list(worker._background_tasks)
-            self.assertEqual(len(tasks), 6)
+            self.assertEqual(len(tasks), 7)
             for task in tasks:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
