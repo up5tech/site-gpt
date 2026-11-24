@@ -200,6 +200,34 @@ CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*")
 # 4xx/5xx plus application events; DEBUG also adds tracebacks to errors.
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").strip().upper()
 
+# V6-21 (D3/D8): operational telemetry. There is no metrics vendor, so the
+# worker publishes a heartbeat and counters into Redis and the API evaluates
+# these thresholds on demand (`GET /api/ops/status`, `scripts/ops_status.py`).
+# A value *above* a threshold alerts; the configured number is still acceptable.
+WORKER_HEARTBEAT_INTERVAL_SECONDS = int(
+    os.getenv("WORKER_HEARTBEAT_INTERVAL_SECONDS", "15")
+)
+WORKER_HEARTBEAT_STALE_SECONDS = int(
+    os.getenv("WORKER_HEARTBEAT_STALE_SECONDS", "90")
+)
+QUEUE_DEPTH_ALERT = int(os.getenv("QUEUE_DEPTH_ALERT", "100"))
+QUEUE_AGE_ALERT_SECONDS = int(os.getenv("QUEUE_AGE_ALERT_SECONDS", "900"))
+JOB_FAILURE_ALERT_COUNT = int(os.getenv("JOB_FAILURE_ALERT_COUNT", "3"))
+JOB_FAILURE_WINDOW_SECONDS = int(os.getenv("JOB_FAILURE_WINDOW_SECONDS", "3600"))
+API_ERROR_RATE_WINDOW_SECONDS = int(
+    os.getenv("API_ERROR_RATE_WINDOW_SECONDS", "300")
+)
+API_ERROR_RATE_ALERT = float(os.getenv("API_ERROR_RATE_ALERT", "0.02"))
+API_ERROR_RATE_MIN_REQUESTS = int(
+    os.getenv("API_ERROR_RATE_MIN_REQUESTS", "20")
+)
+
+# Shared secret for `GET /api/ops/status`. Empty (the default) disables the
+# route with a 404: the snapshot is operator data, not a tenant feature, and
+# Track A has no platform console to read it from. Set it only on the host; the
+# token is compared in constant time and never echoed.
+OPS_STATUS_TOKEN = os.getenv("OPS_STATUS_TOKEN", "").strip()
+
 # Serve /docs, /redoc and /openapi.json. Development keeps them on; production
 # requires this off (D4), and `main.py` passes the flag to FastAPI.
 DOCS_ENABLED = os.getenv("DOCS_ENABLED", "true").strip().lower() in (

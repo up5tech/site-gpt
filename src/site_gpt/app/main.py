@@ -15,6 +15,7 @@ from site_gpt.app.api.feedback import router as feedback_router
 from site_gpt.app.api.handoff import router as handoff_router
 from site_gpt.app.api.inbox import router as inbox_router
 from site_gpt.app.api.integration import router as integration_router
+from site_gpt.app.api.ops import router as ops_router
 from site_gpt.app.api.plan import router as plan_router
 from site_gpt.app.api.platform import router as platform_router
 from site_gpt.app.api.privacy import router as privacy_router
@@ -129,6 +130,7 @@ app.add_middleware(
 )
 
 app.include_router(router)
+app.include_router(ops_router)  # /health/live, /health/ready, /api/ops/status (V6-21)
 # The hosted chat page (V4 F5) carries its own /chat/{website_id} path.
 app.include_router(chat_page_router)
 app.include_router(company_router, prefix="/api/companies")

@@ -32,6 +32,7 @@ from starlette.datastructures import Headers, MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from site_gpt.app.core.config import LOG_LEVEL
+from site_gpt.app.core.telemetry import record_request
 
 REDACTED = "[redacted]"
 
@@ -366,4 +367,7 @@ class RequestContextMiddleware:
                 status_code=code,
                 duration_ms=round((time.perf_counter() - started) * 1000, 1),
             )
+            # V6-21: the same status the access event just reported feeds the
+            # in-process 5xx window `GET /api/ops/status` alerts on.
+            record_request(code)
             _REQUEST_ID.reset(token)

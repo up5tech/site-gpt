@@ -21,6 +21,7 @@ from site_gpt.app.core.config import (
     RETENTION_CHECK_SECONDS,
     SITEMAP_SCAN_INTERVAL_SECONDS,
     TOPIC_CLUSTER_INTERVAL_SECONDS,
+    WORKER_HEARTBEAT_INTERVAL_SECONDS,
     DIGEST_ENABLED,
     DIGEST_HOUR,
 )
@@ -35,6 +36,11 @@ from site_gpt.app.core.logging import (
     configure_logging,
     log_event,
     log_exception,
+)
+from site_gpt.app.core.telemetry import (
+    note_job_failure,
+    note_queue_pop,
+    write_heartbeat,
 )
 from site_gpt.app import models
 
@@ -145,7 +151,7 @@ def start_background_loops() -> list[asyncio.Task]:
     `DIGEST_ENABLED`, so a deployment that never enabled digests runs exactly
     the other loops; every loop only reads settings until the interval elapses.
     """
-    coros = [scheduler_loop()]  # periodic re-crawl, keeps knowledge fresh
+    coros = [heartbeat_loop(), scheduler_loop()]  # heartbeat first: a dead process must be visible
     if DIGEST_ENABLED:
         coros.append(digest_loop())
     coros.extend(
@@ -158,6 +164,34 @@ def start_background_loops() -> list[asyncio.Task]:
         ]
     )
     return [_keep_task(asyncio.create_task(coro)) for coro in coros]
+
+
+def _running_loops() -> list[str]:
+    """The loops this process actually runs, for the heartbeat's own report."""
+    names = [
+        "queue",
+        "scheduler",
+        "delivery",
+        "retention",
+        "topics",
+        "sitemap",
+        "insights",
+    ]
+    if DIGEST_ENABLED:
+        names.append("digest")
+    return names
+
+
+async def heartbeat_loop():
+    """Publish one heartbeat per interval (V6-21).
+
+    The key expires after three intervals, so a stopped, crashed or hung worker
+    stops answering without anyone having to clean up after it; the API reads
+    the same key for `worker.heartbeat_missing`/`heartbeat_stale`.
+    """
+    while True:
+        await write_heartbeat(redis_client, loops=_running_loops())
+        await asyncio.sleep(WORKER_HEARTBEAT_INTERVAL_SECONDS)
 
 
 async def worker():
@@ -180,6 +214,10 @@ async def worker():
             await asyncio.sleep(2)
             continue
 
+        # V6-21: a queue that is no longer being drained is the alert; the pop
+        # time is what makes "backlog age" readable from a Redis list.
+        await note_queue_pop(redis_client)
+
         data = json.loads(job)
         job_type = data.get("type")
         # One correlation id per job: its handler's events and any failure share
@@ -198,8 +236,10 @@ async def worker():
                 await handler(data)
             except Exception as e:
                 # The handler owns its claims and rows; this loop does not retry,
-                # so the failure must be visible as one structured event.
+                # so the failure must be visible as one structured event and in
+                # the repeated-failure counter V6-21 alerts on.
                 log_exception("worker.job.failed", e, job_type=job_type)
+                await note_job_failure(redis_client)
 
 
 async def handle_ingest(data):
