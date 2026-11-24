@@ -13,6 +13,7 @@ What is pinned here:
 """
 
 import json
+import time
 import unittest
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
@@ -64,6 +65,40 @@ class _Client:
     async def expire(self, key, ttl):
         self.expires.append((key, ttl))
         return True
+
+    async def mget(self, keys):
+        if self.fail:
+            raise RuntimeError("redis down")
+        return [self.values.get(key) for key in keys]
+
+    def pipeline(self):
+        return _Pipeline(self)
+
+
+class _Pipeline:
+    """The queued subset of `redis.asyncio`'s pipeline the counters use."""
+
+    def __init__(self, client):
+        self.client = client
+        self.ops = []
+
+    def incr(self, key):
+        self.ops.append(("incr", key))
+        return self
+
+    def expire(self, key, ttl):
+        self.ops.append(("expire", key, ttl))
+        return self
+
+    async def execute(self):
+        if self.client.fail:
+            raise RuntimeError("redis down")
+        for op in self.ops:
+            if op[0] == "incr":
+                self.client.values[op[1]] = int(self.client.values.get(op[1], 0)) + 1
+            else:
+                self.client.expires.append((op[1], op[2]))
+        return [True] * len(self.ops)
 
 
 def _snapshot(**overrides):
@@ -300,6 +335,181 @@ class AlertRuleTests(unittest.TestCase):
             self.assertNotIn(forbidden, line)
         self.assertEqual(snapshot["generated_at"], NOW.isoformat())
         self.assertTrue(snapshot["thresholds"])
+
+
+class FleetWindowTests(unittest.TestCase):
+    """V6-23: the 5xx rate is every replica's buckets, not one process."""
+
+    def test_one_response_writes_a_bucket_pair_with_the_window_ttl(self):
+        client = _Client()
+        bucket = int(1000.0 // telemetry.BUCKET_SECONDS)
+        requests_key = f"{telemetry.REQUESTS_BUCKET_PREFIX}{bucket}"
+        errors_key = f"{telemetry.ERRORS_BUCKET_PREFIX}{bucket}"
+
+        self.assertTrue(_shared(client, 500, 1000.0))
+
+        self.assertEqual(client.values[requests_key], 1)
+        self.assertEqual(client.values[errors_key], 1)
+        ttls = dict(client.expires)
+        self.assertEqual(ttls[requests_key], telemetry.BUCKET_TTL_SECONDS)
+        self.assertEqual(ttls[errors_key], telemetry.BUCKET_TTL_SECONDS)
+
+    def test_a_success_never_touches_the_error_bucket(self):
+        client = _Client()
+        bucket = int(1000.0 // telemetry.BUCKET_SECONDS)
+
+        self.assertTrue(_shared(client, 200, 1000.0))
+
+        self.assertEqual(client.values[f"{telemetry.REQUESTS_BUCKET_PREFIX}{bucket}"], 1)
+        self.assertNotIn(f"{telemetry.ERRORS_BUCKET_PREFIX}{bucket}", client.values)
+
+    def test_replicas_add_up_in_one_sum(self):
+        client = _Client()
+        for _ in range(3):
+            _shared(client, 200, 1000.0)
+        _shared(client, 500, 1000.0)
+
+        window = _fleet(client, 1000.0)
+
+        self.assertTrue(window["ok"])
+        self.assertEqual(window["requests"], 4)
+        self.assertEqual(window["errors_5xx"], 1)
+        self.assertAlmostEqual(window["error_rate"], 0.25)
+
+    def test_a_bucket_expires_out_of_the_window(self):
+        client = _Client()
+        _shared(client, 500, 1000.0)
+        inside = 1000.0 + telemetry.API_ERROR_RATE_WINDOW_SECONDS
+        outside = inside + telemetry.BUCKET_SECONDS + 1
+
+        self.assertEqual(_fleet(client, inside)["errors_5xx"], 1)
+        window = _fleet(client, outside)
+
+        self.assertEqual(window["requests"], 0)
+        self.assertEqual(window["errors_5xx"], 0)
+        self.assertEqual(window["error_rate"], 0.0)
+
+    def test_a_write_failure_is_reported_not_raised(self):
+        self.assertFalse(_shared(_Client(fail=True), 500, 1000.0))
+
+    def test_an_unreadable_window_is_missing_data_not_zero(self):
+        window = _fleet(_Client(fail=True), 1000.0)
+
+        self.assertFalse(window["ok"])
+        self.assertIsNone(window["requests"])
+        self.assertIsNone(window["errors_5xx"])
+
+    def test_the_alert_reads_the_fleet_and_labels_it(self):
+        with (
+            patch.object(telemetry, "API_ERROR_RATE_MIN_REQUESTS", 20),
+            patch.object(telemetry, "API_ERROR_RATE_ALERT", 0.02),
+        ):
+            alerts = telemetry.evaluate(
+                _snapshot(
+                    api={
+                        "requests": 100,
+                        "errors_5xx": 50,
+                        "error_rate": 0.5,
+                        "fleet": {
+                            "ok": True,
+                            "requests": 100,
+                            "errors_5xx": 0,
+                            "error_rate": 0.0,
+                        },
+                    }
+                )
+            )
+
+        # One loud instance next to a clean fleet must not page.
+        self.assertEqual(alerts, [])
+
+    def test_a_failed_fleet_read_falls_back_to_the_instance_and_says_so(self):
+        with (
+            patch.object(telemetry, "API_ERROR_RATE_MIN_REQUESTS", 20),
+            patch.object(telemetry, "API_ERROR_RATE_ALERT", 0.02),
+        ):
+            alerts = telemetry.evaluate(
+                _snapshot(
+                    api={
+                        "requests": 100,
+                        "errors_5xx": 5,
+                        "error_rate": 0.05,
+                        "fleet": {"ok": False},
+                    }
+                )
+            )
+
+        self.assertEqual(alerts[0]["code"], "api.error_rate")
+        self.assertEqual(alerts[0]["evidence"]["source"], "instance")
+
+    def test_min_requests_and_severity_apply_to_the_fleet_counts(self):
+        with (
+            patch.object(telemetry, "API_ERROR_RATE_MIN_REQUESTS", 20),
+            patch.object(telemetry, "API_ERROR_RATE_ALERT", 0.02),
+        ):
+
+            def fleet(requests, errors):
+                return {
+                    "ok": True,
+                    "requests": requests,
+                    "errors_5xx": errors,
+                    "error_rate": errors / requests if requests else 0.0,
+                }
+
+            tiny = telemetry.evaluate(_snapshot(api={"fleet": fleet(1, 1)}))
+            at = telemetry.evaluate(_snapshot(api={"fleet": fleet(100, 2)}))
+            double = telemetry.evaluate(_snapshot(api={"fleet": fleet(100, 4)}))
+
+        self.assertEqual(tiny, [])
+        self.assertEqual(at[0]["severity"], "warning")
+        self.assertEqual(at[0]["evidence"]["source"], "fleet")
+        self.assertEqual(double[0]["severity"], "critical")
+
+    def test_the_middleware_writes_the_fleet_buckets(self):
+        client = _Client()
+        app = FastAPI()
+        app.add_middleware(RequestContextMiddleware, shared_client=client)
+
+        @app.get("/boom")
+        async def boom():
+            return JSONResponse({"detail": "boom"}, status_code=500)
+
+        TestClient(app).get("/boom")
+
+        window = _fleet(client, time.time())
+        self.assertTrue(window["ok"])
+        self.assertEqual(window["errors_5xx"], 1)
+
+    def test_the_snapshot_keeps_the_instance_detail_beside_the_fleet(self):
+        snapshot = telemetry.build_snapshot(
+            db_ok=True,
+            redis={
+                "ok": True,
+                "heartbeat_age_seconds": 5.0,
+                "heartbeat_loops": ["queue"],
+                "queue_depth": 0,
+                "queue_age_seconds": None,
+                "job_failures": 0,
+            },
+            api={"requests": 5, "errors_5xx": 1, "error_rate": 0.2},
+            fleet={"ok": True, "requests": 50, "errors_5xx": 1, "error_rate": 0.02},
+            now=NOW,
+        )
+
+        self.assertEqual(snapshot["api"]["requests"], 5)
+        self.assertEqual(snapshot["api"]["fleet"]["requests"], 50)
+
+
+def _shared(client, status_code, now):
+    import asyncio
+
+    return asyncio.run(telemetry.record_request_shared(client, status_code, now=now))
+
+
+def _fleet(client, now):
+    import asyncio
+
+    return asyncio.run(telemetry.fleet_window(client, now=now))
 
 
 def _write(client):
