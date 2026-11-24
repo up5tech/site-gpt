@@ -39,7 +39,7 @@ from site_gpt.app import models
 from site_gpt.app.core import config
 from site_gpt.app.services import retention
 
-logger = logging.getLogger(__name__)
+from site_gpt.app.core.logging import log_event, log_exception
 
 TIMEOUT_SECONDS = 5.0
 
@@ -279,8 +279,11 @@ def targets(db: Session, company_id: UUID, event_type: str) -> list[models.Integ
         if event_type not in events_of(row):
             continue
         if row.type not in PROVIDERS:
-            logger.warning(
-                "integration %s has unknown type %r; skipping", row.id, row.type
+            log_event(
+                "integrations.unknown_provider",
+                level=logging.WARNING,
+                integration_id=str(row.id),
+                provider_type=row.type,
             )
             continue
         selected.append(row)
@@ -396,12 +399,16 @@ async def attempt_delivery(db: Session, delivery: models.IntegrationDelivery) ->
     try:
         result = await provider.send(config_data, delivery.event_type, payload)
     except Exception as exc:
-        logger.warning(
-            "integration %s failed to deliver %s (attempt %s/%s)",
-            provider.type,
-            delivery.event_type,
-            delivery.attempts,
-            MAX_DELIVERY_ATTEMPTS,
+        # No exception text here, deliberately: a provider error can quote the
+        # integration config (D8). The scrubbed message is stored on the row by
+        # `safe_error`; the log carries only what the retry needs.
+        log_event(
+            "integrations.delivery_failed",
+            level=logging.WARNING,
+            provider=provider.type,
+            event_type=delivery.event_type,
+            attempt=delivery.attempts,
+            max_attempts=MAX_DELIVERY_ATTEMPTS,
         )
         return _gave_up(db, delivery, safe_error(exc, config_data, provider.secret_fields))
 
@@ -422,11 +429,11 @@ async def attempt_delivery(db: Session, delivery: models.IntegrationDelivery) ->
     delivery.last_error = None
     delivery.last_status_code = status_code
     db.commit()
-    logger.info(
-        "integration %s delivered %s (%s)",
-        provider.type,
-        delivery.event_type,
-        delivery.last_status_code,
+    log_event(
+        "integrations.delivered",
+        provider=provider.type,
+        event_type=delivery.event_type,
+        status_code=delivery.last_status_code,
     )
     return True
 
@@ -451,8 +458,8 @@ async def emit_event_async(
 
     try:
         rows = targets(db, company_id, event_type)
-    except Exception:
-        logger.exception("integration event %s could not be prepared", event_type)
+    except Exception as exc:
+        log_exception("integrations.prepare_failed", exc, event_type=event_type)
         return 0
 
     queued: list[models.IntegrationDelivery] = []
@@ -466,8 +473,8 @@ async def emit_event_async(
     # event that the retry loop is supposed to protect.
     try:
         db.commit()
-    except Exception:
-        logger.exception("integration event %s could not be queued", event_type)
+    except Exception as exc:
+        log_exception("integrations.queue_failed", exc, event_type=event_type)
         db.rollback()
         return 0
 
@@ -476,10 +483,12 @@ async def emit_event_async(
         try:
             if await attempt_delivery(db, delivery):
                 delivered += 1
-        except Exception:
+        except Exception as exc:
             # attempt_delivery is meant not to raise; if it does, the row is left
             # pending and the worker retries it.
-            logger.exception("integration delivery %s could not be attempted", delivery.id)
+            log_exception(
+                "integrations.attempt_failed", exc, delivery_id=str(delivery.id)
+            )
             db.rollback()
     return delivered
 
@@ -528,8 +537,10 @@ async def process_due_deliveries(db: Session, limit: int = 50) -> dict[str, int]
         try:
             if await attempt_delivery(db, delivery):
                 delivered += 1
-        except Exception:
-            logger.exception("integration delivery %s could not be attempted", delivery.id)
+        except Exception as exc:
+            log_exception(
+                "integrations.attempt_failed", exc, delivery_id=str(delivery.id)
+            )
             db.rollback()
     return {"attempted": attempted, "delivered": delivered}
 
@@ -665,10 +676,10 @@ def purge_deliveries(
 
     if not dry_run:
         if cleared or deleted:
-            logger.info(
-                "delivery retention: cleared %s dead payload(s), deleted %s settled row(s)",
-                cleared,
-                deleted,
+            log_event(
+                "integrations.delivery_retention",
+                cleared_payloads=cleared,
+                deleted=deleted,
             )
     return {
         "retention_days": days,
@@ -756,6 +767,6 @@ def emit_event(
     """
     try:
         _schedule(emit_event_async(db, company_id, event_type, payload))
-    except Exception:
-        logger.exception("integration event %s could not be emitted", event_type)
+    except Exception as exc:
+        log_exception("integrations.emit_failed", exc, event_type=event_type)
     return None

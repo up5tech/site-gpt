@@ -38,7 +38,7 @@ from sqlalchemy.orm import Session
 from site_gpt.app import models
 from site_gpt.app.services import company_settings
 
-logger = logging.getLogger(__name__)
+from site_gpt.app.core.logging import log_event, log_exception
 
 # A policy longer than ten years is a typo, not a policy; clamping keeps a bad
 # row from making the purge a no-op that looks like it ran.
@@ -241,7 +241,12 @@ def _remove_upload_file(file_url: str | None) -> bool:
     root = os.path.normpath(UPLOAD_ROOT)
     path = os.path.normpath(os.path.join(root, file_url))
     if not path.startswith(root + os.sep):
-        logger.warning("refusing to delete a file outside %s/: %s", root, file_url)
+        log_event(
+            "retention.refused_unsafe_key",
+            level=logging.WARNING,
+            root=root,
+            file_url=file_url,
+        )
         return False
     try:
         os.remove(path)
@@ -249,8 +254,10 @@ def _remove_upload_file(file_url: str | None) -> bool:
     except FileNotFoundError:
         return False
     except OSError as exc:
-        # A stuck file must not stop the database purge.
-        logger.warning("could not delete upload %s: %s", path, exc)
+        # A stuck file must not stop the database purge; the next run retries it.
+        log_exception(
+            "retention.file_delete_failed", exc, level=logging.WARNING, path=path
+        )
         return False
 
 
@@ -426,11 +433,11 @@ def purge_company(
         )
 
         if not dry_run:
-            logger.info(
-                "retention purge for company %s: %s (cutoff %s)",
-                company_id,
-                deleted,
-                cutoff.isoformat(),
+            log_event(
+                "retention.purge_completed",
+                company_id=str(company_id),
+                deleted=deleted,
+                cutoff=cutoff.isoformat(),
             )
 
     return {

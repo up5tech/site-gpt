@@ -19,7 +19,6 @@ otherwise the term counts stay the answer. See `_topic_groups`.
 """
 
 import html
-import logging
 import re
 from collections import Counter
 from datetime import UTC, datetime, timedelta
@@ -33,7 +32,7 @@ from site_gpt.app.services import company_settings
 from site_gpt.app.services.integrations import emit_event_async
 from site_gpt.app.services.mail import send_email_async
 
-logger = logging.getLogger(__name__)
+from site_gpt.app.core.logging import log_exception
 
 TOPIC_LIMIT = 10
 UNANSWERED_LIMIT = 10
@@ -473,10 +472,10 @@ async def send_period(
         try:
             await send_email_async(recipient, subject, body)
             sent += 1
-        except Exception:
-            logger.exception(
-                "digest for company %s could not be sent to one recipient",
-                company_id,
+        except Exception as exc:
+            # The recipient address and the digest body stay out of the line.
+            log_exception(
+                "digest.recipient_failed", exc, company_id=str(company_id)
             )
 
     if sent == 0:

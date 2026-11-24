@@ -55,7 +55,7 @@ from site_gpt.app.core.config import (
 from site_gpt.app.services import company_settings, model_settings
 from site_gpt.app.services.llm import get_llm
 
-logger = logging.getLogger(__name__)
+from site_gpt.app.core.logging import log_event, log_exception
 
 # The per-company opt-in flag (api/setting.py's INTERNAL_SETTINGS). Off means
 # nothing is selected, no row is written and no provider call is made.
@@ -320,11 +320,20 @@ def _failed(db: Session, rows: list[models.ConversationInsight], error) -> None:
     for row in rows:
         row.status = "failed"
     db.commit()
-    logger.warning(
-        "insight classification failed for %s conversation(s): %s",
-        len(rows),
-        error,
-    )
+    if isinstance(error, BaseException):
+        log_exception(
+            "insights.classification_failed",
+            error,
+            level=logging.WARNING,
+            conversations=len(rows),
+        )
+    else:
+        log_event(
+            "insights.classification_failed",
+            level=logging.WARNING,
+            conversations=len(rows),
+            error=error,
+        )
 
 
 def _candidates(
@@ -480,13 +489,12 @@ def run_for_company(
             result["completed"] += 1
         db.commit()
 
-    logger.info(
-        "insights for company %s: %s of %s conversation(s) classified, %s failed, "
-        "%s call(s)",
-        company_id,
-        result["completed"],
-        result["claimed"],
-        result["failed"],
-        result["calls"],
+    log_event(
+        "insights.run_summary",
+        company_id=str(company_id),
+        completed=result["completed"],
+        claimed=result["claimed"],
+        failed=result["failed"],
+        calls=result["calls"],
     )
     return result

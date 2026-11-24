@@ -22,7 +22,6 @@ read, unless `BILLING_ENABLED` is true (V5 invariant 5).
 """
 
 import json
-import logging
 from datetime import UTC, datetime
 from typing import Any, Mapping
 from uuid import UUID
@@ -35,7 +34,7 @@ from site_gpt.app import models
 from site_gpt.app.core import config
 from site_gpt.app.services import plan_catalog
 
-logger = logging.getLogger(__name__)
+from site_gpt.app.core.logging import log_event, log_exception
 
 #: Stripe subscription states this mirror accepts. Anything else is ignored
 #: rather than stored, so an unexpected provider value cannot become a made-up
@@ -398,7 +397,9 @@ def process_webhook(
     except IntegrityError:
         # Already receipted: a Stripe retry, a replay or a concurrent delivery.
         db.rollback()
-        logger.info("stripe webhook %s (%s): duplicate", event_type, event_id)
+        log_event(
+            "billing.webhook_duplicate", event_type=event_type, event_id=event_id
+        )
         return "duplicate"
 
     try:
@@ -410,18 +411,19 @@ def process_webhook(
         # be answered as a duplicate and the state change would never happen.
         # The log names the event, its type and the failure only: no payload,
         # customer or card data (V5-33 visibility without the event body).
-        logger.error(
-            "stripe webhook %s (%s) failed to apply (%s: %s); Stripe will retry",
-            event_type,
-            event_id,
-            type(exc).__name__,
-            exc,
+        log_exception(
+            "billing.webhook_apply_failed", exc, event_type=event_type, event_id=event_id
         )
         db.rollback()
         raise
     # `ignored` (unknown customer/company) and `stale` (an older event) are the
     # two silent-looking outcomes an operator needs to see during reconciliation.
-    logger.info("stripe webhook %s (%s): %s", event_type, event_id, outcome)
+    log_event(
+        "billing.webhook_outcome",
+        event_type=event_type,
+        event_id=event_id,
+        outcome=outcome,
+    )
     return outcome
 
 

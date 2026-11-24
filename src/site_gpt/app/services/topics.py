@@ -52,7 +52,7 @@ from site_gpt.app.services import company_settings, digest
 from site_gpt.app.services.ingest import embed_texts
 from site_gpt.app.services.llm import get_llm
 
-logger = logging.getLogger(__name__)
+from site_gpt.app.core.logging import log_event, log_exception
 
 # Upper bound on clusters per window. It also bounds the naming prompt (at most
 # this many groups) and the response validation, so one run cannot ask for an
@@ -404,11 +404,12 @@ def cluster_topics(
     try:
         raw = _request_names(texts, members)
     except Exception as exc:  # a provider outage must not lose the window
-        logger.warning(
-            "topic naming failed for company %s window %s: %s",
-            company_id,
-            start.isoformat(),
+        log_exception(
+            "topics.naming_failed",
             exc,
+            level=logging.WARNING,
+            company_id=str(company_id),
+            period_start=start.isoformat(),
         )
     names = _names(raw, len(members))
 
@@ -458,13 +459,13 @@ def cluster_topics(
 
     if commit:
         db.commit()
-    logger.info(
-        "clustered %s of %s questions into %s clusters for company %s window %s",
-        sampled,
-        eligible,
-        len(stored),
-        company_id,
-        start.isoformat(),
+    log_event(
+        "topics.clustered",
+        sampled=sampled,
+        eligible=eligible,
+        clusters=len(stored),
+        company_id=str(company_id),
+        period_start=start.isoformat(),
     )
     result["clusters"] = stored
     return result
