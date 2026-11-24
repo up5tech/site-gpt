@@ -195,6 +195,11 @@ def validate_billing_config() -> None:
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*")
 
+# V6-22 (D8): level of the structured JSON logs the API and worker emit. The
+# access event is logged at DEBUG for a successful request, so `INFO` keeps only
+# 4xx/5xx plus application events; DEBUG also adds tracebacks to errors.
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").strip().upper()
+
 # Serve /docs, /redoc and /openapi.json. Development keeps them on; production
 # requires this off (D4), and `main.py` passes the flag to FastAPI.
 DOCS_ENABLED = os.getenv("DOCS_ENABLED", "true").strip().lower() in (

@@ -31,6 +31,7 @@ from site_gpt.app.core.config import (
     ensure_production_config,
     validate_billing_config,
 )
+from site_gpt.app.core.logging import RequestContextMiddleware, configure_logging
 from site_gpt.app.services.embed_guard import (
     EmbedTokenRefused,
     embed_token_error_response,
@@ -103,6 +104,12 @@ app.add_exception_handler(EmbedTokenRefused, embed_token_error_response)
 origins = [o.strip() for o in CORS_ORIGINS.split(",") if o.strip()]
 allow_credentials = origins != ["*"]
 
+# V6-22 (D8): one structured JSON line per event and a per-request id that is
+# reused from a well-formed inbound `X-Request-ID` and returned on the response.
+# Added before CORS so it wraps every route, including the streaming ones.
+configure_logging()
+app.add_middleware(RequestContextMiddleware)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -118,7 +125,7 @@ app.add_middleware(
     # The admin Settings page reads this header off /widget.js to build a
     # cache-busting ?v= token for the install snippet; without exposing it the
     # browser hides the value from cross-origin JS.
-    expose_headers=["X-Widget-Version"],
+    expose_headers=["X-Widget-Version", "X-Request-ID"],
 )
 
 app.include_router(router)

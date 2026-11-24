@@ -1,8 +1,8 @@
 import asyncio
 import json
+import logging
 import os
 import time
-import traceback
 from datetime import datetime, timedelta, UTC
 from uuid import UUID
 
@@ -30,6 +30,12 @@ from site_gpt.app.services.integrations import (
     purge_deliveries,
 )
 from site_gpt.app.db.session import SessionLocal
+from site_gpt.app.core.logging import (
+    bind_request_id,
+    configure_logging,
+    log_event,
+    log_exception,
+)
 from site_gpt.app import models
 
 # The stale-row window is defined in services/ingest_claim.py so the API's
@@ -105,11 +111,14 @@ async def requeue_stuck_ingests(
                 await enqueue_job({"type": "ingest", "website_id": website_id})
             except Exception as e:
                 # One Redis hiccup must not skip the remaining recoveries.
-                print(
-                    f"[worker] could not re-queue website {website_id}: {e}"
+                log_exception(
+                    "worker.stuck_ingest.requeue_failed",
+                    e,
+                    level=logging.WARNING,
+                    website_id=website_id,
                 )
                 continue
-            print(f"[worker] recovered stuck ingest for website {website_id}")
+            log_event("worker.stuck_ingest.requeued", website_id=website_id)
         return website_ids
     finally:
         db.close()
@@ -152,12 +161,13 @@ def start_background_loops() -> list[asyncio.Task]:
 
 
 async def worker():
-    print("Worker started, waiting for jobs...")
+    configure_logging()
+    log_event("worker.started")
     # Pick up ingests orphaned by a previous process before consuming jobs.
     try:
         await requeue_stuck_ingests()
     except Exception as e:
-        print(f"[worker] stuck-ingest recovery failed: {e}")
+        log_exception("worker.stuck_ingest.recovery_failed", e)
     # Scheduler loops. `start_background_loops` keeps a strong reference to every
     # task: the event loop holds only weak references, so an unreferenced loop
     # could be garbage-collected mid-run and stop silently.
@@ -166,54 +176,35 @@ async def worker():
         try:
             _, job = await redis_client.brpop("queue:jobs")  # type: ignore
         except Exception as e:
-            print(f"[worker] redis error: {e}")
+            log_exception("worker.queue.read_failed", e)
             await asyncio.sleep(2)
             continue
 
         data = json.loads(job)
-        print("Processing:", data)
-
-        if data.get("type") == "ingest":
+        job_type = data.get("type")
+        # One correlation id per job: its handler's events and any failure share
+        # it, so a support report resolves to one job without guessing by time.
+        with bind_request_id() as job_request_id:
+            log_event("worker.job.received", job_type=job_type)
+            handler = _JOB_HANDLERS.get(str(job_type))
+            if handler is None:
+                log_event(
+                    "worker.job.unknown",
+                    level=logging.WARNING,
+                    job_type=job_type,
+                )
+                continue
             try:
-                await handle_ingest(data)
+                await handler(data)
             except Exception as e:
-                print(f"[worker] ingest failed: {e}")
-                traceback.print_exc()
-        elif data.get("type") == "digest":
-            try:
-                await handle_digest(data)
-            except Exception as e:
-                print(f"[worker] digest failed: {e}")
-                traceback.print_exc()
-        elif data.get("type") == "retention":
-            try:
-                await handle_retention(data)
-            except Exception as e:
-                print(f"[worker] retention purge failed: {e}")
-                traceback.print_exc()
-        elif data.get("type") == "topic_clusters":
-            try:
-                await handle_topic_clusters(data)
-            except Exception as e:
-                print(f"[worker] topic clustering failed: {e}")
-                traceback.print_exc()
-        elif data.get("type") == "sitemap_scan":
-            try:
-                await handle_sitemap_scan(data)
-            except Exception as e:
-                print(f"[worker] sitemap scan failed: {e}")
-                traceback.print_exc()
-        elif data.get("type") == "insights":
-            try:
-                await handle_insights(data)
-            except Exception as e:
-                print(f"[worker] insights failed: {e}")
-                traceback.print_exc()
+                # The handler owns its claims and rows; this loop does not retry,
+                # so the failure must be visible as one structured event.
+                log_exception("worker.job.failed", e, job_type=job_type)
 
 
 async def handle_ingest(data):
     if not data.get("website_id"):
-        print("Missing website_id")
+        log_event("ingest.missing_website_id", level=logging.WARNING)
         return
 
     db = SessionLocal()
@@ -224,13 +215,19 @@ async def handle_ingest(data):
             .first()
         )
         if not website:
-            print("Website not found")
+            log_event(
+                "ingest.website_not_found",
+                level=logging.WARNING,
+                website_id=data.get("website_id"),
+            )
             return
 
         # A disabled website must not be crawled or embedded: it is queued
         # before the owner disables it, or by the refresh scheduler.
         if (website.status or "").strip().lower() != "active":
-            print(f"[worker] skipping ingest for disabled website {website.id}")
+            log_event(
+                "ingest.skipped_disabled_website", website_id=str(website.id)
+            )
             return
 
         website.ingest_status = "processing"
@@ -282,7 +279,11 @@ async def handle_ingest(data):
                 .all()
             )
             for d in stale:
-                print(f"[worker] removing stale document {d.url}")
+                log_event(
+                    "ingest.stale_document_removed",
+                    website_id=str(website.id),
+                    url=d.url,
+                )
                 db.delete(d)
             db.commit()
 
@@ -317,7 +318,14 @@ async def handle_ingest(data):
                     if file_text and file_text.strip():
                         text_parts.append(file_text)
                 except Exception as e:
-                    print(f"[worker] failed to parse attachment {att.filename}: {e}")
+                    # The filename is user text, so only the row ids are logged.
+                    log_exception(
+                        "ingest.attachment_parse_failed",
+                        e,
+                        level=logging.WARNING,
+                        attachment_id=str(att.id),
+                        extra_document_id=str(extra_document.id),
+                    )
 
             combined = "\n\n".join(p for p in text_parts if p and p.strip())
             if combined:
@@ -332,7 +340,7 @@ async def handle_ingest(data):
 
         website.ingest_status = "completed"
         db.commit()
-        print(f"Ingest completed for website {website.id}")
+        log_event("ingest.completed", website_id=str(website.id))
     except Exception as e:
         db.rollback()
         try:
@@ -360,7 +368,7 @@ async def handle_retention(data):
     """
     company_id = data.get("company_id")
     if not company_id:
-        print(f"[retention] incomplete job: {data}")
+        log_event("retention.incomplete_job", level=logging.WARNING, job=data)
         return
 
     db = SessionLocal()
@@ -368,13 +376,16 @@ async def handle_retention(data):
         result = retention.purge_company(
             db, UUID(str(company_id)), dry_run=bool(data.get("dry_run"))
         )
-        print(
-            f"[retention] company {company_id} days={result['retention_days']} "
-            f"dry_run={result['dry_run']} rows={result['deleted']}"
+        log_event(
+            "retention.purged",
+            company_id=company_id,
+            retention_days=result["retention_days"],
+            dry_run=result["dry_run"],
+            rows_deleted=result["deleted"],
         )
     except Exception as e:
         db.rollback()
-        print(f"[retention] company {company_id} failed: {e}")
+        log_exception("retention.failed", e, company_id=company_id)
         raise
     finally:
         db.close()
@@ -404,9 +415,9 @@ async def retention_loop():
         try:
             queued = await enqueue_due_retention()
             if queued:
-                print(f"[worker] retention purge queued for {len(queued)} companies")
+                log_event("retention.queued", companies=len(queued))
         except Exception as e:
-            print(f"[worker] retention enqueue failed: {e}")
+            log_exception("retention.enqueue_failed", e)
 
 
 async def handle_digest(data):
@@ -420,7 +431,7 @@ async def handle_digest(data):
     period_start_raw = data.get("period_start")
     period_end_raw = data.get("period_end")
     if not company_id or not period_start_raw or not period_end_raw:
-        print(f"[digest] incomplete job: {data}")
+        log_event("digest.incomplete_job", level=logging.WARNING, job=data)
         return
 
     db = SessionLocal()
@@ -431,7 +442,15 @@ async def handle_digest(data):
         result = await digest.send_period(
             db, UUID(str(company_id)), period_start, period_end, stale_before
         )
-        print(f"[digest] company {company_id}: {result}")
+        # Only the outcome fields: the digest body and its recipients are not
+        # something a log line may carry.
+        log_event(
+            "digest.period_completed",
+            company_id=company_id,
+            period_start=str(period_start_raw),
+            sent=result.get("sent"),
+            reason=result.get("reason"),
+        )
     finally:
         db.close()
 
@@ -510,7 +529,11 @@ async def enqueue_due_digests(now: datetime | None = None) -> list[str]:
                 }
             )
             queued.append(str(company.id))
-            print(f"[digest] queued company {company.id} for {period_start}")
+            log_event(
+                "digest.queued",
+                company_id=str(company.id),
+                period_start=period_start.isoformat(),
+            )
     finally:
         db.close()
     return queued
@@ -535,9 +558,10 @@ async def enqueue_due_topics(now: datetime | None = None) -> list[str]:
     try:
         recovered = topics.recover_stale_runs(db, stale_before=stale_before)
         for company_id, period_start in recovered:
-            print(
-                f"[topics] recovered stale run for company {company_id} "
-                f"window {period_start}"
+            log_event(
+                "topics.stale_run_recovered",
+                company_id=str(company_id),
+                period_start=str(period_start),
             )
 
         for company in db.query(models.Company).all():
@@ -572,7 +596,11 @@ async def enqueue_due_topics(now: datetime | None = None) -> list[str]:
                 }
             )
             queued.append(str(company.id))
-            print(f"[topics] queued company {company.id} for {period_start}")
+            log_event(
+                "topics.queued",
+                company_id=str(company.id),
+                period_start=period_start.isoformat(),
+            )
     finally:
         db.close()
     return queued
@@ -584,7 +612,7 @@ async def handle_topic_clusters(data):
     period_start_raw = data.get("period_start")
     period_end_raw = data.get("period_end")
     if not company_id or not period_start_raw or not period_end_raw:
-        print(f"[topics] incomplete job: {data}")
+        log_event("topics.incomplete_job", level=logging.WARNING, job=data)
         return
 
     db = SessionLocal()
@@ -596,7 +624,14 @@ async def handle_topic_clusters(data):
             datetime.fromisoformat(str(period_end_raw)),
             stale_before=datetime.now(UTC) - topics.STALE_RUN_AFTER,
         )
-        print(f"[topics] company {company_id}: {result}")
+        # Cluster labels are derived from visitor questions, so the result's
+        # counts are logged and its text is not.
+        log_event(
+            "topics.window_built",
+            company_id=company_id,
+            period_start=str(period_start_raw),
+            status=result.get("status") if isinstance(result, dict) else None,
+        )
     finally:
         db.close()
 
@@ -612,8 +647,7 @@ async def topic_loop():
         try:
             await enqueue_due_topics()
         except Exception as e:
-            print(f"[topics] loop error: {e}")
-            traceback.print_exc()
+            log_exception("topics.loop_failed", e)
 
 
 # -- Sitemap diff scan (V4 F4, D7) -------------------------------------------
@@ -637,7 +671,12 @@ async def sitemap_recently_scanned(website_id) -> bool:
     try:
         return bool(await redis_client.exists(sitemap_scan_key(website_id)))  # type: ignore[attr-defined]
     except Exception as e:  # noqa: BLE001 - one extra scan is harmless
-        print(f"[sitemap] could not read last scan for website {website_id}: {e}")
+        log_exception(
+            "sitemap.last_scan_read_failed",
+            e,
+            level=logging.WARNING,
+            website_id=str(website_id),
+        )
         return False
 
 
@@ -650,7 +689,12 @@ async def mark_sitemap_scanned(website_id) -> None:
             ex=SITEMAP_SCAN_INTERVAL_SECONDS,
         )
     except Exception as e:  # noqa: BLE001 - best-effort, see the block comment
-        print(f"[sitemap] could not record the scan for website {website_id}: {e}")
+        log_exception(
+            "sitemap.mark_failed",
+            e,
+            level=logging.WARNING,
+            website_id=str(website_id),
+        )
 
 
 async def enqueue_due_sitemap_scans() -> list[str]:
@@ -686,11 +730,16 @@ async def enqueue_due_sitemap_scans() -> list[str]:
                     )
                 except Exception as e:
                     # One Redis hiccup must not skip the remaining websites.
-                    print(f"[sitemap] could not queue website {site.id}: {e}")
+                    log_exception(
+                        "sitemap.enqueue_failed",
+                        e,
+                        level=logging.WARNING,
+                        website_id=str(site.id),
+                    )
                     continue
                 await mark_sitemap_scanned(site.id)
                 queued.append(str(site.id))
-                print(f"[sitemap] queued scan for website {site.id}")
+                log_event("sitemap.queued", website_id=str(site.id))
     finally:
         db.close()
     return queued
@@ -709,7 +758,7 @@ async def handle_sitemap_scan(data):
     """
     website_id = data.get("website_id")
     if not website_id:
-        print(f"[sitemap] incomplete job: {data}")
+        log_event("sitemap.incomplete_job", level=logging.WARNING, job=data)
         return
     # The job carries the id as a string; coerce once so the query binds a UUID
     # on every dialect (the digest/topic handlers do the same).
@@ -723,24 +772,27 @@ async def handle_sitemap_scan(data):
             .first()
         )
         if not website:
-            print(f"[sitemap] website {website_id} not found")
+            log_event(
+                "sitemap.website_not_found",
+                level=logging.WARNING,
+                website_id=str(website_id),
+            )
             return
         if (website.status or "").strip().lower() != "active":
-            print(f"[sitemap] skipping scan for disabled website {website.id}")
+            log_event(
+                "sitemap.skipped_disabled_website", website_id=str(website.id)
+            )
             return
         sitemap_url = (website.site_map_url or "").strip()
         if not sitemap_url:
-            print(f"[sitemap] website {website.id} has no sitemap URL")
+            log_event("sitemap.no_sitemap_url", website_id=str(website.id))
             return
 
         # `extract_urls_from_sitemap` swallows fetch/parse errors and returns an
         # empty list, which is exactly the fail-safe input this handler wants.
         urls = extract_urls_from_sitemap(sitemap_url)
         if not urls:
-            print(
-                f"[sitemap] no usable URLs for website {website.id}; "
-                "nothing changed"
-            )
+            log_event("sitemap.nothing_changed", website_id=str(website.id))
             return
 
         added, truncated = add_missing_pages(db, website.id, urls)
@@ -783,13 +835,16 @@ async def handle_sitemap_scan(data):
             await enqueue_job({"type": "ingest", "website_id": str(website.id)})
             queued = True
         elif changed:
-            print(
-                f"[sitemap] website {website.id}: an ingest is already running, "
-                "not queueing a second one"
+            log_event(
+                "sitemap.ingest_already_running", website_id=str(website.id)
             )
-        print(
-            f"[sitemap] website {website.id}: added={added} removed={removed} "
-            f"truncated={truncated} queued={queued}"
+        log_event(
+            "sitemap.diff_applied",
+            website_id=str(website.id),
+            added=added,
+            removed=removed,
+            truncated=truncated,
+            queued=queued,
         )
     finally:
         db.close()
@@ -802,10 +857,9 @@ async def sitemap_loop():
         try:
             queued = await enqueue_due_sitemap_scans()
             if queued:
-                print(f"[sitemap] queued {len(queued)} website scan(s)")
+                log_event("sitemap.scans_queued", websites=len(queued))
         except Exception as e:
-            print(f"[sitemap] loop error: {e}")
-            traceback.print_exc()
+            log_exception("sitemap.loop_failed", e)
 
 
 # -- Conversation insights (V4 F2, D3) ---------------------------------------
@@ -830,7 +884,7 @@ async def enqueue_due_insights() -> list[str]:
                 {"type": "insights", "company_id": str(company.id)}
             )
             queued.append(str(company.id))
-            print(f"[insights] queued company {company.id}")
+            log_event("insights.queued", company_id=str(company.id))
     finally:
         db.close()
     return queued
@@ -845,13 +899,23 @@ async def handle_insights(data):
     """
     company_id = data.get("company_id")
     if not company_id:
-        print(f"[insights] incomplete job: {data}")
+        log_event("insights.incomplete_job", level=logging.WARNING, job=data)
         return
 
     db = SessionLocal()
     try:
         result = insights.run_for_company(db, UUID(str(company_id)))
-        print(f"[insights] company {company_id}: {result}")
+        # Counts only: a summary is derived from the transcript and never logged.
+        log_event(
+            "insights.run_completed",
+            company_id=company_id,
+            status=result.get("status"),
+            eligible=result.get("eligible"),
+            claimed=result.get("claimed"),
+            completed=result.get("completed"),
+            failed=result.get("failed"),
+            calls=result.get("calls"),
+        )
     finally:
         db.close()
 
@@ -868,8 +932,7 @@ async def insight_loop():
         try:
             await enqueue_due_insights()
         except Exception as e:
-            print(f"[insights] loop error: {e}")
-            traceback.print_exc()
+            log_exception("insights.loop_failed", e)
 
 
 async def delivery_loop():
@@ -888,16 +951,26 @@ async def delivery_loop():
         try:
             result = await process_due_deliveries(db)
             if result["attempted"]:
-                print(f"[worker] integration deliveries: {result}")
+                log_event(
+                    "integrations.deliveries_attempted",
+                    attempted=result["attempted"],
+                    delivered=result.get("delivered"),
+                    failed=result.get("failed"),
+                    dead=result.get("dead"),
+                )
             if time.monotonic() >= next_purge:
                 # Delivery rows carry the visitor's contact details; clear a dead
                 # row's payload and drop settled rows past the window.
                 purged = purge_deliveries(db)
                 next_purge = time.monotonic() + DELIVERY_RETENTION_CHECK_SECONDS
                 if purged["cleared_payloads"] or purged["deleted"]:
-                    print(f"[worker] delivery retention: {purged}")
+                    log_event(
+                        "integrations.delivery_retention",
+                        cleared_payloads=purged["cleared_payloads"],
+                        deleted=purged["deleted"],
+                    )
         except Exception as e:
-            print(f"[worker] integration delivery retry failed: {e}")
+            log_exception("integrations.delivery_retry_failed", e)
         finally:
             db.close()
         await asyncio.sleep(DELIVERY_CHECK_SECONDS)
@@ -910,8 +983,7 @@ async def digest_loop():
         try:
             await enqueue_due_digests()
         except Exception as e:
-            print(f"[digest] loop error: {e}")
-            traceback.print_exc()
+            log_exception("digest.loop_failed", e)
 
 
 async def scheduler_loop():
@@ -955,13 +1027,30 @@ async def scheduler_loop():
                     # Never leave a row in `processing` when no job exists.
                     site.ingest_status = "failed"
                     db.commit()
-                    print(f"[scheduler] failed to queue website {site.id}: {e}")
+                    log_exception(
+                        "scheduler.enqueue_failed",
+                        e,
+                        level=logging.WARNING,
+                        website_id=str(site.id),
+                    )
                     continue
-                print(f"[scheduler] queued refresh for website {site.id}")
+                log_event("scheduler.refresh_queued", website_id=str(site.id))
             db.close()
         except Exception as e:
-            print(f"[scheduler] error: {e}")
-            traceback.print_exc()
+            log_exception("scheduler.loop_failed", e)
+
+
+#: The queue's job types. A type missing here is logged and skipped rather than
+#: crashing the loop, and every handler keeps its own delivery/idempotency
+#: semantics (V6-20 owns the queue's ack contract, which this dict does not add).
+_JOB_HANDLERS = {
+    "ingest": handle_ingest,
+    "digest": handle_digest,
+    "retention": handle_retention,
+    "topic_clusters": handle_topic_clusters,
+    "sitemap_scan": handle_sitemap_scan,
+    "insights": handle_insights,
+}
 
 
 if __name__ == "__main__":
