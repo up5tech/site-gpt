@@ -819,5 +819,37 @@ class SafeErrorTests(unittest.TestCase):
         self.assertLessEqual(len(integrations.safe_error(RuntimeError("x" * 900), {}, ())), 500)
 
 
+class DeliveryEventTests(unittest.TestCase):
+    """The failure is one structured event that cannot carry the hook URL."""
+
+    def test_a_provider_failure_is_one_event_without_the_config(self):
+        provider = _Provider(
+            error=RuntimeError("cannot reach https://hooks.example.com/secret-token")
+        )
+        integration = _integration()
+        delivery = _delivery(integration)
+        db = _FakeSession([integration], [delivery])
+
+        with patch.dict(integrations.PROVIDERS, {"webhook": provider}):
+            with self.assertLogs("site_gpt.app", level="WARNING") as captured:
+                asyncio.run(integrations.attempt_delivery(db, delivery))
+
+        record = next(
+            row
+            for row in captured.records
+            if row.getMessage() == "integrations.delivery_failed"
+        )
+        self.assertEqual(record.levelno, 30)
+        self.assertEqual(record.fields["provider"], "webhook")
+        self.assertEqual(record.fields["event_type"], "lead.captured")
+        self.assertEqual(record.fields["attempt"], 1)
+        self.assertEqual(
+            record.fields["max_attempts"], integrations.MAX_DELIVERY_ATTEMPTS
+        )
+        line = json.dumps(record.fields)
+        self.assertNotIn("secret-token", line)
+        self.assertNotIn("lead@example.com", line)
+
+
 if __name__ == "__main__":
     unittest.main()

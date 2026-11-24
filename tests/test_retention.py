@@ -1131,5 +1131,42 @@ class TopicClusterInvalidationTests(unittest.TestCase):
         self.assertEqual(deleted["topic_clusters"], 1)
 
 
+class UploadDeleteEventTests(unittest.TestCase):
+    """A stuck or hostile upload deletion is visible and never raises."""
+
+    def test_a_file_that_cannot_be_deleted_is_logged(self):
+        with patch.object(retention.os, "remove", side_effect=OSError("disk full")):
+            with self.assertLogs("site_gpt.app", level="WARNING") as captured:
+                removed = retention._remove_upload_file("abc123.pdf")
+
+        self.assertFalse(removed)
+        record = next(
+            row
+            for row in captured.records
+            if row.getMessage() == "retention.file_delete_failed"
+        )
+        self.assertEqual(record.fields["path"], os.path.join("uploads", "abc123.pdf"))
+        self.assertEqual(record.fields["error_type"], "OSError")
+        self.assertIn("disk full", record.fields["error_message"])
+
+    def test_a_missing_file_is_not_a_failure(self):
+        # The purge must stay idempotent: a row whose bytes are already gone is
+        # cleaned up, not reported as an error on every run.
+        with patch.object(retention.os, "remove", side_effect=FileNotFoundError):
+            self.assertFalse(retention._remove_upload_file("gone.pdf"))
+
+    def test_a_key_outside_the_upload_root_is_refused(self):
+        with self.assertLogs("site_gpt.app", level="WARNING") as captured:
+            removed = retention._remove_upload_file("../secrets.txt")
+
+        self.assertFalse(removed)
+        record = next(
+            row
+            for row in captured.records
+            if row.getMessage() == "retention.refused_unsafe_key"
+        )
+        self.assertEqual(record.fields["file_url"], "../secrets.txt")
+
+
 if __name__ == "__main__":
     unittest.main()
