@@ -108,7 +108,8 @@ frontend/src/
 alembic/                # DB migrations
 docs/                   # api-v1, billing, platform, release-v5, security
 plans/                  # version plans (V1–V5) and the V2 spec
-scripts/                # gate_v3_4g … gate_v5_5g verification scripts, platform_owner.py
+scripts/                # gate_v3_4g … gate_v5_5g verification scripts, platform_owner.py,
+                        # exercise_platform_disable.py (V6-11)
 tests/                  # unittest suite + node --test checks for widget.js
 uploads/                # uploaded attachment storage
 ```
@@ -157,7 +158,7 @@ npm install && npm run dev   # :5173
 | `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` | — | backend-only Stripe API and webhook signing secrets; required only when billing is explicitly enabled; never use `VITE_*` |
 | `STRIPE_API_VERSION` | `2026-11-18.endive` | explicit Stripe API version used for SDK/webhook requests; review/pin against the installed Stripe SDK before enabling billing |
 | `STRIPE_PRICE_IDS` | *(empty)* | optional legacy private plan-code → Stripe Price ID fallback (`code:interval=price_...` or JSON); the platform catalog's active `PlanPrice.stripe_price_id` wins, and a plan with neither cannot be bought. Never expose it to the frontend |
-| `PLATFORM_CONSOLE_ENABLED` | `false` | V5 operator-console master switch; off makes every `/api/platform/*` path a 404. Keep false until D10 strong auth/private network is approved |
+| `PLATFORM_CONSOLE_ENABLED` | `false` | V5 operator-console master switch; off makes every `/api/platform/*` path a 404. Keep false until D5 approves strong auth/private network — `APP_ENV=production` refuses to boot with it on (V6-11) |
 | `DIGEST_ENABLED` | `false` | global switch for the worker's weekly-digest loop (each company also needs its `digest_enabled` setting) |
 | `DIGEST_CHECK_SECONDS` | `3600` | how often the digest loop looks for companies whose send hour has come |
 | `DELIVERY_CHECK_SECONDS` | `60` | how often the worker retries integration deliveries whose backoff has elapsed |

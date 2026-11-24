@@ -57,7 +57,12 @@ no route that edits or deletes an audit row.
 `PLATFORM_CONSOLE_ENABLED` (env, default `false`) gates the whole surface. Keep
 it false until D10's requirement — approved strong authentication (MFA/SSO)
 **or** a private operator-only network restriction — is approved and in place.
-Neither is approved, which is why the default is off. The `/platform` UI shows
+Neither is approved, which is why the default is off. **V6-11 makes that state
+enforceable:** `APP_ENV=production` refuses to start with
+`PLATFORM_CONSOLE_ENABLED=true` (`core/config.py::production_config_errors`,
+setting name only), and `tests/test_platform_owner.py::ConsoleOffAtTheIngressTests`
+pins that no `Host`, `X-Forwarded-*` or `Origin` header reveals the surface or
+stands in for the owner check. The `/platform` UI shows
 "not enabled" when the API answers 404 and "operator access required" for a
 tenant account.
 
@@ -88,12 +93,35 @@ Failure modes and recovery:
 | All operators locked out | Run the CLI against the deployment database — it is the break-glass path and needs no web session. Restrict DB access to the on-call operator. |
 | Operator account deleted | The grant cascades away; grant another existing user. Audit rows that named the user keep `actor_user_id=NULL` (SET NULL) and any CLI `actor_label`. |
 | Suspected compromise | Revoke immediately; revocation is read on the next request. Review `/api/platform/audit` and the Stripe dashboard. Rotate the JWT secret if tokens may be stolen (deployment config, not this console). |
-| Console accidentally enabled | Set `PLATFORM_CONSOLE_ENABLED=false` and restart; every platform route becomes a 404 again. Grants and audit rows are unaffected. |
+| Console accidentally enabled | In production the API now refuses to boot with the switch on (V6-11), so this is a configuration error rather than an exposure. In development, set `PLATFORM_CONSOLE_ENABLED=false` and restart; every platform route becomes a 404 again. Grants and audit rows are unaffected. |
 
 Strong authentication, session timeout tuning and re-authentication for
 high-impact actions are **not implemented**; the UI's confirmation checkbox and
 the API's `confirm` flag are procedural safeguards, not MFA. Do not expose the
 console publicly until D10 is approved.
+
+### Emergency disable/recovery exercise (V6-11)
+
+`scripts/exercise_platform_disable.py` is the recorded exercise of the D5
+emergency controls. It creates and removes its own throwaway SQLite database and
+needs no Redis, provider or network:
+
+```bash
+uv run python scripts/exercise_platform_disable.py
+```
+
+It checks, in order: `APP_ENV=production` refuses `PLATFORM_CONSOLE_ENABLED=true`;
+the out-of-band CLI grants; with the switch off every `/api/platform` route
+answers the gate's 404 to a granted operator and a tenant admin, and an
+alternate `Host`/`X-Forwarded-Host`/`Origin` changes nothing; with it on the
+operator is allowed and a tenant admin is refused; `scripts/platform_owner.py
+revoke` is refused on the very next request with no restart and `list` reports
+no active operator; re-granting restores access; switching off again takes it
+away and leaves 2 grant rows (1 active) and 3 audit rows. Recorded run:
+**14/14 checks passed**.
+
+It does not replace an ingress control: nothing here is MFA/SSO or a private
+operator network, which is why the switch stays off.
 
 ### Browser verification (2026-11-22)
 

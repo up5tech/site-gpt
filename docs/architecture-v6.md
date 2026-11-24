@@ -44,7 +44,7 @@ flowchart LR
 |---|---|---|
 | API origin | Public | Serves the widget, hosted chat page and tenant API; required from customer sites. |
 | Admin SPA origin | Public (authenticated UI) | No API data is served statically; auth is the JWT bearer flow. |
-| `/api/platform` | Public route, 404 | `PLATFORM_CONSOLE_ENABLED=false` per D5; no operator exposure this launch. |
+| `/api/platform` | Public route, 404 | `PLATFORM_CONSOLE_ENABLED=false` per D5, and `APP_ENV=production` refuses to boot with it on (V6-11), so no operator exposure this launch. |
 | PostgreSQL / Redis / object storage | Private network only | No public listener; credentials in the deployment secret store. |
 | Worker | No ingress | Reached only through Redis and the database. |
 | Stripe webhook | Not present | Track B only; billing off. |
@@ -70,7 +70,7 @@ flowchart LR
 | Risk | Classification | Why | Closing task / expiry |
 |---|---|---|---|
 | R1 secure boot | fix-before-launch | Known JWT fallback and `*` CORS are exploitable defaults | V6-10 |
-| R2 operator security | mitigated by keeping the console off | No MFA/SSO or operator network; console 404 | V6-11; review 2027-02-28 |
+| R2 operator security | mitigated by keeping the console off | No MFA/SSO or operator network; console 404, refused at production boot, host/proxy-independent, disable/recovery exercise recorded | V6-11 (partial: console-off scope only); review 2027-02-28 |
 | R3 unapproved paid launch | mitigated | Track A chosen; billing and console off | V6-6G stays closed |
 | R4 operational ownership | fix-before-launch | Owners/objectives now named; restore and incident rehearsals missing | V6-42/V6-43 |
 | R5 background job loss | fix-before-launch | Destructive `BRPOP`, no ack/visibility timeout | V6-20 (D9 open) |
