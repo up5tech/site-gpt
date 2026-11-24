@@ -35,19 +35,19 @@ An index of the thirteen decisions in this record: each question in a line, the 
 
 | ID | Question | Status | Risk rows | Approver | Role | Date | Evidence path |
 |---|---|---|---|---|---|---|---|
-| **D1** | Which launch track, cohort, regions, data types and registration mode? | **UNAPPROVED** | R3 |  |  |  |  |
-| **D2** | Which hosting/runtime topology, network boundaries and deploy/rollback mechanism? | **UNAPPROVED** | R4, R6, R8 |  |  |  |  |
-| **D3** | Which availability/support promise, SLOs, RPO/RTO and capacity assumptions? | **UNAPPROVED** | R4, R6, R8 |  |  |  |  |
-| **D4** | Which production security profile — secrets/config, proxy trust, CORS, limiter backend, docs exposure? | **UNAPPROVED** | R1 |  |  |  |  |
-| **D5** | Which enforceable control protects platform-owner access, and who owns bootstrap, recovery and revocation? | **UNAPPROVED** | R2, R3 |  |  |  |  |
-| **D6** | Which upload policy for untrusted files — scanning, formats, quarantine, outage behaviour — or restriction/disablement? | **UNAPPROVED** | R9 |  |  |  |  |
-| **D7** | Which retention, audit-retention, backup-expiry and deletion semantics, and which privacy/legal owner? | **UNAPPROVED** | R8, R10 |  |  |  |  |
-| **D8** | Which logs, error tracking, metrics and alerting; what reaches which vendor; redaction, access and retention? | **UNAPPROVED** | R6 |  |  |  |  |
-| **D9** | Which delivery guarantee, duplicate/loss tolerance by job type, retry limits, dead-letter destination and replay? | **UNAPPROVED** | R5 |  |  |  |  |
-| **D10** | Where do the checks run, what blocks a change, how does the browser journey run, how are dependencies reviewed, and what does a passing run authorise? | **UNAPPROVED** | R7 |  |  |  |  |
-| **D11** | Who owns customer support, through which channel, with what coverage, escalation and response expectation? | **UNAPPROVED** | R4 |  |  |  |  |
-| **D12** | Track B only: are V5's commercial answers D2–D9 signed and how, which merchant account receives payment, how the catalog is published, who activates billing, and who owns refunds, disputes, reconciliation and webhook failures? V5 D10–D12 (operator boundary) are not carried. | **UNAPPROVED** | R3 |  |  |  |  |
-| **D13** | Are tenant MFA/SSO, broader admin audit, a session-revocation UI and origin-bound widget auth required or deferred? | **UNAPPROVED** | R10, R11, R12 |  |  |  |  |
+| [**D1**](#appendix--d1-decision-brief) | Which launch track, cohort, regions, data types and registration mode? | **UNAPPROVED** | R3 |  |  |  |  |
+| [**D2**](#appendix--d2-decision-brief) | Which hosting/runtime topology, network boundaries and deploy/rollback mechanism? | **UNAPPROVED** | R4, R6, R8 |  |  |  |  |
+| [**D3**](#appendix--d3-decision-brief) | Which availability/support promise, SLOs, RPO/RTO and capacity assumptions? | **UNAPPROVED** | R4, R6, R8 |  |  |  |  |
+| [**D4**](#appendix--d4-decision-brief) | Which production security profile — secrets/config, proxy trust, CORS, limiter backend, docs exposure? | **UNAPPROVED** | R1 |  |  |  |  |
+| [**D5**](#appendix--d5-decision-brief) | Which enforceable control protects platform-owner access, and who owns bootstrap, recovery and revocation? | **UNAPPROVED** | R2, R3 |  |  |  |  |
+| [**D6**](#appendix--d6-decision-brief) | Which upload policy for untrusted files — scanning, formats, quarantine, outage behaviour — or restriction/disablement? | **UNAPPROVED** | R9 |  |  |  |  |
+| [**D7**](#appendix--d7-decision-brief) | Which retention, audit-retention, backup-expiry and deletion semantics, and which privacy/legal owner? | **UNAPPROVED** | R8, R10 |  |  |  |  |
+| [**D8**](#appendix--d8-decision-brief) | Which logs, error tracking, metrics and alerting; what reaches which vendor; redaction, access and retention? | **UNAPPROVED** | R6 |  |  |  |  |
+| [**D9**](#appendix--d9-decision-brief) | Which delivery guarantee, duplicate/loss tolerance by job type, retry limits, dead-letter destination and replay? | **UNAPPROVED** | R5 |  |  |  |  |
+| [**D10**](#appendix--d10-decision-brief) | Where do the checks run, what blocks a change, how does the browser journey run, how are dependencies reviewed, and what does a passing run authorise? | **UNAPPROVED** | R7 |  |  |  |  |
+| [**D11**](#appendix--d11-decision-brief) | Who owns customer support, through which channel, with what coverage, escalation and response expectation? | **UNAPPROVED** | R4 |  |  |  |  |
+| [**D12**](#appendix--d12-decision-brief) | Track B only: are V5's commercial answers D2–D9 signed and how, which merchant account receives payment, how the catalog is published, who activates billing, and who owns refunds, disputes, reconciliation and webhook failures? V5 D10–D12 (operator boundary) are not carried. | **UNAPPROVED** | R3 |  |  |  |  |
+| [**D13**](#appendix--d13-decision-brief-sessions-and-security-response) | Are tenant MFA/SSO, broader admin audit, a session-revocation UI and origin-bound widget auth required or deferred? | **UNAPPROVED** | R10, R11, R12 |  |  |  |  |
 
 **Signing a row.** Put the approver's name, role and date in the row, put the evidence path or link in the last cell, and change the status cell from **UNAPPROVED** to **APPROVED**. Then copy the same four facts into [`plans/PLAN_V6.md` §4](../plans/PLAN_V6.md#4-pre-flight-decisions-blocking-for-the-affected-tasks) and into the risk rows named in the register, as “How an approval gets recorded” below describes. A row that is PROPOSED or BLOCKED stays unsigned, and no task whose decision is unsigned may start.
 
