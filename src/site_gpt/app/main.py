@@ -25,7 +25,12 @@ from site_gpt.app.api.upload import router as upload_router
 from site_gpt.app.api.user import router as user_router
 from site_gpt.app.api.v1 import router as v1_router
 from site_gpt.app.api.website import router as website_router
-from site_gpt.app.core.config import CORS_ORIGINS, validate_billing_config
+from site_gpt.app.core.config import (
+    CORS_ORIGINS,
+    DOCS_ENABLED,
+    ensure_production_config,
+    validate_billing_config,
+)
 from site_gpt.app.services.embed_guard import (
     EmbedTokenRefused,
     embed_token_error_response,
@@ -59,6 +64,10 @@ TAGS_METADATA = [
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    # V6-10 (D4): a production profile refuses to boot on unsafe or missing
+    # settings and reports setting names only. Development and test return
+    # immediately, so existing local workflows need no production secrets.
+    ensure_production_config()
     # Fail fast only when billing was explicitly enabled. The default/off path
     # remains independent of Stripe credentials and makes no provider calls.
     validate_billing_config()
@@ -71,8 +80,11 @@ app = FastAPI(
     version="2.0.0",
     description=DESCRIPTION,
     openapi_tags=TAGS_METADATA,
-    docs_url="/docs",
-    redoc_url="/redoc",
+    # D4 requires the docs surface hidden in production; DOCS_ENABLED defaults
+    # to true so local development keeps /docs, /redoc and /openapi.json.
+    docs_url="/docs" if DOCS_ENABLED else None,
+    redoc_url="/redoc" if DOCS_ENABLED else None,
+    openapi_url="/openapi.json" if DOCS_ENABLED else None,
 )
 
 # Session-token refusals carry a `reason` code beside the human `detail`, so the

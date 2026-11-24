@@ -1,13 +1,23 @@
 from dotenv import load_dotenv
+import ipaddress
 import os
+from collections.abc import Mapping
+from typing import Any
+from urllib.parse import urlsplit
 
 load_dotenv()
 
 DB_URL = os.getenv("DATABASE_URL")
 
-JWT_SECRET_KEY = os.getenv(
-    "JWT_SECRET_KEY", "your-secret-key-change-this-in-production"
-)
+# Deployment profile (V6-10, D4). "production" turns on the fail-closed
+# validator at the bottom of this module; development and test keep every
+# existing default, so local runs and the suite need no production secrets.
+APP_ENV = os.getenv("APP_ENV", "development").strip().lower()
+
+# The development fallback is deliberately unusable in production: the startup
+# validator refuses it when APP_ENV=production.
+DEV_JWT_SECRET = "your-secret-key-change-this-in-production"
+JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", DEV_JWT_SECRET)
 JWT_ALGORITHM = "HS256"
 
 # Pepper mixed into the SHA-256 of company API keys before they are stored
@@ -185,6 +195,15 @@ def validate_billing_config() -> None:
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*")
 
+# Serve /docs, /redoc and /openapi.json. Development keeps them on; production
+# requires this off (D4), and `main.py` passes the flag to FastAPI.
+DOCS_ENABLED = os.getenv("DOCS_ENABLED", "true").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+
 # Comma-separated IPs/CIDRs of reverse proxies or load balancers whose
 # X-Forwarded-For header may be trusted (e.g. a cloud LB with a public address).
 # Loopback/private peers are trusted automatically; use this only for proxies
@@ -290,3 +309,118 @@ PLATFORM_CONSOLE_ENABLED = os.getenv("PLATFORM_CONSOLE_ENABLED", "false").lower(
     "yes",
     "on",
 )
+
+
+def is_production(env: str | None = None) -> bool:
+    """Whether the given (default: configured) profile is production."""
+    return (APP_ENV if env is None else env.strip().lower()) in {
+        "production",
+        "prod",
+    }
+
+
+def _truthy(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in ("1", "true", "yes", "on")
+
+
+def _explicit_origins(raw: str) -> bool:
+    """True for a non-empty list of exact http(s) origins with no wildcard."""
+    entries = [entry.strip() for entry in raw.split(",") if entry.strip()]
+    if not entries or "*" in entries:
+        return False
+    for entry in entries:
+        parts = urlsplit(entry)
+        if parts.scheme not in {"http", "https"} or not parts.netloc:
+            return False
+        if parts.path not in {"", "/"} or parts.query or parts.fragment:
+            return False
+    return True
+
+
+def _proxy_entries(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, (tuple, list, set)):
+        return [str(entry).strip() for entry in value if str(entry).strip()]
+    return [entry.strip() for entry in str(value).split(",") if entry.strip()]
+
+
+def _valid_proxy_entries(value: Any) -> bool:
+    entries = _proxy_entries(value)
+    if not entries:
+        return False
+    for entry in entries:
+        try:
+            ipaddress.ip_network(entry, strict=False)
+        except ValueError:
+            return False
+    return True
+
+
+def _production_values() -> dict[str, Any]:
+    return {
+        "JWT_SECRET_KEY": JWT_SECRET_KEY,
+        "CORS_ORIGINS": CORS_ORIGINS,
+        "SQL_ECHO": SQL_ECHO,
+        "RATE_LIMIT_BACKEND": RATE_LIMIT_BACKEND,
+        "API_KEY_PEPPER": API_KEY_PEPPER,
+        "INTEGRATION_WEBHOOK_SECRET": INTEGRATION_WEBHOOK_SECRET,
+        "TRUSTED_PROXY_IPS": TRUSTED_PROXY_IPS,
+        "DOCS_ENABLED": DOCS_ENABLED,
+    }
+
+
+def production_config_errors(
+    values: Mapping[str, Any] | None = None,
+) -> list[str]:
+    """Return the *names* of settings that are unsafe in production (D4).
+
+    Names only: no value, prefix or length ever appears in the result, so a
+    failed boot can be pasted into an issue without leaking a secret.
+    """
+    source = _production_values() if values is None else values
+    problems: list[str] = []
+
+    jwt = str(source.get("JWT_SECRET_KEY") or "")
+    if not jwt or jwt == DEV_JWT_SECRET:
+        problems.append("JWT_SECRET_KEY")
+
+    if not _explicit_origins(str(source.get("CORS_ORIGINS") or "")):
+        problems.append("CORS_ORIGINS")
+
+    if "SQL_ECHO" not in source or _truthy(source.get("SQL_ECHO")):
+        problems.append("SQL_ECHO")
+
+    if str(source.get("RATE_LIMIT_BACKEND") or "").strip().lower() != "redis":
+        problems.append("RATE_LIMIT_BACKEND")
+
+    if not str(source.get("API_KEY_PEPPER") or "").strip():
+        problems.append("API_KEY_PEPPER")
+
+    if not str(source.get("INTEGRATION_WEBHOOK_SECRET") or "").strip():
+        problems.append("INTEGRATION_WEBHOOK_SECRET")
+
+    if not _valid_proxy_entries(source.get("TRUSTED_PROXY_IPS")):
+        problems.append("TRUSTED_PROXY_IPS")
+
+    if "DOCS_ENABLED" not in source or _truthy(source.get("DOCS_ENABLED")):
+        problems.append("DOCS_ENABLED")
+
+    return problems
+
+
+def ensure_production_config(
+    env: str | None = None,
+    values: Mapping[str, Any] | None = None,
+) -> None:
+    """Fail closed at startup when APP_ENV=production and settings are unsafe."""
+    if not is_production(env):
+        return
+    problems = production_config_errors(values)
+    if problems:
+        raise RuntimeError(
+            "Unsafe production configuration (APP_ENV=production): "
+            + ", ".join(problems)
+        )
