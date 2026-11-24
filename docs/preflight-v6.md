@@ -2,72 +2,74 @@
 
 | | |
 |---|---|
-| Status | **Draft, and every decision below is UNAPPROVED.** No approver, date or evidence has been recorded for any row. |
+| Status | **v1 — the ten Wave 0/Wave 1 decisions (D1, D2, D3, D4, D5, D6, D7, D8, D11, D13) are APPROVED for Track A (hosted core, billing off) on 2026-11-24 by the repository owner, who is the single approver for every role. D9 and D10 remain UNAPPROVED and gate Wave 2/Wave 3 work. D12 is NOT APPLICABLE because Track B was not chosen.** |
 | Scope | The decisions `plans/PLAN_V6.md` §4 marks as blocking for Wave 0 and Wave 1 — D1/D3/D7/D11 (launch scope, operations, data handling, support) and D2/D4/D5/D6/D8/D13 (topology, security profile, operator authentication, uploads, telemetry, session/embed posture) — plus D9 (background-job delivery) and D10 (CI and browser execution), which block V6-20 in Wave 2 and V6-30/V6-32/V6-33 in Wave 3 and are briefed here because they decide risks R5 and R7, and D12 (Track B commercial and Stripe readiness), briefed because it decides R3 and applies only if Track B is chosen. |
-| Snapshot | `master` at `66dd197`, branch `feat/v6` (2026-11-23), Alembic head `0b22b30bf930`. |
+| Snapshot | `master` at `66dd197`, branch `feat/v6` (2026-11-23), Alembic head `0b22b30bf930`. Decisions recorded 2026-11-24. |
 | Rule | A proposed default, an engineering preference or this document is **not** an approval. An approval exists only when a named approver, a date and the evidence are recorded in the row. |
 
-This record decides nothing. It contains no invented SLO, RPO/RTO, price, region,
-customer commitment or owner: an empty cell is the finding, and those empty cells
-are why gate V6-0G is unsigned and Wave 1 has not started.
+The ten decisions below that block Wave 0 and Wave 1 are now recorded with an
+approver, a date and the answer they choose; their consequences are in
+[Recorded decisions](#recorded-decisions--2026-11-24). D9 and D10 remain open,
+and D12 does not apply while Track A is the launch track.
 
 ## Decisions
 
-| ID | Question | Who must approve | Evidence needed before approval | Status |
+| ID | Question | Approver recorded | Evidence | Status |
 |---|---|---|---|---|
-| [**D1**](#appendix--d1-decision-brief) | Track A (hosted core, billing off), Track B (paid SaaS + operator console), or both? Which customer cohort, regions, data types, and is public registration open or invite-only? | Product/business owner — **not yet named** | A signed scope statement naming the track, cohort, regions, data categories and registration mode, plus whether an empty public plan catalog is acceptable for that launch. | **UNAPPROVED** — no approver recorded. Blocks V6-01/V6-02. |
-| [**D2**](#appendix--d2-decision-brief) | What hosting/runtime topology: API, worker, Postgres/pgvector, Redis, upload storage, frontend/CDN, TLS termination, network boundaries, deploy and rollback mechanism? | Infrastructure/deployment owner with the engineering lead — **not yet named** | A topology description or diagram covering each component and whether it is self-managed or a managed service, the network boundaries, and the deploy/rollback mechanism, accepted by the owner who will operate it. | **UNAPPROVED** — no approver recorded. Blocks V6-02/V6-10/V6-40. |
-| [**D3**](#appendix--d3-decision-brief) | What availability/support promise applies, with which measurable SLOs, database/upload RPO and RTO, capacity assumptions and maintenance window? | Business owner for the promise, operations for the recovery targets — **not yet named** | An approved service statement and recovery objectives expressed as measurable targets, with the assumptions they rest on. Engineering supplies measurements; it does not set these numbers. | **UNAPPROVED** — no approver recorded. Blocks V6-02/V6-21/V6-42. |
-| [**D4**](#appendix--d4-decision-brief) | What is the production security profile: secret/config policy, trusted proxy addresses, exact CORS origins, rate-limit backend, docs exposure, environment separation? | Security owner with engineering — **not yet named** | An inventory of the required settings for the chosen environment, each with its source (secret store, environment, config), approved by the security owner against the actual ingress, not a template. | **UNAPPROVED** — no approver recorded. Blocks V6-02/V6-10. |
-| [**D5**](#appendix--d5-decision-brief) | Which enforceable control protects platform-owner access: MFA/SSO, or a private operator-only network? Who owns bootstrap, recovery and revocation? | Security owner with the operator — **not yet named** | The selected control, proof it is enforced at the ingress (not only in the application), the named bootstrap/recovery/revocation owner, and a recorded exercise of emergency disable. | **UNAPPROVED** — no approver recorded. Blocks V6-02 and any platform-console exposure (V6-11). |
-| [**D6**](#appendix--d6-decision-brief) | What is the upload policy for untrusted files: approved scanner/vendor, supported formats and size limits, quarantine behaviour, scanner-outage behaviour — or is the upload surface restricted/disabled? | Security owner with product owner — **not yet named** | The approved policy for each case (malicious file, unsupported type, scanner unavailable, oversize), or a signed decision to restrict or disable uploads for the launch cohort. | **UNAPPROVED** — no approver recorded. Blocks V6-13. |
-| [**D7**](#appendix--d7-decision-brief) | What data handling applies: retention defaults, audit retention, backup expiry, and deletion/restore semantics for users, companies and backups? | Privacy/legal owner — **not yet named** | The approved retention and deletion rules including how backups are handled, the audit-retention period, and the owner who answers data-subject requests. | **UNAPPROVED** — no approver recorded. Blocks V6-41/V6-42 (and V6-14/V6-15 where they touch retention). |
-| [**D8**](#appendix--d8-decision-brief) | Which logs, error tracking, metrics and alerting are used; what data goes to which vendor; what is redacted; who has access and for how long? | Security/privacy owner with engineering — **not yet named** | The chosen tools (or an explicit decision to defer), the exact data each receives, the redaction rules, and access/retention terms approved by the privacy owner. | **UNAPPROVED** — no approver recorded. Blocks V6-21/V6-22. |
-| [**D9**](#appendix--d9-decision-brief) | What delivery guarantee applies to background jobs, which duplicate/loss cases are acceptable by job type, what retry limit and backoff, and who owns a dead-letter queue and replay? | Infrastructure/deployment owner with the engineering lead — **not yet named** | A per-job-type statement of the guarantee and of the acceptable duplicate/loss case, the retry and terminal-state rule, the dead-letter destination and owner, and where the replay procedure and its idempotency keys are recorded. | **UNAPPROVED** — no approver recorded. Blocks V6-20. |
-| [**D10**](#appendix--d10-decision-brief) | Where do the project's checks run, which of them must pass before a change lands, how is the browser journey executed, how are dependencies reviewed, and what does a passing run authorise? | Engineering lead with the operations owner — **not yet named** | The chosen execution environment and who operates it, the blocking set versus the scheduled set, the browser journey's execution and recorded result, the dependency-review rule with its reader and threshold, and the deploy authority and retained artifacts a passing run carries. | **UNAPPROVED** — no approver recorded. Blocks V6-30/V6-32/V6-33. |
-| [**D11**](#appendix--d11-decision-brief) | Who owns customer support, through which channel, with what coverage window, escalation target and response expectation? | Support owner (business) — **not yet named** | A named owner, contact channel, coverage window, escalation path and response expectation that the owner accepts — no engineering default promoted into a promise. | **UNAPPROVED** — no approver recorded. Blocks V6-02/V6-41. |
-| [**D12**](#appendix--d12-decision-brief) | Track B only: at what granularity V5's commercial answers (D2 catalog and terms, D3 Stripe and merchant readiness, D4 trial/free tier and registration, D5 lifecycle, D6 existing-company rollout, D7 enforcement, D8 legal content, D9 branding) are signed, which merchant account receives payment and who holds its keys, how the approved catalog is published, who may switch live billing on, and who owns refunds, disputes, reconciliation and webhook failures? V5 D10–D12 (operator boundary) are not carried here. | Product/business owner with legal and the merchant-account owner — **not yet named** | The signed catalog and commercial terms as they will be published, the eight signed V5 answers with their approvers, the merchant-account facts (holder, country, key custody, registered webhook) with test-mode access, the publication and activation procedure with its authority and rollback owner, and the named owner for refunds, disputes, reconciliation and webhook failures. | **UNAPPROVED** — no approver recorded. Track B only; blocks V6-51 and gate V6-6G. |
-| [**D13**](#appendix--d13-decision-brief-sessions-and-security-response) | Are tenant MFA/SSO, broader admin audit, a session-revocation UI and origin-bound widget authentication required for this cohort, or explicitly deferred? | Security owner with product owner — **not yet named** | An explicit require/defer decision per item with rationale, affected tasks and — for deferrals — the accepted residual risk and an expiry or review date. | **UNAPPROVED** — no approver recorded. Blocks V6-12/V6-14/V6-15/V6-16. |
+| [**D1**](#appendix--d1-decision-brief) | Track A (hosted core, billing off), Track B (paid SaaS + operator console), or both? Which customer cohort, regions, data types, and is public registration open or invite-only? | Jacky — repository owner, 2026-11-24 | Track A, public registration, Vietnam cohort, approved data categories and empty catalog: [Recorded decision D1](#recorded-decision-d1). | **APPROVED** — blocks V6-01/V6-02, now signed. |
+| [**D2**](#appendix--d2-decision-brief) | What hosting/runtime topology: API, worker, Postgres/pgvector, Redis, upload storage, frontend/CDN, TLS termination, network boundaries, deploy and rollback mechanism? | Jacky — repository owner, 2026-11-24 | Managed containers, managed Postgres/pgvector and Redis, CDN SPA, object-storage target: [Recorded decision D2](#recorded-decision-d2) and [`docs/architecture-v6.md`](architecture-v6.md). | **APPROVED** — blocks V6-02/V6-10/V6-40, now signed. |
+| [**D3**](#appendix--d3-decision-brief) | What availability/support promise applies, with which measurable SLOs, database/upload RPO and RTO, capacity assumptions and maintenance window? | Jacky — repository owner, 2026-11-24 | 99.5% monthly, RPO 24h, RTO 8h, 30-day backups: [Recorded decision D3](#recorded-decision-d3). | **APPROVED** — blocks V6-02/V6-21/V6-42, now signed. |
+| [**D4**](#appendix--d4-decision-brief) | What is the production security profile: secret/config policy, trusted proxy addresses, exact CORS origins, rate-limit backend, docs exposure, environment separation? | Jacky — repository owner, 2026-11-24 | Fail-closed production profile: [Recorded decision D4](#recorded-decision-d4). | **APPROVED** — blocks V6-02/V6-10, now signed. |
+| [**D5**](#appendix--d5-decision-brief) | Which enforceable control protects platform-owner access: MFA/SSO, or a private operator-only network? Who owns bootstrap, recovery and revocation? | Jacky — repository owner, 2026-11-24 | Console stays off; MFA/SSO and operator network deferred to 2027-02-28: [Recorded decision D5](#recorded-decision-d5). | **APPROVED** — blocks V6-02 and V6-11; console exposure still requires a new answer. |
+| [**D6**](#appendix--d6-decision-brief) | What is the upload policy for untrusted files: approved scanner/vendor, supported formats and size limits, quarantine behaviour, scanner-outage behaviour — or is the upload surface restricted/disabled? | Jacky — repository owner, 2026-11-24 | Admin-only, format- and size-limited, no scanner, residual owned to 2027-02-28: [Recorded decision D6](#recorded-decision-d6). | **APPROVED** — blocks V6-13, now signed. |
+| [**D7**](#appendix--d7-decision-brief) | What data handling applies: retention defaults, audit retention, backup expiry, and deletion/restore semantics for users, companies and backups? | Jacky — repository owner, 2026-11-24 | Existing retention default, 30-day backups, 1-year audit, owner named: [Recorded decision D7](#recorded-decision-d7). | **APPROVED** — blocks V6-41/V6-42, now signed. |
+| [**D8**](#appendix--d8-decision-brief) | Which logs, error tracking, metrics and alerting are used; what data goes to which vendor; what is redacted; who has access and for how long? | Jacky — repository owner, 2026-11-24 | Redacted structured logs, `/health`, minimal alerts, no vendor: [Recorded decision D8](#recorded-decision-d8). | **APPROVED** — blocks V6-21/V6-22, now signed. |
+| [**D9**](#appendix--d9-decision-brief) | What delivery guarantee applies to background jobs, which duplicate/loss cases are acceptable by job type, what retry limit and backoff, and who owns a dead-letter queue and replay? | — not yet recorded | A per-job-type guarantee, retry rule, dead-letter owner and replay path. | **UNAPPROVED** — blocks V6-20 (Wave 2). |
+| [**D10**](#appendix--d10-decision-brief) | Where do the project's checks run, which of them must pass before a change lands, how is the browser journey executed, how are dependencies reviewed, and what does a passing run authorise? | — not yet recorded | The CI environment, blocking set, browser runner and dependency-review rule. | **UNAPPROVED** — blocks V6-30/V6-32/V6-33 (Wave 3). |
+| [**D11**](#appendix--d11-decision-brief) | Who owns customer support, through which channel, with what coverage window, escalation target and response expectation? | Jacky — repository owner, 2026-11-24 | Owner, email, weekday coverage and 1-business-day acknowledgement: [Recorded decision D11](#recorded-decision-d11). | **APPROVED** — blocks V6-02/V6-41, now signed. |
+| [**D12**](#appendix--d12-decision-brief) | Track B only: at what granularity V5's commercial answers (D2 catalog and terms, D3 Stripe and merchant readiness, D4 trial/free tier and registration, D5 lifecycle, D6 existing-company rollout, D7 enforcement, D8 legal content, D9 branding) are signed, which merchant account receives payment and who holds its keys, how the approved catalog is published, who may switch live billing on, and who owns refunds, disputes, reconciliation and webhook failures? V5 D10–D12 (operator boundary) are not carried here. | — not applicable | Track B was not chosen; no merchant, catalog or legal answer is required for this launch. | **NOT APPLICABLE** — D1 chose Track A; V6-51 and gate V6-6G stay closed. |
+| [**D13**](#appendix--d13-decision-brief-sessions-and-security-response) | Are tenant MFA/SSO, broader admin audit, a session-revocation UI and origin-bound widget authentication required for this cohort, or explicitly deferred? | Jacky — repository owner, 2026-11-24 | All four deferred to 2027-02-28 with owned residuals: [Recorded decision D13](#recorded-decision-d13). | **APPROVED** — blocks V6-12/V6-14/V6-15/V6-16 as deferrals. |
 
 ## Decision register — one page to sign
 
-An index of the thirteen decisions in this record: each question in a line, the risk rows it moves, and a sign-off slot in the same row. The options, their consequences and the exact evidence an approver must supply are in that row's appendix below; nothing here restates, narrows or recommends them, and an empty sign-off cell is not an approval. D9, D10 and D12 are briefed, but they block V6-20 in Wave 2, V6-30/V6-32/V6-33 in Wave 3 and paid activation (V6-51/gate V6-6G) rather than the Wave 0 gate, and D12 applies only if Track B is chosen.
+An index of the thirteen decisions in this record: each question in a line, the risk rows it moves, and a sign-off slot in the same row. The options, their consequences and the exact evidence an approver must supply are in that row's appendix below; nothing here restates, narrows or recommends them. D9 and D10 are briefed but stay **UNAPPROVED**: they block V6-20 in Wave 2 and V6-30/V6-32/V6-33 in Wave 3 rather than the Wave 0 gate. D12 is **NOT APPLICABLE** because D1 chose Track A, so paid activation (V6-51/gate V6-6G) stays closed.
 
 | ID | Question | Status | Risk rows | Approver | Role | Date | Evidence path |
 |---|---|---|---|---|---|---|---|
-| [**D1**](#appendix--d1-decision-brief) | Which launch track, cohort, regions, data types and registration mode? | **UNAPPROVED** | [R3](risk-register-v6.md#r3) |  |  |  |  |
-| [**D2**](#appendix--d2-decision-brief) | Which hosting/runtime topology, network boundaries and deploy/rollback mechanism? | **UNAPPROVED** | [R4](risk-register-v6.md#r4), [R6](risk-register-v6.md#r6), [R8](risk-register-v6.md#r8) |  |  |  |  |
-| [**D3**](#appendix--d3-decision-brief) | Which availability/support promise, SLOs, RPO/RTO and capacity assumptions? | **UNAPPROVED** | [R4](risk-register-v6.md#r4), [R6](risk-register-v6.md#r6), [R8](risk-register-v6.md#r8) |  |  |  |  |
-| [**D4**](#appendix--d4-decision-brief) | Which production security profile — secrets/config, proxy trust, CORS, limiter backend, docs exposure? | **UNAPPROVED** | [R1](risk-register-v6.md#r1) |  |  |  |  |
-| [**D5**](#appendix--d5-decision-brief) | Which enforceable control protects platform-owner access, and who owns bootstrap, recovery and revocation? | **UNAPPROVED** | [R2](risk-register-v6.md#r2), [R3](risk-register-v6.md#r3) |  |  |  |  |
-| [**D6**](#appendix--d6-decision-brief) | Which upload policy for untrusted files — scanning, formats, quarantine, outage behaviour — or restriction/disablement? | **UNAPPROVED** | [R9](risk-register-v6.md#r9) |  |  |  |  |
-| [**D7**](#appendix--d7-decision-brief) | Which retention, audit-retention, backup-expiry and deletion semantics, and which privacy/legal owner? | **UNAPPROVED** | [R8](risk-register-v6.md#r8), [R10](risk-register-v6.md#r10) |  |  |  |  |
-| [**D8**](#appendix--d8-decision-brief) | Which logs, error tracking, metrics and alerting; what reaches which vendor; redaction, access and retention? | **UNAPPROVED** | [R6](risk-register-v6.md#r6) |  |  |  |  |
+| [**D1**](#appendix--d1-decision-brief) | Which launch track, cohort, regions, data types and registration mode? | **APPROVED** | [R3](risk-register-v6.md#r3) | Jacky | Repository owner, single approver for all roles | 2026-11-24 | [Recorded decision D1](#recorded-decision-d1) |
+| [**D2**](#appendix--d2-decision-brief) | Which hosting/runtime topology, network boundaries and deploy/rollback mechanism? | **APPROVED** | [R4](risk-register-v6.md#r4), [R6](risk-register-v6.md#r6), [R8](risk-register-v6.md#r8) | Jacky | Repository owner, single approver for all roles | 2026-11-24 | [Recorded decision D2](#recorded-decision-d2) |
+| [**D3**](#appendix--d3-decision-brief) | Which availability/support promise, SLOs, RPO/RTO and capacity assumptions? | **APPROVED** | [R4](risk-register-v6.md#r4), [R6](risk-register-v6.md#r6), [R8](risk-register-v6.md#r8) | Jacky | Repository owner, single approver for all roles | 2026-11-24 | [Recorded decision D3](#recorded-decision-d3) |
+| [**D4**](#appendix--d4-decision-brief) | Which production security profile — secrets/config, proxy trust, CORS, limiter backend, docs exposure? | **APPROVED** | [R1](risk-register-v6.md#r1) | Jacky | Repository owner, single approver for all roles | 2026-11-24 | [Recorded decision D4](#recorded-decision-d4) |
+| [**D5**](#appendix--d5-decision-brief) | Which enforceable control protects platform-owner access, and who owns bootstrap, recovery and revocation? | **APPROVED** | [R2](risk-register-v6.md#r2), [R3](risk-register-v6.md#r3) | Jacky | Repository owner, single approver for all roles | 2026-11-24 | [Recorded decision D5](#recorded-decision-d5) |
+| [**D6**](#appendix--d6-decision-brief) | Which upload policy for untrusted files — scanning, formats, quarantine, outage behaviour — or restriction/disablement? | **APPROVED** | [R9](risk-register-v6.md#r9) | Jacky | Repository owner, single approver for all roles | 2026-11-24 | [Recorded decision D6](#recorded-decision-d6) |
+| [**D7**](#appendix--d7-decision-brief) | Which retention, audit-retention, backup-expiry and deletion semantics, and which privacy/legal owner? | **APPROVED** | [R8](risk-register-v6.md#r8), [R10](risk-register-v6.md#r10) | Jacky | Repository owner, single approver for all roles | 2026-11-24 | [Recorded decision D7](#recorded-decision-d7) |
+| [**D8**](#appendix--d8-decision-brief) | Which logs, error tracking, metrics and alerting; what reaches which vendor; redaction, access and retention? | **APPROVED** | [R6](risk-register-v6.md#r6) | Jacky | Repository owner, single approver for all roles | 2026-11-24 | [Recorded decision D8](#recorded-decision-d8) |
 | [**D9**](#appendix--d9-decision-brief) | Which delivery guarantee, duplicate/loss tolerance by job type, retry limits, dead-letter destination and replay? | **UNAPPROVED** | [R5](risk-register-v6.md#r5) |  |  |  |  |
 | [**D10**](#appendix--d10-decision-brief) | Where do the checks run, what blocks a change, how does the browser journey run, how are dependencies reviewed, and what does a passing run authorise? | **UNAPPROVED** | [R7](risk-register-v6.md#r7) |  |  |  |  |
-| [**D11**](#appendix--d11-decision-brief) | Who owns customer support, through which channel, with what coverage, escalation and response expectation? | **UNAPPROVED** | [R4](risk-register-v6.md#r4), [R10](risk-register-v6.md#r10) |  |  |  |  |
-| [**D12**](#appendix--d12-decision-brief) | Track B only: are V5's commercial answers D2–D9 signed and how, which merchant account receives payment, how the catalog is published, who activates billing, and who owns refunds, disputes, reconciliation and webhook failures? V5 D10–D12 (operator boundary) are not carried. | **UNAPPROVED** | [R3](risk-register-v6.md#r3) |  |  |  |  |
-| [**D13**](#appendix--d13-decision-brief-sessions-and-security-response) | Are tenant MFA/SSO, broader admin audit, a session-revocation UI and origin-bound widget auth required or deferred? | **UNAPPROVED** | [R10](risk-register-v6.md#r10), [R11](risk-register-v6.md#r11), [R12](risk-register-v6.md#r12) |  |  |  |  |
+| [**D11**](#appendix--d11-decision-brief) | Who owns customer support, through which channel, with what coverage, escalation and response expectation? | **APPROVED** | [R4](risk-register-v6.md#r4), [R10](risk-register-v6.md#r10) | Jacky | Repository owner, single approver for all roles | 2026-11-24 | [Recorded decision D11](#recorded-decision-d11) |
+| [**D12**](#appendix--d12-decision-brief) | Track B only: are V5's commercial answers D2–D9 signed and how, which merchant account receives payment, how the catalog is published, who activates billing, and who owns refunds, disputes, reconciliation and webhook failures? V5 D10–D12 (operator boundary) are not carried. | **NOT APPLICABLE** | [R3](risk-register-v6.md#r3) | — | — | — | Track A chosen in [Recorded decision D1](#recorded-decision-d1) |
+| [**D13**](#appendix--d13-decision-brief-sessions-and-security-response) | Are tenant MFA/SSO, broader admin audit, a session-revocation UI and origin-bound widget auth required or deferred? | **APPROVED** | [R10](risk-register-v6.md#r10), [R11](risk-register-v6.md#r11), [R12](risk-register-v6.md#r12) | Jacky | Repository owner, single approver for all roles | 2026-11-24 | [Recorded decision D13](#recorded-decision-d13) |
 
 **Signing a row.** Put the approver's name, role and date in the row, put the evidence path or link in the last cell, and change the status cell from **UNAPPROVED** to **APPROVED**. Then copy the same four facts into [`plans/PLAN_V6.md` §4](../plans/PLAN_V6.md#4-pre-flight-decisions-blocking-for-the-affected-tasks) and into the risk rows named in the register, as “How an approval gets recorded” below describes. A row that is PROPOSED or BLOCKED stays unsigned, and no task whose decision is unsigned may start.
 
 ## Status vocabulary
 
-- **UNAPPROVED** — no approver, date or evidence recorded. The state of every row today.
+- **UNAPPROVED** — no approver, date or evidence recorded. D9 and D10 remain in this state for Wave 2 and Wave 3.
 - **PROPOSED** — a candidate exists but no approver has accepted it. Still not an approval, and no dependent task may start.
 - **BLOCKED** — an external party (merchant, legal, vendor, customer) has not supplied what the decision needs.
 - **APPROVED** — approver named, date recorded, evidence linked. Only then may the dependent task start.
 
-## What stays off while these are unapproved
+## What the approved scope keeps off
 
-- Gate V6-0G stays unsigned and Wave 1 does not start: no production-config validator (V6-10), no platform-console work (V6-11), no tenant-identity, session, upload or audit work (V6-12…V6-16).
-- `BILLING_ENABLED=false` and `PLATFORM_CONSOLE_ENABLED=false`; `/api/platform` remains a 404.
-- No production deployment, no release tag, and no SLO, support promise or pricing statement is published.
-- Wave 0's only completed task remains V6-04, whose baseline and gate evidence are recorded in [`plans/PLAN_V6.md`](../plans/PLAN_V6.md).
+- Wave 1 may start (gate V6-0G is signed) but has not started: no production-config validator (V6-10), no platform-console work (V6-11), no tenant-identity, session, upload or audit work (V6-12…V6-16) is implemented by this record.
+- `BILLING_ENABLED=false` and `PLATFORM_CONSOLE_ENABLED=false`; `/api/platform` remains a 404. Track B and D12 are out of scope.
+- Uploads stay disabled for the public launch cohort until V6-13 enforces the admin-only, format- and size-limited policy recorded in D6.
+- No production deployment, no release tag, and no SLO, support promise or pricing statement is published; D3's 99.5%/24h/8h target is an internal operating target until V6-41 approves customer-facing copy.
+- Wave 0's tasks are V6-01…V6-04, all completed; their evidence is in [`plans/PLAN_V6.md`](../plans/PLAN_V6.md) §6 and gate V6-0G.
 
 ## Out of scope of this record
 
-Every decision [`plans/PLAN_V6.md` §4](../plans/PLAN_V6.md#4-pre-flight-decisions-blocking-for-the-affected-tasks) lists now has an appendix here, D12 included. D12 is in scope only if Track B is chosen: while Track A is the launch track it is out of scope, billing stays off and the paid surfaces stay 404. D9 and D10 are briefed here even though they gate Wave 2 and Wave 3 tasks, because R5 and R7 have no other decision to wait on; D12 gates paid activation (V6-51/gate V6-6G), not the Wave 0 gate, and carries only V5's commercial answers D2–D9: V5 D10–D12 are the operator boundary, V6 D5 takes only the console's authentication requirement, and the rest stays open in `plans/PLAN_V5.md` §3.
+Every decision [`plans/PLAN_V6.md` §4](../plans/PLAN_V6.md#4-pre-flight-decisions-blocking-for-the-affected-tasks) lists now has an appendix here, D12 included. D12 is out of scope because Track A is the launch track: billing stays off and the paid surfaces stay 404. D9 and D10 are briefed here even though they gate Wave 2 and Wave 3 tasks, because R5 and R7 have no other decision to wait on; both remain unapproved. D12 gates paid activation (V6-51/gate V6-6G), not the Wave 0 gate, and carries only V5's commercial answers D2–D9: V5 D10–D12 are the operator boundary, V6 D5 takes only the console's authentication requirement, and the rest stays open in `plans/PLAN_V5.md` §3.
 
 ## How an approval gets recorded
 
@@ -75,9 +77,111 @@ Every decision [`plans/PLAN_V6.md` §4](../plans/PLAN_V6.md#4-pre-flight-decisio
 2. The row's status changes from UNAPPROVED to APPROVED, and the same facts are copied into [`plans/PLAN_V6.md` §4](../plans/PLAN_V6.md#4-pre-flight-decisions-blocking-for-the-affected-tasks).
 3. Only then may the dependent task start; a task whose dependency is PROPOSED or BLOCKED stays unticked.
 
+## Recorded decisions — 2026-11-24
+
+Approver for every row below: **Jacky**, repository owner, recorded as the single
+approver for all roles at the owner's direction on 2026-11-24. A single-person
+approval is a real approval for this repository but it is not independent review;
+V6-03's threat-model classification and the risk register record that limitation.
+The launch track is **Track A (hosted core, billing off)**; **D12 is not applicable**;
+**D9 and D10 remain UNAPPROVED** and continue to block V6-20 and V6-30/V6-32/V6-33.
+
+### Recorded decision D1
+
+**Track A — hosted core with `BILLING_ENABLED=false` and `PLATFORM_CONSOLE_ENABLED=false`; public registration stays open; cohort is Vietnam; data categories are public website content, chat transcripts and contact details (name/email); an empty public plan catalog is accepted, so `/pricing` shows its being-finalised state.**
+
+- Approver/date: Jacky, 2026-11-24. Unblocks V6-01 and the scope half of V6-02.
+- Consequences: no Stripe merchant account, no plan/price publication, no trial, refund or billing legal copy, and no D12 answer in this launch. V5's operator/commercial answers stay open.
+- Launch copy may not state a price, guarantee, certification or feature beyond this scope. V6-41 owns the approved public copy.
+- Residual: public registration without tenant MFA or email-verification changes is accepted under D13's deferral until 2027-02-28.
+
+### Recorded decision D2
+
+**Managed containers for the API and the worker (separate deploy units), managed PostgreSQL with pgvector, managed Redis, the built SPA served from a CDN, object storage as the target for uploaded bytes, and TLS terminated at the managed ingress.**
+
+- Approver/date: Jacky, 2026-11-24. Unblocks V6-10's validator target and V6-40's runbook.
+- Consequences: `RATE_LIMIT_BACKEND=redis` is mandatory (more than one instance); `TRUSTED_PROXY_IPS` must list the ingress addresses; `CORS_ORIGINS` lists the exact API/SPA origins; PostgreSQL and Redis are private-network only; the worker has no inbound path; the proxy must not buffer `/api/chat/stream`, `/api/chat/messages/stream` or `/api/inbox/events`.
+- Deploy is a rolling replacement of immutable artifacts with backward-compatible migrations (expand now, contract later); rollback redeploys the previous artifact and fixes the schema forward rather than running `alembic downgrade`, because M11/M12 downgrades discard billing and operator state.
+- **Object storage is not implemented today.** `api/upload.py` writes to a local `uploads/` directory and `services/retention.py` unlinks from it. Enabling uploads therefore requires an object-storage adapter (a V6-40 prerequisite) **and** the D6 admin-only policy; until both exist on the managed containers, uploads stay disabled for the launch cohort.
+- The architecture and threat-model classification this decision feeds is [`docs/architecture-v6.md`](architecture-v6.md).
+
+### Recorded decision D3
+
+**99.5% monthly availability, RPO 24 hours, RTO 8 hours; encrypted daily database backups kept 30 days; upload-volume backups on the same schedule.**
+
+- Approver/date: Jacky, 2026-11-24. Unblocks the objectives V6-21 alerts on and V6-42's restore is measured against.
+- Measurement: availability is measured monthly from an external check on the public API origin and `/health`; it is an internal operating target until V6-41 approves customer-facing wording. No service credits or contractual remedy are created by this decision.
+- No planned-maintenance carve-out is claimed: planned work counts against the 99.5% target until a window policy is approved.
+- Redis state (queue and counters) is treated as rebuildable, not backed up; a restore must reconcile the database with the upload volume per V6-42.
+
+### Recorded decision D4
+
+**Fail-closed production profile: required non-default secrets, exact CORS origins, `SQL_ECHO=false`, the Redis rate-limit backend, API docs hidden, and an explicit trusted-proxy list.**
+
+- Approver/date: Jacky, 2026-11-24. Unblocks V6-10.
+- Required and fatal when the production profile is on: a non-default `JWT_SECRET_KEY`; `API_KEY_PEPPER` when `/api/v1` is exposed; `INTEGRATION_WEBHOOK_SECRET` when integrations are enabled; `CORS_ORIGINS` with no `*`; `RATE_LIMIT_BACKEND=redis`; `TRUSTED_PROXY_IPS` matching the ingress; `SQL_ECHO=false`; `/docs`, `/redoc` and `/openapi.json` disabled; model-provider and mail settings required only on the paths that use them.
+- The validator reports setting **names** only, never values, and development/test defaults stay usable. The environment flag the code does not yet have (`APP_ENV`/equivalent) is added by V6-10.
+- `SESSION_TOKEN_MODE` and `EMBED_TOKEN_MODE` stay `compat` per D13; D4 does not change them.
+
+### Recorded decision D5
+
+**The platform console stays disabled for this launch: `PLATFORM_CONSOLE_ENABLED=false`, no MFA/SSO or operator-only network is implemented, owner Jacky, review by 2027-02-28.**
+
+- Approver/date: Jacky, 2026-11-24. Supplies the operator half of V6-02; V6-11 stays conditional and unstarted.
+- Emergency disable is the flag (it makes `/api/platform` a 404) plus `scripts/platform_owner.py revoke` for a compromised grant. Bootstrap/recovery stays database access through that CLI, as `docs/platform.md` records; whoever holds production database credentials is the real root of this boundary.
+- Reopening the console requires a new approved D5 answer naming an ingress-enforced MFA/SSO or operator-only network and an exercise of it; the UI confirmation checkbox is not authentication.
+- Residual: no operator session re-authentication, no console sign-in audit and no independent review are accepted with the expiry above.
+
+### Recorded decision D6
+
+**Uploads are restricted to tenant administrators, limited to the formats the parsers support (PDF, DOCX, PPTX, TXT/Markdown, HTML) and the existing `MAX_UPLOAD_MB=20` ceiling; no scanner is integrated, and that residual is accepted with an owner and expiry.**
+
+- Approver/date: Jacky, 2026-11-24. Unblocks V6-13; turns R9 into a signed acceptance.
+- Consequences: the four remote-import routes (`/api/uploads/url`, `/youtube`, `/notion`, `/google-drive`) follow the same admin-only rule; unsupported extensions and oversize files are refused; there is no quarantine because there is no scanner, and the "scanner unavailable" case stays out of scope until a scanner is approved.
+- **Not yet implemented:** today any authenticated user may upload and no extension/MIME allowlist exists. Until V6-13 enforces this decision, uploads must stay disabled for the launch cohort.
+- Residual owner Jacky, expiry 2027-02-28, recorded against R9.
+
+### Recorded decision D7
+
+**Keep the application's existing per-company retention policy and its current default; keep encrypted backups 30 days; keep the platform audit trail 1 year; privacy/legal owner is Jacky; erasure and export endpoints remain the data-subject path.**
+
+- Approver/date: Jacky, 2026-11-24. Unblocks V6-41 and the retention side of V6-42.
+- Deletion semantics: user/company erasure and the retention purge remove product rows immediately through the existing services; copies in backups expire with the 30-day backup retention, so a data-subject deletion is complete in the live system at once and in backups within 30 days. Backup expiry is enforced by the backup schedule, not by the application.
+- Audit retention: `platform_audit_logs` is append-only and retained 1 year; no pruning job exists yet, so V6-14/V6-42 must add or document the enforcement.
+- No new retention default is introduced by this decision; the company setting remains authoritative and can only be lowered within its existing validation.
+
+### Recorded decision D8
+
+**Structured, redacted application logs plus the existing `/health` endpoint and a minimal alert set; no observability vendor, no APM and no error-tracking SaaS for this launch.**
+
+- Approver/date: Jacky, 2026-11-24. Unblocks V6-21/V6-22.
+- Alert set: API 5xx rate and API-down; database unreachable; Redis unreachable; worker heartbeat stale and queue age/depth above threshold; repeated job failure. Stripe/webhook alerts apply only on Track B, which is not this launch.
+- Redaction rule: no password, bearer token, API key, integration token, card data, raw webhook body or full transcript in any log line; `SQL_ECHO=false` is part of D4; provider errors keep the existing `safe_error` redaction. Log retention follows a 30-day host default approved here; access is limited to the owner.
+- `/health` keeps its current contract and status codes; liveness/readiness split, if needed, is additive and must not restart a merely degraded process.
+
+### Recorded decision D11
+
+**Support owner Jacky, contact `tdhungit@gmail.com`, coverage Monday–Friday 09:00–17:00 ICT, acknowledgement within 1 business day, no resolution-time commitment.**
+
+- Approver/date: Jacky, 2026-11-24. Supplies the support half of V6-02 and the details V6-41 publishes.
+- Escalation: the owner is the only responder; there is no deputy and no paging rotation, and that single-person residual is accepted with an expiry of 2027-02-28. A service-down report is handled best-effort inside the same window.
+- Channel: email only; no portal and no phone. The published address goes into `platform_settings.support_contact_email` and the same text must appear in the app, footer and privacy notice when V6-41 approves the copy. The address above is a personal mailbox and must be confirmed or replaced before it is published.
+- Support-side data access is not audited (only `platform_audit_logs` records operator mutations); that residual is accepted against R10 until 2027-02-28.
+
+### Recorded decision D13
+
+**Defer all four tenant-side controls to 2027-02-28: tenant MFA/SSO, broader admin audit, a session-revocation UI and origin-bound widget authentication.**
+
+- Approver/date: Jacky, 2026-11-24. Unblocks V6-12/V6-14/V6-15/V6-16 as deferrals.
+- Tenant MFA/SSO: not built; password login plus the 24-hour JWT stays; no login or launch copy may claim a second factor or federated login.
+- Admin audit: only the platform-owner boundary is audited; tenant admin actions (settings, users, API keys, deletions, export/erasure) stay unaudited until V6-14, with the residual accepted.
+- Session revocation: account deactivation and user deletion end access immediately, but there is no way to end one session or revoke a live JWT; `DELETE /api/company/users/{id}` and JWT-secret rotation remain the incident tools.
+- Embed/origin: `SESSION_TOKEN_MODE=compat` and `EMBED_TOKEN_MODE=compat` stay; K18's soft Origin/Referer boundary remains accepted.
+- Residuals R10, R11 and R12 are owned by Jacky with expiry 2027-02-28; a review before that date must either implement a control or record a new deferral.
+
 ## Appendix — D1 decision brief
 
-**Status: D1 remains UNAPPROVED.** This appendix sets out the choice; it does not make it, and it supplies no cohort, region, price or customer commitment.
+**Status: D1 is APPROVED (2026-11-24).** The signed answer is [Recorded decision D1](#recorded-decision-d1): Track A, public registration, Vietnam cohort, empty plan catalog accepted. This appendix keeps the options and evidence as the reasoning behind it.
 
 ### The question
 
@@ -105,11 +209,11 @@ Which launch is being approved — **Track A** (hosted core, billing and platfor
 
 ### What an approval changes
 
-Only [the D1 row](#decision-register--one-page-to-sign) moves from **UNAPPROVED** to **APPROVED**, which unblocks V6-01 and the scope half of V6-02. Gate V6-0G still needs D3, D7, D11 and the architecture decisions, so Wave 1 stays closed.
+Only [the D1 row](#decision-register--one-page-to-sign) moves from **UNAPPROVED** to **APPROVED**, which unblocks V6-01 and the scope half of V6-02. Gate V6-0G was signed on 2026-11-24 together with the other nine decisions, so Wave 1 is unblocked but not started.
 
 ## Appendix — D3 decision brief
 
-**Status: D3 remains UNAPPROVED.** This brief lays out the choices; it names no target, no coverage window, no recovery time and no owner. Every number in a real answer has to come from the approver.
+**Status: D3 is APPROVED (2026-11-24).** The signed target is [Recorded decision D3](#recorded-decision-d3): 99.5% monthly, RPO 24h, RTO 8h, 30-day backups. This brief keeps the options and evidence as the reasoning behind it.
 
 ### The question
 
@@ -166,11 +270,11 @@ For uploads the same three options exist only in weaker forms — snapshot or ob
 
 ### What an approval changes
 
-Only [the D3 row](#decision-register--one-page-to-sign) moves from **UNAPPROVED** to **APPROVED**, which unblocks the objective half of V6-02 and gives V6-21 its alert thresholds and V6-42 its restore targets. Gate V6-0G still needs D1, D7, D11 and the architecture decisions, so Wave 1 stays closed.
+Only [the D3 row](#decision-register--one-page-to-sign) moves from **UNAPPROVED** to **APPROVED**, which unblocks the objective half of V6-02 and gives V6-21 its alert thresholds and V6-42 its restore targets. Gate V6-0G was signed on 2026-11-24; Wave 1 is unblocked but not started.
 
 ## Appendix — D7 decision brief
 
-**Status: D7 remains UNAPPROVED.** This brief lays out the choices; it supplies no retention period, audit period, backup window, deletion promise or owner.
+**Status: D7 is APPROVED (2026-11-24).** The signed answer is [Recorded decision D7](#recorded-decision-d7): existing retention default, 30-day backups, 1-year audit retention, owner named. This brief keeps the options and evidence as the reasoning behind it.
 
 ### The question
 
@@ -240,11 +344,11 @@ What data-handling policy applies: the default retention for a company and its c
 
 ### What an approval changes
 
-Only [the D7 row](#decision-register--one-page-to-sign) moves from **UNAPPROVED** to **APPROVED**, which unblocks V6-41 and the retention side of V6-42, and settles the retention questions inside V6-14 and V6-15. Gate V6-0G still needs D1, D3, D11 and the architecture decisions, so Wave 1 stays closed.
+Only [the D7 row](#decision-register--one-page-to-sign) moves from **UNAPPROVED** to **APPROVED**, which unblocks V6-41 and the retention side of V6-42, and settles the retention questions inside V6-14 and V6-15. Gate V6-0G was signed on 2026-11-24; Wave 1 is unblocked but not started.
 
 ## Appendix — D11 decision brief
 
-**Status: D11 remains UNAPPROVED.** This brief supplies no support owner, channel, coverage window, escalation target, response time or contact address. Every option below is a shape to choose, not a proposal.
+**Status: D11 is APPROVED (2026-11-24).** The signed answer is [Recorded decision D11](#recorded-decision-d11): owner Jacky, email contact, weekday coverage and 1-business-day acknowledgement. This brief keeps the options and evidence as the reasoning behind it.
 
 ### The question
 
@@ -322,11 +426,11 @@ D3 §3 chooses the **shape** of coverage (one named contact / a shared rota / co
 
 ### What an approval changes
 
-Only [the D11 row](#decision-register--one-page-to-sign) moves from **UNAPPROVED** to **APPROVED**, which supplies the support details V6-41 publishes, the support-ownership half of V6-02 and the support-side data-access answer R10 waits on — audited, or an explicit statement that it is not and a signed residual with an expiry. Gate V6-0G still needs D1, D3, D7 and the architecture decisions, so Wave 1 stays closed.
+Only [the D11 row](#decision-register--one-page-to-sign) moves from **UNAPPROVED** to **APPROVED**, which supplies the support details V6-41 publishes, the support-ownership half of V6-02 and the support-side data-access answer R10 waits on — audited, or an explicit statement that it is not and a signed residual with an expiry. Gate V6-0G was signed on 2026-11-24; Wave 1 is unblocked but not started.
 
 ## Appendix — D2 decision brief
 
-**Status: D2 remains UNAPPROVED.** This brief lays out the hosting, network, deploy and rollback choices; it names no provider, region, instance size, hostname, certificate issuer or operator, and it recommends none of the options.
+**Status: D2 is APPROVED (2026-11-24).** The signed answer is [Recorded decision D2](#recorded-decision-d2) and the resulting diagram/runbook is [`docs/architecture-v6.md`](architecture-v6.md). This brief keeps the options and evidence as the reasoning behind it.
 
 ### The question
 
@@ -441,11 +545,11 @@ Whichever shape is chosen, the boundary description has to say which of these is
 
 ### What an approval changes
 
-Only [the D2 row](#decision-register--one-page-to-sign) moves from **UNAPPROVED** to **APPROVED**, which unblocks V6-10 (the validator needs to know which settings are required in this environment) and V6-40 (a deploy/rollback runbook needs a mechanism to describe), and supplies the topology half of V6-02's operating model. Gate V6-0G still needs D1, D3, D7, D11 and the remaining architecture decisions, so Wave 1 stays closed.
+Only [the D2 row](#decision-register--one-page-to-sign) moves from **UNAPPROVED** to **APPROVED**, which unblocks V6-10 (the validator needs to know which settings are required in this environment) and V6-40 (a deploy/rollback runbook needs a mechanism to describe), and supplies the topology half of V6-02's operating model. Gate V6-0G was signed on 2026-11-24; Wave 1 is unblocked but not started.
 
 ## Appendix — D4 decision brief
 
-**Status: D4 remains UNAPPROVED.** This brief lays out the security-profile choices; it supplies no key length, no origin list, no proxy address, no provider, no region and no owner, and it recommends none of the options.
+**Status: D4 is APPROVED (2026-11-24).** The signed profile is [Recorded decision D4](#recorded-decision-d4): fail-closed production validation with exact CORS, required secrets, Redis limiter, hidden docs and trusted proxies. This brief keeps the options and evidence as the reasoning behind it.
 
 ### The question
 
@@ -547,11 +651,11 @@ Which settings a production deployment must have, where each value comes from, a
 
 ### What an approval changes
 
-Only [the D4 row](#decision-register--one-page-to-sign) moves from **UNAPPROVED** to **APPROVED**, which unblocks V6-10 (the production-mode validator needs a signed required-set and a defined failure mode) and supplies the configuration half of V6-02's operating model. Gate V6-0G still needs D1, D2, D3, D7, D11 and the remaining decisions, so Wave 1 stays closed.
+Only [the D4 row](#decision-register--one-page-to-sign) moves from **UNAPPROVED** to **APPROVED**, which unblocks V6-10 (the production-mode validator needs a signed required-set and a defined failure mode) and supplies the configuration half of V6-02's operating model. Gate V6-0G was signed on 2026-11-24; Wave 1 is unblocked but not started.
 
 ## Appendix — D5 decision brief
 
-**Status: D5 remains UNAPPROVED.** This brief lays out the choices for authenticating platform owners; it names no identity provider, no second factor, no network range, no timeout, no bootstrap actor and no owner, and it recommends none of the options.
+**Status: D5 is APPROVED (2026-11-24).** The signed answer is [Recorded decision D5](#recorded-decision-d5): the console stays disabled, with the MFA/operator-network question deferred to 2027-02-28 and an owner named. This brief keeps the options and evidence as the reasoning behind it.
 
 ### The question
 
@@ -644,11 +748,11 @@ Which enforceable control protects the platform-owner boundary — a second fact
 
 ### What an approval changes
 
-Only [the D5 row](#decision-register--one-page-to-sign) moves from **UNAPPROVED** to **APPROVED**, which is the condition for exposing the platform console at all (V6-11) and supplies the operator half of V6-02's ownership model. Gate V6-0G still needs D1, D2, D3, D4, D7, D11 and the remaining decisions, so Wave 1 stays closed; until then `PLATFORM_CONSOLE_ENABLED=false` remains the only operating control.
+Only [the D5 row](#decision-register--one-page-to-sign) moves from **UNAPPROVED** to **APPROVED**, which is the condition for exposing the platform console at all (V6-11) and supplies the operator half of V6-02's ownership model. Gate V6-0G was signed on 2026-11-24 with the console kept disabled, so `PLATFORM_CONSOLE_ENABLED=false` remains the only operating control until a new D5 answer approves an ingress-enforced alternative.
 
 ## Appendix — D6 decision brief
 
-**Status: D6 remains UNAPPROVED.** This brief lays out the upload choices; it names no scanner, vendor, format list, size limit, quarantine period or owner, and it recommends none of the options. The limits quoted below are what the code does today, recorded as evidence, not as a proposal.
+**Status: D6 is APPROVED (2026-11-24).** The signed policy is [Recorded decision D6](#recorded-decision-d6): admin-only uploads, parser-supported formats, the existing 20 MB ceiling, no scanner and an owned residual to 2027-02-28. The limits quoted below are what the code does today, recorded as evidence.
 
 ### The question
 
@@ -735,11 +839,11 @@ Whichever is chosen, the size limit has to be stated per entry point, because th
 
 ### What an approval changes
 
-Only [the D6 row](#decision-register--one-page-to-sign) moves from **UNAPPROVED** to **APPROVED**, which unblocks V6-13 and turns R9 from an unowned P1 into either a mitigated control or a signed acceptance. Gate V6-0G still needs D1, D2, D3, D4, D5, D7, D11 and the remaining decisions, so Wave 1 stays closed; until then uploads keep their current behaviour and R9 keeps its blank owner.
+Only [the D6 row](#decision-register--one-page-to-sign) moves from **UNAPPROVED** to **APPROVED**, which unblocks V6-13 and turns R9 from an unowned P1 into either a mitigated control or a signed acceptance. Gate V6-0G was signed on 2026-11-24; until V6-13 enforces the admin-only policy, uploads must stay disabled for the launch cohort and R9 is carried with an owner and a 2027-02-28 expiry.
 
 ## Appendix — D8 decision brief
 
-**Status: D8 remains UNAPPROVED.** This brief lists the telemetry choices; it names no vendor, no log destination, no retention period, no threshold, no alert route and no owner, and it recommends none of the options. Where it quotes what the code does, that is evidence, not a proposal.
+**Status: D8 is APPROVED (2026-11-24).** The signed answer is [Recorded decision D8](#recorded-decision-d8): redacted structured logs, `/health`, a minimal alert set and no vendor. Where it quotes what the code does, that is evidence.
 
 ### The question
 
@@ -840,11 +944,11 @@ The thresholds themselves are deliberately absent here: they follow from D3's SL
 
 ### What an approval changes
 
-Only [the D8 row](#decision-register--one-page-to-sign) moves from **UNAPPROVED** to **APPROVED**, which unblocks V6-21 and V6-22 and turns R6's "no observability vendor config" into either a named destination or a signed decision to keep telemetry in-house. Gate V6-0G still needs D1, D2, D3, D4, D5, D6, D7, D11 and the remaining decisions, so Wave 1 stays closed; until then the worker keeps printing, the logs keep going wherever the host sends them, and `docs/release-v5.md` row 9 stays pending.
+Only [the D8 row](#decision-register--one-page-to-sign) moves from **UNAPPROVED** to **APPROVED**, which unblocks V6-21 and V6-22 and turns R6's "no observability vendor config" into either a named destination or a signed decision to keep telemetry in-house. Gate V6-0G was signed on 2026-11-24; until V6-21/V6-22 land the worker keeps printing, the logs keep going wherever the host sends them, and `docs/release-v5.md` row 9 stays pending.
 
 ## Appendix — D13 decision brief (sessions and security response)
 
-**Status: D13 remains UNAPPROVED.** This brief covers four separate tenant-side security questions — MFA/SSO, admin audit, session revocation and origin-bound widget auth — and for each one the approver records either **require** (with the scope) or **defer** (with the residual risk and its expiry, per the risk register's vocabulary). It names no identity provider, no second factor, no retention period, no session lifetime, no revocation mechanism vendor and no owner, and it recommends none of the options.
+**Status: D13 is APPROVED (2026-11-24).** The signed answer is [Recorded decision D13](#recorded-decision-d13): all four controls are deferred to 2027-02-28 with owned residuals, and `SESSION_TOKEN_MODE`/`EMBED_TOKEN_MODE` stay `compat`. This brief covers the four questions and keeps their options as the reasoning behind the deferral.
 
 ### The question
 
@@ -932,7 +1036,7 @@ None of these removes the K18 caveat that a public value in a customer's page is
 
 ### What an approval changes
 
-Only [the D13 row](#decision-register--one-page-to-sign) moves from **UNAPPROVED** to **APPROVED** — as four recorded require-or-defer answers, not as one blanket "yes" — which unblocks V6-12, V6-14 and V6-16, settles the embed/session posture V6-15 must follow, and turns R10, R11 and R12 from unnamed residuals into either controls or signed acceptances with an expiry. With D13 recorded, every decision row that V6-01…V6-03 wait on has a brief; gate V6-0G still needs the approvals themselves, so Wave 1 stays closed and no control in this brief is implemented until an approver signs it. Until then sessions stay bearer-only, tenant admin actions stay unaudited, the widget keeps its soft origin check, and `EMBED_TOKEN_MODE`/`SESSION_TOKEN_MODE` stay at `compat`.
+Only [the D13 row](#decision-register--one-page-to-sign) moves from **UNAPPROVED** to **APPROVED** — as four recorded require-or-defer answers, not as one blanket "yes" — which unblocks V6-12, V6-14 and V6-16, settles the embed/session posture V6-15 must follow, and turns R10, R11 and R12 from unnamed residuals into either controls or signed acceptances with an expiry. Gate V6-0G was signed on 2026-11-24 with this deferral, so Wave 1 is unblocked but not started and no control in this brief is implemented. Sessions stay bearer-only, tenant admin actions stay unaudited, the widget keeps its soft origin check, and `EMBED_TOKEN_MODE`/`SESSION_TOKEN_MODE` stay at `compat` until the 2027-02-28 review.
 
 ## Appendix — D9 decision brief
 
@@ -1006,7 +1110,7 @@ What delivery guarantee applies to the jobs on `queue:jobs` — `ingest`, `diges
 
 ### What an approval changes
 
-Only [the D9 row](#decision-register--one-page-to-sign) moves from **UNAPPROVED** to **APPROVED**, which unblocks V6-20 and turns R5 from an unowned P1 into a stated guarantee with a tested recovery path. V6-20 is a Wave 2 task, so this signature does not open Wave 1: gate V6-0G still needs D1, D2, D3, D4, D5, D6, D7, D8, D11 and D13, and V6-20 starts only once V6-0G is signed as well. Until then the queue keeps its at-most-once behaviour and R5 keeps its blank owner.
+Only [the D9 row](#decision-register--one-page-to-sign) moves from **UNAPPROVED** to **APPROVED**, which unblocks V6-20 and turns R5 from an unowned P1 into a stated guarantee with a tested recovery path. V6-20 is a Wave 2 task. Gate V6-0G was signed on 2026-11-24 without D9, so this row still blocks V6-20; until it is signed the queue keeps its at-most-once behaviour and R5 stays open with its owner recorded.
 
 ## Appendix — D10 decision brief
 
@@ -1083,11 +1187,11 @@ The review V6-33 asks for covers vulnerability advisories and licence terms, and
 
 ### What an approval changes
 
-Only [the D10 row](#decision-register--one-page-to-sign) moves from **UNAPPROVED** to **APPROVED**, which unblocks V6-30 and supplies the execution, browser, dependency and artifact rules V6-32 and V6-33 apply, and turns R7 from an unowned P1 into a defined workflow with a recorded result per commit. It opens no wave: V6-30 is a Wave 3 task, and gate V6-0G still needs D1, D2, D3, D4, D5, D6, D7, D8, D11 and D13. Until then the checks stay local, the browser journey stays recorded as blocked and R7 keeps its blank owner.
+Only [the D10 row](#decision-register--one-page-to-sign) moves from **UNAPPROVED** to **APPROVED**, which unblocks V6-30 and supplies the execution, browser, dependency and artifact rules V6-32 and V6-33 apply, and turns R7 from an unowned P1 into a defined workflow with a recorded result per commit. It opens no wave: V6-30 is a Wave 3 task, and gate V6-0G was signed on 2026-11-24 without D10. Until it is signed, the checks stay local, the browser journey stays recorded as blocked and R7 stays open with its owner recorded.
 
 ## Appendix — D12 decision brief
 
-**Status: D12 remains UNAPPROVED.** This brief lays out the choices for putting a price on the product; it applies only if D1 chooses Track B, and it names no price, currency, tier, trial or refund term, merchant country, approver or key holder, and it recommends none of the options. The configuration and document states it quotes are what the checkout does today, recorded in `docs/release-v5.md` and `plans/PLAN_V5.md` §3 as evidence, not as a proposal.
+**Status: D12 is NOT APPLICABLE (2026-11-24).** D1 chose Track A (see [Recorded decision D1](#recorded-decision-d1)), so no catalog, merchant, legal or activation answer is required for this launch; billing and the platform console stay off. This brief is retained for a future Track B decision. The configuration and document states it quotes are what the checkout does today, recorded in `docs/release-v5.md` and `plans/PLAN_V5.md` §3 as evidence.
 
 ### The question
 
