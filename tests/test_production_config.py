@@ -1,4 +1,5 @@
 import unittest
+from unittest import mock
 
 from fastapi.testclient import TestClient
 
@@ -145,15 +146,31 @@ class ProductionConfigTests(unittest.TestCase):
         )
 
     def test_docs_surface_follows_the_flag(self):
-        # The current process is not production, so the defaults keep docs on.
-        self.assertTrue(config.DOCS_ENABLED)
-        self.assertEqual(app.docs_url, "/docs")
-        self.assertEqual(app.redoc_url, "/redoc")
-        self.assertEqual(app.openapi_url, "/openapi.json")
+        # `main.py` reads DOCS_ENABLED when it is imported, so compare the app
+        # against the value this process actually loaded instead of assuming a
+        # developer's .env leaves docs on.
+        self.assertEqual(app.docs_url, "/docs" if config.DOCS_ENABLED else None)
+        self.assertEqual(app.redoc_url, "/redoc" if config.DOCS_ENABLED else None)
+        self.assertEqual(
+            app.openapi_url, "/openapi.json" if config.DOCS_ENABLED else None
+        )
+
+    def test_production_requires_hidden_docs_and_accepts_them(self):
+        self.assertIn(
+            "DOCS_ENABLED",
+            config.production_config_errors(_with(DOCS_ENABLED=True)),
+        )
+        self.assertNotIn(
+            "DOCS_ENABLED",
+            config.production_config_errors(_with(DOCS_ENABLED=False)),
+        )
 
     def test_development_startup_needs_no_production_configuration(self):
-        with TestClient(app):
-            pass
+        # Pin the profile: an APP_ENV=production shell must not turn this
+        # development-path test into a startup failure.
+        with mock.patch.object(config, "APP_ENV", "development"):
+            with TestClient(app):
+                pass
 
 
 if __name__ == "__main__":
