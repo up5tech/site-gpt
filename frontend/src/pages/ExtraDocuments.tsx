@@ -41,6 +41,27 @@ const { Title, Text } = Typography;
 // user can still paste a publicly-shared Drive link (no token needed).
 const DRIVE_CLIENT_ID = import.meta.env.VITE_GOOGLE_DRIVE_CLIENT_ID || '';
 
+// The D6 upload policy, mirroring ALLOWED_UPLOAD_EXTENSIONS in
+// api/upload.py. The picker filter and the pre-upload check both read it, so
+// they cannot drift apart; the API enforces the same list either way.
+const ALLOWED_UPLOAD_EXTENSIONS: readonly string[] = [
+  'pdf',
+  'docx',
+  'pptx',
+  'txt',
+  'text',
+  'md',
+  'markdown',
+  'html',
+  'htm',
+];
+
+const ACCEPT_ATTRIBUTE = ALLOWED_UPLOAD_EXTENSIONS.map((ext) => `.${ext}`).join(
+  ',',
+);
+
+const SUPPORTED_FORMATS = 'PDF, DOCX, PPTX, TXT, MD, HTML';
+
 interface Attachment {
   id: string;
   filename: string;
@@ -398,16 +419,13 @@ export function ExtraDocuments() {
   };
 
   const handleBeforeUpload: UploadProps['beforeUpload'] = async (file) => {
-    // Validate file type
-    const allowedTypes = [
-      'application/pdf',
-      'text/plain',
-      'application/msword',
-      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-      'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-    ];
-    if (!allowedTypes.includes(file.type)) {
-      message.error('Only PDF, TXT, DOC, DOCX, and PPTX files are allowed');
+    // Validate by extension, not MIME type: browsers report .md and .html
+    // with an empty or inconsistent type, and the API's allowlist is
+    // extension-based too.
+    const dot = file.name.lastIndexOf('.');
+    const extension = dot > 0 ? file.name.slice(dot + 1).toLowerCase() : '';
+    if (!ALLOWED_UPLOAD_EXTENSIONS.includes(extension)) {
+      message.error(`Unsupported file type. Allowed: ${ACCEPT_ATTRIBUTE}`);
       return Upload.LIST_IGNORE;
     }
 
@@ -664,7 +682,7 @@ export function ExtraDocuments() {
           <Form.Item label='Attachments'>
             <Space wrap style={{ marginBottom: 8 }}>
               <Upload
-                accept='.pdf,.txt,.doc,.docx,.pptx'
+                accept={ACCEPT_ATTRIBUTE}
                 beforeUpload={handleBeforeUpload}
                 onRemove={onRemove}
                 fileList={fileList.filter((f) => f.source === 'local')}
@@ -724,7 +742,7 @@ export function ExtraDocuments() {
               </Space>
             </div>
             <div style={{ marginTop: 8, fontSize: '12px', color: '#999' }}>
-              Supported formats: PDF, TXT, DOC, DOCX, PPTX
+              Supported formats: {SUPPORTED_FORMATS}
             </div>
           </Form.Item>
         </Form>
