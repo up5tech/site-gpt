@@ -14,8 +14,11 @@ best-effort — persist first, publish after commit, reconcile from DB.
 
 import asyncio
 import json
+import logging
 import queue
 import threading
+
+from site_gpt.app.core.logging import log_exception
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -69,7 +72,9 @@ async def publish_event(channel: str, payload: dict | str) -> bool:
     try:
         await get_client().publish(channel, message)
     except Exception as e:  # noqa: BLE001 - notification must not break the request
-        print(f"[redis] publish to {channel} failed: {e}")
+        log_exception(
+            "redis.publish_failed", e, level=logging.WARNING, channel=channel
+        )
         return False
     return True
 
@@ -104,7 +109,7 @@ async def set_lease(key: str, value: dict, ttl_seconds: int) -> bool:
     try:
         await get_client().set(key, json.dumps(value), ex=ttl_seconds)  # type: ignore[attr-defined]
     except Exception as e:  # noqa: BLE001 - presence is best-effort
-        print(f"[redis] lease {key} failed: {e}")
+        log_exception("redis.lease_failed", e, level=logging.WARNING, key=key)
         return False
     return True
 
@@ -114,7 +119,7 @@ async def renew_lease(key: str, ttl_seconds: int) -> bool:
     try:
         renewed = await get_client().expire(key, ttl_seconds)  # type: ignore[attr-defined]
     except Exception as e:  # noqa: BLE001 - the next tick can retry
-        print(f"[redis] renew {key} failed: {e}")
+        log_exception("redis.renew_failed", e, level=logging.WARNING, key=key)
         return False
     return bool(renewed)
 
@@ -124,7 +129,7 @@ async def delete_lease(key: str) -> bool:
     try:
         await get_client().delete(key)  # type: ignore[attr-defined]
     except Exception as e:  # noqa: BLE001 - the TTL removes it instead
-        print(f"[redis] delete {key} failed: {e}")
+        log_exception("redis.delete_failed", e, level=logging.WARNING, key=key)
         return False
     return True
 
@@ -145,7 +150,7 @@ async def lease_keys(pattern: str) -> list[str]:
         async for key in get_client().scan_iter(match=pattern):  # type: ignore[attr-defined]
             keys.append(key)
     except Exception as e:  # noqa: BLE001 - callers treat [] as "nobody online"
-        print(f"[redis] scan {pattern} failed: {e}")
+        log_exception("redis.scan_failed", e, level=logging.WARNING, pattern=pattern)
         return []
     return keys
 
@@ -178,7 +183,9 @@ def _drain_outbox() -> None:
         try:
             loop.run_until_complete(_publish_queued(channel, payload))
         except Exception as e:  # noqa: BLE001 - callers already committed
-            print(f"[redis] notification on {channel} lost: {e}")
+            log_exception(
+                "redis.notification_lost", e, level=logging.WARNING, channel=channel
+            )
 
 
 def enqueue_publish(channel: str, payload: dict) -> None:
@@ -201,7 +208,7 @@ def enqueue_publish(channel: str, payload: dict) -> None:
                     _outbox_started = True
         _outbox.put((channel, payload))
     except Exception as e:  # noqa: BLE001 - the next poll recovers
-        print(f"[redis] could not queue a notification: {e}")
+        log_exception("redis.notification_queue_failed", e, level=logging.WARNING)
 
 
 async def increment(key: str, ttl_seconds: int | None = None) -> int | None:
@@ -217,6 +224,6 @@ async def increment(key: str, ttl_seconds: int | None = None) -> int | None:
         if used == 1 and ttl_seconds:
             await client.expire(key, ttl_seconds)  # type: ignore[attr-defined]
     except Exception as e:  # noqa: BLE001 - caller falls back
-        print(f"[redis] increment {key} failed: {e}")
+        log_exception("redis.increment_failed", e, level=logging.WARNING, key=key)
         return None
     return int(used)

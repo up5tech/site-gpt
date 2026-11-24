@@ -15,7 +15,10 @@ daily counter so a capped session never spends the website's daily budget.
 """
 
 import json
+import logging
 from datetime import UTC, datetime, timedelta
+
+from site_gpt.app.core.logging import log_event, log_exception
 from uuid import UUID
 
 from site_gpt.app.core.config import (
@@ -56,10 +59,20 @@ def parse_limit(raw: str | None, *, default: int) -> int:
     try:
         value = int(str(raw).strip())
     except (TypeError, ValueError):
-        print(f"[quota] ignoring invalid daily message limit {raw!r}")
+        log_event(
+            "quota.invalid_limit",
+            level=logging.WARNING,
+            setting="daily_message_limit",
+            value=raw,
+        )
         return default
     if value < 0:
-        print(f"[quota] ignoring negative daily message limit {value}")
+        log_event(
+            "quota.invalid_limit",
+            level=logging.WARNING,
+            setting="daily_message_limit",
+            value=value,
+        )
         return default
     return value
 
@@ -89,7 +102,12 @@ async def usage(
     try:
         value = await redis_client.get(quota_key(website_id, moment))  # type: ignore[attr-defined]
     except Exception as e:  # noqa: BLE001 - reporting must not break the request
-        print(f"[quota] could not read usage for website {website_id}: {e}")
+        log_exception(
+            "quota.usage_read_failed",
+            e,
+            level=logging.WARNING,
+            website_id=str(website_id),
+        )
         return None
     try:
         return int(value or 0)
@@ -124,7 +142,12 @@ async def consume_message(
             # between INCR and EXPIRE only leaves an orphan key for a day.
             await redis_client.expire(key, seconds_until_reset(moment))  # type: ignore[attr-defined]
     except Exception as e:  # noqa: BLE001 - any Redis problem must not break chat
-        print(f"[quota] could not count message for website {website_id}: {e}")
+        log_exception(
+            "quota.count_failed",
+            e,
+            level=logging.WARNING,
+            website_id=str(website_id),
+        )
         return True
 
     return int(used) <= limit
@@ -161,7 +184,12 @@ async def consume_session_message(
         await redis_client.expire(key, SESSION_CAP_TTL_SECONDS)  # type: ignore[attr-defined]
     except Exception as e:  # noqa: BLE001 - any Redis problem must not break chat
         # The session id stays out of the log: it is the visitor's identity here.
-        print(f"[quota] could not count session message for website {website_id}: {e}")
+        log_exception(
+            "quota.session_count_failed",
+            e,
+            level=logging.WARNING,
+            website_id=str(website_id),
+        )
         return True
 
     return int(used) <= limit

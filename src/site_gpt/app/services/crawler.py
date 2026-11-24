@@ -1,3 +1,4 @@
+import logging
 from urllib.parse import urljoin
 from uuid import UUID
 from sqlalchemy.orm import Session
@@ -7,6 +8,7 @@ import requests
 from bs4 import BeautifulSoup
 
 from site_gpt.app import models
+from site_gpt.app.core.logging import log_event, log_exception
 from site_gpt.app.services.net_guard import UnsafeUrl, assert_fetchable_url
 
 HEADERS = {
@@ -50,10 +52,12 @@ def crawl_page(url: str) -> tuple[str, str]:
     try:
         response = _safe_get(url)
     except UnsafeUrl as e:
-        print(f"[crawler] refused to fetch {url}: {e}")
+        log_exception(
+            "crawler.refused_fetch", e, level=logging.WARNING, url=url
+        )
         return "", ""
     except Exception as e:
-        print(f"[crawler] failed to fetch {url}: {e}")
+        log_exception("crawler.fetch_failed", e, level=logging.WARNING, url=url)
         return "", ""
 
     html = response.text
@@ -92,12 +96,16 @@ def extract_urls_from_sitemap(
     try:
         resp = _safe_get(sitemap_url)
     except UnsafeUrl as e:
-        print(f"[crawler] refused to fetch sitemap {sitemap_url}: {e}")
+        log_exception(
+            "crawler.sitemap_refused", e, level=logging.WARNING, url=sitemap_url
+        )
         if raise_on_error:
             raise
         return []
     except Exception as e:
-        print(f"[crawler] failed to fetch sitemap {sitemap_url}: {e}")
+        log_exception(
+            "crawler.sitemap_fetch_failed", e, level=logging.WARNING, url=sitemap_url
+        )
         if raise_on_error:
             raise
         return []

@@ -11,6 +11,7 @@ and ``worker.py``) stays completely source-independent. To support a new origin
 ``PROVIDERS`` below — no other code needs to change.
 """
 
+import logging
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -26,6 +27,7 @@ from site_gpt.app.core.config import (
     NOTION_MAX_PAGES,
     YOUTUBE_MAX_VIDEOS,
 )
+from site_gpt.app.core.logging import log_exception
 from site_gpt.app.services.net_guard import UnsafeUrl, assert_fetchable_url
 
 # Redirects are followed manually so every hop can be re-validated: a public
@@ -375,7 +377,12 @@ class YoutubeProvider(SourceProvider):
                     if isinstance(title, str) and title.strip():
                         return title.strip()
         except Exception as e:  # noqa: BLE001 - a missing title must not fail the import
-            print(f"[youtube] could not read the title of {video_id}: {e}")
+            log_exception(
+                "youtube.title_read_failed",
+                e,
+                level=logging.WARNING,
+                video_id=video_id,
+            )
         return f"YouTube video {video_id}"
 
     def _captions(self, video_id: str) -> str:

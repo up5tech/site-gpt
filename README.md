@@ -159,6 +159,7 @@ npm install && npm run dev   # :5173
 | `STRIPE_API_VERSION` | `2026-11-18.endive` | explicit Stripe API version used for SDK/webhook requests; review/pin against the installed Stripe SDK before enabling billing |
 | `STRIPE_PRICE_IDS` | *(empty)* | optional legacy private plan-code → Stripe Price ID fallback (`code:interval=price_...` or JSON); the platform catalog's active `PlanPrice.stripe_price_id` wins, and a plan with neither cannot be bought. Never expose it to the frontend |
 | `PLATFORM_CONSOLE_ENABLED` | `false` | V5 operator-console master switch; off makes every `/api/platform/*` path a 404. Keep false until D5 approves strong auth/private network — `APP_ENV=production` refuses to boot with it on (V6-11) |
+| `LOG_LEVEL` | `INFO` | structured JSON log level (V6-22, D8): one event per line with a redacted field set and a request/job id; the access event is DEBUG for a 2xx, WARNING for a 4xx and ERROR for a 5xx |
 | `DIGEST_ENABLED` | `false` | global switch for the worker's weekly-digest loop (each company also needs its `digest_enabled` setting) |
 | `DIGEST_CHECK_SECONDS` | `3600` | how often the digest loop looks for companies whose send hour has come |
 | `DELIVERY_CHECK_SECONDS` | `60` | how often the worker retries integration deliveries whose backoff has elapsed |

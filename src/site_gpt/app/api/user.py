@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from site_gpt.app import models
 from site_gpt.app.core.auth import get_current_user, hash_password
 from site_gpt.app.core.config import FRONTEND_URL
+from site_gpt.app.core.logging import log_exception
 from site_gpt.app.db.session import get_db
 from site_gpt.app.schemas.user import (
     ForgotPasswordRequest,
@@ -89,7 +90,8 @@ def forgot_password(
                 ),
             )
         except Exception as e:
-            print(f"[mail] failed to send reset email: {e}")
+            # The reset link is a credential; only the failure is logged.
+            log_exception("mail.reset_failed", e)
     return {"status": "success"}
 
 

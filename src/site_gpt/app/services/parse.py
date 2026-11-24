@@ -6,7 +6,10 @@ pyproject.toml; if they are not installed the helper raises a clear error instea
 of failing silently.
 """
 
+import logging
 import os
+
+from site_gpt.app.core.logging import log_exception
 
 TEXT_EXTENSIONS = {
     "txt",
@@ -53,7 +56,7 @@ def extract_text_from_file(path: str, filename: str = "") -> str:
             try:
                 parts.append(page.extract_text() or "")
             except Exception as e:
-                print(f"[parse] pdf page extract error: {e}")
+                log_exception("parse.pdf_page_failed", e, level=logging.WARNING)
         return "\n".join(parts)
 
     # --- Word ---

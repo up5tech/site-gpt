@@ -1,7 +1,6 @@
 import asyncio
 import json
 import logging
-import traceback
 from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import UTC, datetime
 from uuid import UUID
@@ -13,6 +12,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from site_gpt.app import models
 from site_gpt.app.core.config import INBOX_STREAM_HEARTBEAT_SECONDS, RAG_MAX_DISTANCE
+from site_gpt.app.core.logging import log_exception
 from site_gpt.app.services import conversations, model_settings
 from site_gpt.app.services import redis as redis_service
 from site_gpt.app.services.ingest import embed_texts
@@ -594,8 +594,11 @@ async def ask_stream(db: Session, website_id: UUID, session_id: str, question: s
         yield f"data: {json.dumps({'done': True, 'sources': sources, 'message_id': str(saved.id)})}\n\n"
 
     except Exception as exc:
-        # Log the full traceback server-side for diagnostics.
-        logger.error("ask_stream failed: %s\n%s", exc, traceback.format_exc())
+        # V6-22 (D8): the failure is one structured event. The traceback is not
+        # pasted into the message — provider and exception text can carry the
+        # visitor's question or a credential — and `log_exception` adds the type,
+        # category and a scrubbed message.
+        log_exception("rag.stream_failed", exc)
         # Persist whatever we managed to stream so far (best effort).
         if full:
             try:

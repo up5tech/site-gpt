@@ -74,7 +74,7 @@ flowchart LR
 | R3 unapproved paid launch | mitigated | Track A chosen; billing and console off | V6-6G stays closed |
 | R4 operational ownership | fix-before-launch | Owners/objectives now named; restore and incident rehearsals missing | V6-42/V6-43 |
 | R5 background job loss | fix-before-launch | Destructive `BRPOP`, no ack/visibility timeout | V6-20 (D9 open) |
-| R6 health/telemetry | fix-before-launch | `print`-based worker, no alerts, no correlation ids | V6-21/V6-22 |
+| R6 health/telemetry | fix-before-launch | Structured JSON logs with request/job ids and central redaction are in (V6-22); alerts, worker heartbeat and queue visibility are not (V6-21) | V6-21 |
 | R7 regression coverage | fix-before-launch | No CI or browser runner | V6-30/V6-32 (D10 open) |
 | R8 data protection ops | fix-before-launch | Backups/restore and private networking unverified | V6-42 |
 | R9 uploads unscanned | accept-with-owner-and-expiry | Admin-only, format/size limited, no scanner | 2027-02-28 |

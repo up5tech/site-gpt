@@ -1,3 +1,4 @@
+import logging
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -6,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from site_gpt.app import models
 from site_gpt.app.core.auth import get_admin_user, get_current_user, get_manager_user
+from site_gpt.app.core.logging import log_exception
 from site_gpt.app.db.session import get_db
 from site_gpt.app.models import Website
 from site_gpt.app.schemas.app import DashboardStats, PaginatedResponse
@@ -463,7 +465,12 @@ def load_website_site_map(
     try:
         urls = extract_urls_from_sitemap(website.site_map_url, raise_on_error=True)
     except UnsafeUrl as e:
-        print(f"[sitemap] refused {website.site_map_url}: {e}")
+        log_exception(
+            "sitemap.refused_unsafe_url",
+            e,
+            level=logging.WARNING,
+            url=website.site_map_url,
+        )
         raise HTTPException(
             status_code=400,
             detail=(
@@ -473,7 +480,12 @@ def load_website_site_map(
         )
     except Exception as e:
         # Network, HTTP status or parse failure from the crawler.
-        print(f"[sitemap] could not read {website.site_map_url}: {e}")
+        log_exception(
+            "sitemap.fetch_failed",
+            e,
+            level=logging.WARNING,
+            url=website.site_map_url,
+        )
         raise HTTPException(
             status_code=400,
             detail=(
@@ -489,7 +501,9 @@ def load_website_site_map(
         raise
     except Exception as e:
         db.rollback()
-        print(f"[sitemap] could not save pages for website {website_id}: {e}")
+        log_exception(
+            "sitemap.save_failed", e, website_id=str(website_id)
+        )
         raise HTTPException(
             status_code=500,
             detail="Could not save the sitemap pages. Please try again.",
