@@ -45,7 +45,7 @@ An index of the thirteen decisions in this record: each question in a line, the 
 | [**D8**](#appendix--d8-decision-brief) | Which logs, error tracking, metrics and alerting; what reaches which vendor; redaction, access and retention? | **UNAPPROVED** | [R6](risk-register-v6.md#r6) |  |  |  |  |
 | [**D9**](#appendix--d9-decision-brief) | Which delivery guarantee, duplicate/loss tolerance by job type, retry limits, dead-letter destination and replay? | **UNAPPROVED** | [R5](risk-register-v6.md#r5) |  |  |  |  |
 | [**D10**](#appendix--d10-decision-brief) | Where do the checks run, what blocks a change, how does the browser journey run, how are dependencies reviewed, and what does a passing run authorise? | **UNAPPROVED** | [R7](risk-register-v6.md#r7) |  |  |  |  |
-| [**D11**](#appendix--d11-decision-brief) | Who owns customer support, through which channel, with what coverage, escalation and response expectation? | **UNAPPROVED** | [R4](risk-register-v6.md#r4) |  |  |  |  |
+| [**D11**](#appendix--d11-decision-brief) | Who owns customer support, through which channel, with what coverage, escalation and response expectation? | **UNAPPROVED** | [R4](risk-register-v6.md#r4), [R10](risk-register-v6.md#r10) |  |  |  |  |
 | [**D12**](#appendix--d12-decision-brief) | Track B only: are V5's commercial answers D2–D9 signed and how, which merchant account receives payment, how the catalog is published, who activates billing, and who owns refunds, disputes, reconciliation and webhook failures? V5 D10–D12 (operator boundary) are not carried. | **UNAPPROVED** | [R3](risk-register-v6.md#r3) |  |  |  |  |
 | [**D13**](#appendix--d13-decision-brief-sessions-and-security-response) | Are tenant MFA/SSO, broader admin audit, a session-revocation UI and origin-bound widget auth required or deferred? | **UNAPPROVED** | [R10](risk-register-v6.md#r10), [R11](risk-register-v6.md#r11), [R12](risk-register-v6.md#r12) |  |  |  |  |
 
@@ -318,11 +318,11 @@ D3 §3 chooses the **shape** of coverage (one named contact / a shared rota / co
 6. The support-side data access: which staff or vendor may read which tenant data, through which tool, and how that access is audited — or the explicit statement that it is not audited and the residual accepted against R10.
 7. The exact published text for the marketing footer, the app and the privacy notice, containing no promise the owner has not accepted.
 8. The value to set in `platform_settings.support_contact_email`, and the person who maintains it; until it is set the footer correctly shows no address.
-9. The approver's role, date and evidence path — recorded in [the D11 row](#decision-register--one-page-to-sign), copied into [`plans/PLAN_V6.md` §4](../plans/PLAN_V6.md#4-pre-flight-decisions-blocking-for-the-affected-tasks) and into [risk R4](risk-register-v6.md#r4) (named support and incident ownership) of `docs/risk-register-v6.md`.
+9. The approver's role, date and evidence path — recorded in [the D11 row](#decision-register--one-page-to-sign), copied into [`plans/PLAN_V6.md` §4](../plans/PLAN_V6.md#4-pre-flight-decisions-blocking-for-the-affected-tasks) and into [risk R4](risk-register-v6.md#r4) (named support and incident ownership) and [risk R10](risk-register-v6.md#r10) (the support-side data-access residual) of `docs/risk-register-v6.md`.
 
 ### What an approval changes
 
-Only [the D11 row](#decision-register--one-page-to-sign) moves from **UNAPPROVED** to **APPROVED**, which supplies the support details V6-41 publishes and the support-ownership half of V6-02. Gate V6-0G still needs D1, D3, D7 and the architecture decisions, so Wave 1 stays closed.
+Only [the D11 row](#decision-register--one-page-to-sign) moves from **UNAPPROVED** to **APPROVED**, which supplies the support details V6-41 publishes, the support-ownership half of V6-02 and the support-side data-access answer R10 waits on — audited, or an explicit statement that it is not and a signed residual with an expiry. Gate V6-0G still needs D1, D3, D7 and the architecture decisions, so Wave 1 stays closed.
 
 ## Appendix — D2 decision brief
 
