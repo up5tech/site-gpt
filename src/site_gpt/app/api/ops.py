@@ -77,9 +77,12 @@ async def ops_status(
     if not x_ops_token or not hmac.compare_digest(x_ops_token, OPS_STATUS_TOKEN):
         raise HTTPException(status_code=401, detail="invalid ops token")
 
+    client = get_client()
     snapshot = telemetry.build_snapshot(
         db_ok=_db_answers(db),
-        redis=await telemetry.redis_snapshot(get_client()),
+        redis=await telemetry.redis_snapshot(client),
+        # V6-23: the sum every replica writes, beside this instance's window.
+        fleet=await telemetry.fleet_window(client),
     )
     # Operator data, never cached by a proxy or the browser.
     response.headers["Cache-Control"] = "no-store"

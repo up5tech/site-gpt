@@ -39,6 +39,7 @@ from site_gpt.app.core.logging import (
     configure_logging,
     log_event,
 )
+from site_gpt.app.services.redis import get_client
 from site_gpt.app.services.embed_guard import (
     EmbedTokenRefused,
     embed_token_error_response,
@@ -124,7 +125,9 @@ allow_credentials = origins != ["*"]
 # reused from a well-formed inbound `X-Request-ID` and returned on the response.
 # Added before CORS so it wraps every route, including the streaming ones.
 configure_logging()
-app.add_middleware(RequestContextMiddleware)
+# V6-23: the middleware writes the fleet-wide 5xx buckets through this client,
+# beside the in-process window, so `api.error_rate` is the replicas' rate.
+app.add_middleware(RequestContextMiddleware, shared_client=get_client())
 
 app.add_middleware(
     CORSMiddleware,

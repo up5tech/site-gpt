@@ -14,11 +14,16 @@ snapshot is served by `GET /api/ops/status` (api/ops.py) and by
 `scripts/ops_status.py`, and both use this module so the external check and the
 endpoint cannot disagree about a threshold.
 
-Everything here is per process, not aggregate: the counters live in this API
-process's memory and the snapshot is answered by whichever instance the caller
-reaches, while the worker keys are one document overwritten by every worker. A
-fleet-wide view needs an external collector (V6-23/V6-40); the docs record the
-limit and what the external check therefore proves.
+The 5xx rate has two views. The in-process window above is this process's own
+detail: it dies with the process and says nothing about its peers. The bucketed
+Redis counters (`record_request_shared`, `fleet_window`, V6-23) are the fleet's
+— every replica writes the same keys, so behind the ingress the alert is the
+replicas' sum rather than whichever instance the caller reached, and it
+survives a restart because the buckets do. With Redis down there is no fleet
+view, so the alert falls back to the instance window and its evidence says
+which one it read. The worker keys are still one document overwritten by every
+worker, so the worker view is still not per process; V6-23's per-worker keys
+are the fix, and the docs record what the external check therefore proves.
 
 Redis is passed in rather than imported: this module must stay importable from
 `core.logging` (which counts requests) without a cycle through
@@ -130,6 +135,107 @@ def reset_request_window() -> None:
     """Clear the counters (tests, and a process that wants a fresh window)."""
     with _recent_lock:
         _recent.clear()
+
+
+# -- the fleet-wide 5xx window (V6-23) --------------------------------------
+#
+# The window above lives in one process, so behind the ingress the alert was
+# that instance's rate. These counters are the fleet's: the access middleware
+# writes one pair of buckets per replica into the shared Redis, and the reader
+# sums the buckets that cover `API_ERROR_RATE_WINDOW_SECONDS`. Bucketing keeps
+# the read bounded — six keys, not one key per second — at the cost of at most
+# one bucket of slack at each edge of the window.
+
+REQUESTS_BUCKET_PREFIX = "ops:api:requests:"
+ERRORS_BUCKET_PREFIX = "ops:api:errors:"
+
+#: A sixth of the window per bucket, so six buckets cover it; the reader takes
+#: one more so a request exactly one window old is still inside the sum.
+BUCKET_SECONDS = max(1, API_ERROR_RATE_WINDOW_SECONDS // 6)
+BUCKET_COUNT = 6
+BUCKET_READ_COUNT = BUCKET_COUNT + 1
+#: Keep a bucket until it can no longer fall inside a window.
+BUCKET_TTL_SECONDS = API_ERROR_RATE_WINDOW_SECONDS + BUCKET_SECONDS
+
+
+def _bucket_of(epoch: float) -> int:
+    return int(epoch // BUCKET_SECONDS)
+
+
+async def record_request_shared(
+    client: Any, status_code: int, *, now: float | None = None
+) -> bool:
+    """Count one response into the fleet buckets; False when Redis is unusable.
+
+    Called by `RequestContextMiddleware` beside `record_request`, so every
+    replica feeds the same keys. One pipeline keeps it to a single round trip;
+    only a 5xx touches the error bucket, so the request count cannot be
+    double-counted as an error. A hung Redis is bounded by the client's socket
+    timeouts (V6-23 owns them) and no failure here may reach the response.
+    """
+    try:
+        moment = time.time() if now is None else float(now)
+        bucket = _bucket_of(moment)
+        requests_key = f"{REQUESTS_BUCKET_PREFIX}{bucket}"
+        pipe = client.pipeline()
+        pipe.incr(requests_key)
+        pipe.expire(requests_key, BUCKET_TTL_SECONDS)
+        if int(status_code) >= 500:
+            errors_key = f"{ERRORS_BUCKET_PREFIX}{bucket}"
+            pipe.incr(errors_key)
+            pipe.expire(errors_key, BUCKET_TTL_SECONDS)
+        await pipe.execute()
+    except Exception:  # noqa: BLE001 - counting must never break a response
+        return False
+    return True
+
+
+async def fleet_window(client: Any, *, now: float | None = None) -> dict[str, Any]:
+    """The fleet's requests/5xx over the alert window; `ok: False` on failure.
+
+    Counts are None when the buckets cannot be read, which `evaluate` treats as
+    "no fleet view" rather than "no errors" — a failed read must not silence
+    the alert.
+    """
+    moment = time.time() if now is None else float(now)
+    current = _bucket_of(moment)
+    buckets = [current - offset for offset in range(BUCKET_READ_COUNT)]
+    snapshot: dict[str, Any] = {
+        "ok": False,
+        "window_seconds": API_ERROR_RATE_WINDOW_SECONDS,
+        "bucket_seconds": BUCKET_SECONDS,
+        "requests": None,
+        "errors_5xx": None,
+        "error_rate": None,
+    }
+    try:
+        raw = await client.mget(
+            [f"{REQUESTS_BUCKET_PREFIX}{bucket}" for bucket in buckets]
+            + [f"{ERRORS_BUCKET_PREFIX}{bucket}" for bucket in buckets]
+        )
+    except Exception:  # noqa: BLE001 - reported as missing data
+        return snapshot
+
+    raw = list(raw or [])
+
+    def _count(values: list[Any]) -> int:
+        total = 0
+        for value in values:
+            try:
+                total += int(value or 0)
+            except (TypeError, ValueError):
+                continue
+        return total
+
+    requests = _count(raw[:BUCKET_READ_COUNT])
+    errors = _count(raw[BUCKET_READ_COUNT:])
+    snapshot.update(
+        ok=True,
+        requests=requests,
+        errors_5xx=errors,
+        error_rate=(errors / requests) if requests else 0.0,
+    )
+    return snapshot
 
 
 # -- worker-written Redis keys ---------------------------------------------
@@ -323,18 +429,27 @@ def evaluate(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
             )
 
     api = snapshot.get("api") or {}
-    requests = api.get("requests") or 0
+    fleet = api.get("fleet") or {}
+    # V6-23: the fleet's sum when the buckets could be read, this instance's
+    # window otherwise — and the evidence names which one was read, so a fallback
+    # is never mistaken for a fleet-wide rate.
+    if fleet.get("ok"):
+        counts, source = fleet, "fleet"
+    else:
+        counts, source = api, "instance"
+    requests = counts.get("requests") or 0
     if requests >= API_ERROR_RATE_MIN_REQUESTS:
-        rate = api.get("error_rate") or 0.0
+        rate = counts.get("error_rate") or 0.0
         if rate >= API_ERROR_RATE_ALERT:
             alerts.append(
                 _alert(
                     "api.error_rate",
                     "critical" if rate >= 2 * API_ERROR_RATE_ALERT else "warning",
                     "The API 5xx rate is above its threshold.",
+                    source=source,
                     error_rate=round(rate, 4),
                     requests=requests,
-                    errors_5xx=api.get("errors_5xx"),
+                    errors_5xx=counts.get("errors_5xx"),
                     threshold=API_ERROR_RATE_ALERT,
                 )
             )
@@ -346,15 +461,24 @@ def build_snapshot(
     db_ok: bool,
     redis: dict[str, Any],
     api: dict[str, Any] | None = None,
+    fleet: dict[str, Any] | None = None,
     now: datetime | None = None,
 ) -> dict[str, Any]:
-    """The operator snapshot: inputs, thresholds and the alerts they raise."""
+    """The operator snapshot: inputs, thresholds and the alerts they raise.
+
+    `api` is this process's window; `fleet` (V6-23) is the replicas' sum and
+    rides inside it, so a reader sees the detail and the number the alert used
+    side by side.
+    """
     moment = now or datetime.now(UTC)
+    local_api = dict(api or request_window())
+    if fleet is not None:
+        local_api["fleet"] = fleet
     snapshot = {
         "generated_at": _iso(moment),
         "db": bool(db_ok),
         "redis": redis,
-        "api": api or request_window(),
+        "api": local_api,
     }
     snapshot["alerts"] = evaluate(snapshot)
     snapshot["thresholds"] = {
@@ -372,15 +496,23 @@ def build_snapshot(
 
 
 __all__ = [
+    "BUCKET_COUNT",
+    "BUCKET_READ_COUNT",
+    "BUCKET_SECONDS",
+    "BUCKET_TTL_SECONDS",
+    "ERRORS_BUCKET_PREFIX",
     "HEARTBEAT_KEY",
     "HEARTBEAT_TTL_SECONDS",
     "JOB_FAILURES_KEY",
     "LAST_POP_KEY",
+    "REQUESTS_BUCKET_PREFIX",
     "build_snapshot",
     "evaluate",
+    "fleet_window",
     "note_job_failure",
     "note_queue_pop",
     "record_request",
+    "record_request_shared",
     "redis_snapshot",
     "request_window",
     "reset_request_window",

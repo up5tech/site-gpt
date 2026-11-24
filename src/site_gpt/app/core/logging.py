@@ -32,7 +32,7 @@ from starlette.datastructures import Headers, MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from site_gpt.app.core.config import LOG_LEVEL
-from site_gpt.app.core.telemetry import record_request
+from site_gpt.app.core.telemetry import record_request, record_request_shared
 
 REDACTED = "[redacted]"
 
@@ -320,9 +320,18 @@ class RequestContextMiddleware:
     DEBUG; 4xx at WARNING and 5xx at ERROR, which is the D8 alert surface.
     """
 
-    def __init__(self, app: ASGIApp, header: str = _REQUEST_ID_HEADER) -> None:
+    def __init__(
+        self,
+        app: ASGIApp,
+        header: str = _REQUEST_ID_HEADER,
+        shared_client: Any | None = None,
+    ) -> None:
         self.app = app
         self.header = header
+        # V6-23: the Redis client the fleet-wide 5xx buckets are written
+        # through. Optional, so a bare middleware (tests, a script app) keeps
+        # the in-process window only and needs no Redis.
+        self.shared_client = shared_client
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -370,4 +379,8 @@ class RequestContextMiddleware:
             # V6-21: the same status the access event just reported feeds the
             # in-process 5xx window `GET /api/ops/status` alerts on.
             record_request(code)
+            # V6-23: and the fleet buckets every replica writes, so the alert no
+            # longer rests on this instance's memory alone.
+            if self.shared_client is not None:
+                await record_request_shared(self.shared_client, code)
             _REQUEST_ID.reset(token)
