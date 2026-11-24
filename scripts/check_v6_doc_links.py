@@ -51,11 +51,12 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-# The V6 record: the two documents that hold the decisions and the risks, and
-# the two that index and gate them. Order is for the report only.
+# The V6 record: the documents that hold the decisions, the risks and the
+# topology, plus the two that index and gate them. Order is for the report only.
 DOCUMENTS = (
     "docs/preflight-v6.md",
     "docs/risk-register-v6.md",
+    "docs/architecture-v6.md",
     "plans/PLAN_V6.md",
     "docs/release-v5.md",
 )
