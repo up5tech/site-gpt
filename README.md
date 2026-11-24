@@ -866,20 +866,25 @@ go/no-go table and rollback steps are in [`docs/release-v5.md`](docs/release-v5.
 billing operations are in [`docs/billing.md`](docs/billing.md) and the operator
 boundary in [`docs/platform.md`](docs/platform.md).
 
-### V6 pre-flight (started)
+### V6 pre-flight (Wave 0 complete)
 
 V6 is the production-readiness plan in [`plans/PLAN_V6.md`](plans/PLAN_V6.md).
-Wave 0 has only just started on branch `feat/v6`: the reproducible baseline (62
-Python test modules / 1094 tests, 46 node checks, clean build/lint/imports,
-Alembic head `0b22b30bf930`) and the provider-free V5-5G gate result (72/72 checks
-passed, 2 blocked) are recorded, then three standalone repairs from the await
-audit took the suite to 63 modules / 1102 tests with head, dependencies and
-flags unchanged. V6-01 (launch track), V6-02 (named owners,
-SLO/RPO/RTO) and V6-03 (architecture review) wait on approvers nobody has named
-yet, so gate V6-0G is unsigned and Wave 1 has not started. The open decisions and
-the evidence each one needs are listed in
-[`docs/preflight-v6.md`](docs/preflight-v6.md). Until they are approved,
-`BILLING_ENABLED=false` and `PLATFORM_CONSOLE_ENABLED=false` remain the defaults.
+**Wave 0 is complete on branch `feat/v6` and gate V6-0G is signed for Track A**
+(hosted core, `BILLING_ENABLED=false`, `PLATFORM_CONSOLE_ENABLED=false`):
+V6-01…V6-04 are done, and the ten Wave 0/Wave 1 decisions (D1–D8, D11, D13) were
+approved on 2026-11-24 by the repository owner, recorded as the single approver
+for all roles. D12 is not applicable because Track B was not chosen; D9 and D10
+stay open for Waves 2–3. The recorded answers, owners and consequences are in
+[`docs/preflight-v6.md`](docs/preflight-v6.md), the target topology and
+threat-model classification in [`docs/architecture-v6.md`](docs/architecture-v6.md),
+and the owned risk register in [`docs/risk-register-v6.md`](docs/risk-register-v6.md).
+The baseline is 63 Python test modules / 1102 tests, 46 node checks, clean
+build/lint/imports and Alembic head `0b22b30bf930`; the provider-free V5-5G gate
+recorded 72/72 checks passed with 2 blocked. **Wave 1 is unblocked but not
+started:** uploads stay disabled for the launch cohort until V6-13 and a durable
+storage adapter exist, no production validator is written, no dependency or
+migration was added, and both flags stay false. The decisions still open are
+listed in [`docs/preflight-v6.md`](docs/preflight-v6.md).
 
 ## Dev commands
 
