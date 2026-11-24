@@ -93,6 +93,20 @@ class ProductionConfigTests(unittest.TestCase):
                     config.production_config_errors(_with(SQL_ECHO=value)),
                 )
 
+    def test_webhook_secret_is_required_even_without_tenant_integrations(self):
+        # There is no enablement flag to gate on: /api/integrations is always
+        # mounted and any tenant admin can enable a webhook after boot, so the
+        # secret cannot depend on rows that may appear later. "when
+        # integrations are enabled" therefore means "whenever production is on".
+        for value in (None, "", "   "):
+            with self.subTest(value=value):
+                self.assertEqual(
+                    config.production_config_errors(
+                        _with(INTEGRATION_WEBHOOK_SECRET=value)
+                    ),
+                    ["INTEGRATION_WEBHOOK_SECRET"],
+                )
+
     def test_rate_limit_backend_must_be_shared(self):
         self.assertIn(
             "RATE_LIMIT_BACKEND",
