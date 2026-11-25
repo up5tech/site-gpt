@@ -3,9 +3,10 @@
 D13 deferred tenant MFA/SSO, so the claim "we have MFA" would be a security
 statement the login path cannot back, and a login page is where a customer
 decides how much an account is worth protecting. This module pins the absence
-in code rather than in a note: it scans the SPA's sources and `README.md` for
-the words a claim would be made of, and fails with file/line so the next author
-sees the rule.
+in code rather than in a note: it scans the SPA's sources, `frontend/index.html`
+(its title and meta copy are customer-facing but live outside `src/`) and
+`README.md` for the words a claim would be made of, and fails with file/line so
+the next author sees the rule.
 
 Deliberately strict — it does not try to tell a negation ("no MFA yet") from a
 claim. If a doc or page ever needs to mention the words, that is a copy decision
@@ -14,11 +15,13 @@ allowance here in the same change that names the reviewer.
 """
 
 import re
+import tempfile
 import unittest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 FRONTEND_SRC = REPO_ROOT / "frontend" / "src"
+FRONTEND_INDEX = REPO_ROOT / "frontend" / "index.html"
 README = REPO_ROOT / "README.md"
 
 # File types the SPA actually renders or ships as text. Images and fonts are
@@ -66,15 +69,27 @@ def _claims_in(path: Path) -> list[str]:
 
 
 class NoIdentityClaimInCopyTests(unittest.TestCase):
-    def test_the_scan_covers_the_frontend_and_the_readme(self):
-        # Guards the test itself: an empty glob would make every assertion below
-        # pass for the wrong reason.
-        self.assertTrue(README.is_file())
-        self.assertGreater(len(_frontend_sources()), 20)
+    def test_the_detector_matches_a_claim_and_not_a_plain_sentence(self):
+        # Guards the test itself: if the patterns ever stop matching, every
+        # scan below passes for the wrong reason. A count of scanned files
+        # cannot catch that; a known claim can.
+        with tempfile.TemporaryDirectory() as tmp:
+            claim = Path(tmp) / "Claim.tsx"
+            claim.write_text(
+                "export const button = 'Sign in with SSO';\n", encoding="utf-8"
+            )
+            plain = Path(tmp) / "Plain.tsx"
+            plain.write_text(
+                "export const button = 'Sign in with your email and password';\n",
+                encoding="utf-8",
+            )
+
+            self.assertEqual(len(_claims_in(claim)), 1)
+            self.assertEqual(_claims_in(plain), [])
 
     def test_the_spa_makes_no_second_factor_or_federation_claim(self):
         hits: list[str] = []
-        for path in _frontend_sources():
+        for path in [*_frontend_sources(), FRONTEND_INDEX]:
             hits.extend(_claims_in(path))
 
         self.assertEqual(
