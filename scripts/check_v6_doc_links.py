@@ -1,8 +1,9 @@
 #!/usr/bin/env python
 """Check the internal links of the V6 decision and risk documents (V6-31 prep).
 
-The V6 record is a set of Markdown files that point at each other's sections
-and, in the risk register, at individual table rows. Nothing renders them in CI, so a
+The checked set is every page under `docs/` plus `plans/PLAN_V6.md` and
+`README.md` — Markdown that points at each other's sections and, in the risk
+register, at individual table rows. Nothing renders them in CI, so a
 reworded heading or a moved file breaks a link silently. This script resolves
 every relative link those documents carry, and fails on:
 
@@ -57,21 +58,20 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-# The V6 record: the documents that hold the decisions, the risks and the
-# topology, plus the two that index and gate them, the security document whose §5
-# residual points back into the register, and README, which links into all of
-# them. `docs/billing.md` and `docs/platform.md` carry no relative link of their
-# own, so they are reached as link targets rather than scanned. Order is for the
-# report only.
-DOCUMENTS = (
-    "docs/preflight-v6.md",
-    "docs/risk-register-v6.md",
-    "docs/architecture-v6.md",
-    "plans/PLAN_V6.md",
-    "docs/release-v5.md",
-    "docs/security.md",
-    "README.md",
-)
+# Every page under `docs/` is scanned, plus the V6 plan and README. A hand-kept
+# list had to be extended by hand each time a document gained a link — the four
+# that only ever appeared as link targets (`api-v1.md`, `billing.md`,
+# `platform.md`, `worker-delivery.md`) went unchecked for exactly that reason.
+# Only Markdown at the top of `docs/` is included: subdirectories would need a
+# policy of their own. Order is for the report only.
+def default_documents(root: Path) -> tuple[str, ...]:
+    pages = sorted(
+        path.relative_to(root).as_posix() for path in (root / "docs").glob("*.md")
+    )
+    return (*pages, "plans/PLAN_V6.md", "README.md")
+
+
+DOCUMENTS = default_documents(REPO_ROOT)
 
 PREFLIGHT = "docs/preflight-v6.md"
 RISK_REGISTER = "docs/risk-register-v6.md"
