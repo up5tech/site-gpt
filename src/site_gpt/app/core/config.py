@@ -9,6 +9,21 @@ load_dotenv()
 
 DB_URL = os.getenv("DATABASE_URL")
 
+# V6-23: connection-pool sizing for the networked database. Every process (each
+# API replica and the worker) owns its own pool, so the deployment's worst-case
+# server connection count is processes × (pool + overflow): 2 API replicas and 1
+# worker at the defaults is 3 × (5 + 5) = 30, which has to stay under the
+# database's own `max_connections` with room for migrations and an operator
+# shell. `pool_recycle` closes a connection older than this before reusing it,
+# so a proxy or failover that kills idle connections does not hand one back; and
+# `pool_timeout` bounds how long a request waits for a free connection before
+# failing, instead of queueing behind a starved pool forever. SQLite (tests and a
+# local run) ignores all four: its default pool has no server side.
+DB_POOL_SIZE = int(os.getenv("DB_POOL_SIZE", "5"))
+DB_MAX_OVERFLOW = int(os.getenv("DB_MAX_OVERFLOW", "5"))
+DB_POOL_TIMEOUT_SECONDS = int(os.getenv("DB_POOL_TIMEOUT_SECONDS", "30"))
+DB_POOL_RECYCLE_SECONDS = int(os.getenv("DB_POOL_RECYCLE_SECONDS", "1800"))
+
 # Deployment profile (V6-10, D4). "production" turns on the fail-closed
 # validator at the bottom of this module; development and test keep every
 # existing default, so local runs and the suite need no production secrets.
