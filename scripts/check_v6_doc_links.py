@@ -1,10 +1,10 @@
 #!/usr/bin/env python
 """Check the internal links of the V6 decision and risk documents (V6-31 prep).
 
-The V6 record is four Markdown files that point at each other's sections and, in
-the risk register, at individual table rows. Nothing renders them in CI, so a
+The V6 record is a set of Markdown files that point at each other's sections
+and, in the risk register, at individual table rows. Nothing renders them in CI, so a
 reworded heading or a moved file breaks a link silently. This script resolves
-every relative link the four documents carry, and fails on:
+every relative link those documents carry, and fails on:
 
 * a link whose file does not exist, resolved from the linking document's own
   directory;
@@ -52,13 +52,15 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # The V6 record: the documents that hold the decisions, the risks and the
-# topology, plus the two that index and gate them. Order is for the report only.
+# topology, plus the two that index and gate them, and the security document
+# whose §5 residual points back into the register. Order is for the report only.
 DOCUMENTS = (
     "docs/preflight-v6.md",
     "docs/risk-register-v6.md",
     "docs/architecture-v6.md",
     "plans/PLAN_V6.md",
     "docs/release-v5.md",
+    "docs/security.md",
 )
 
 PREFLIGHT = "docs/preflight-v6.md"
@@ -292,7 +294,7 @@ def check(files: list[str], root: Path) -> list[str]:
 
     def document(path: Path) -> Document:
         # A target outside `files` is parsed on demand: links are resolved
-        # wherever they point, not only between the four documents.
+        # wherever they point, not only between the listed documents.
         if path not in documents:
             documents[path] = Document(path)
         return documents[path]
