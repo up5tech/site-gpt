@@ -8,6 +8,9 @@ What is pinned here:
   a slug used twice is reported instead of silently landing on the first;
 * the GitHub slug keeps the double hyphen an em dash surrounded by spaces
   produces, which is what the V6 appendix anchors rely on;
+* a document named in prose (`docs/platform.md`) is resolved from the repository
+  root and must exist, while the same path used as a link target is not counted
+  twice;
 * `docs/security.md` and `README.md` are checked documents — both because they
   are in `DOCUMENTS` and because a broken link in a copy of one is caught — so
   their links are no longer verified by eye;
@@ -98,6 +101,33 @@ class ResolutionTests(CheckerTestCase):
         self.assertEqual(
             links.github_slug("Appendix — D13 decision brief"),
             "appendix--d13-decision-brief",
+        )
+
+
+class PlainReferenceTests(CheckerTestCase):
+    def test_a_missing_plain_reference_is_caught(self):
+        self.write("docs/index.md", "See docs/gone.md for the runbook.\n")
+
+        failures = links.check(["docs/index.md"], self.root)
+
+        self.assertEqual(len(failures), 1)
+        self.assertIn("docs/gone.md", failures[0])
+        self.assertIn("no such document", failures[0])
+
+    def test_a_plain_reference_resolves_from_the_repository_root(self):
+        # `docs/index.md` naming `docs/other.md` must find docs/other.md; a
+        # linking-directory resolution would look for docs/docs/other.md.
+        self.write("docs/other.md", "# Other\n")
+        self.write("docs/index.md", "See `docs/other.md`.\n")
+
+        self.assertEqual(links.check(["docs/index.md"], self.root), [])
+
+    def test_a_link_target_is_not_counted_as_a_plain_reference(self):
+        self.write("docs/other.md", "# Other\n")
+        text = "See [other](docs/other.md) and `README.md`.\n"
+
+        self.assertEqual(
+            links.plain_document_references(text), ["README.md"]
         )
 
 
