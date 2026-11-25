@@ -307,41 +307,61 @@ def plain_document_references(text: str) -> list[str]:
     return sorted(set(PLAIN_DOC.findall(without_links)))
 
 
-def page_graph(name: str, root: Path) -> tuple[set[str], set[str]]:
-    """A document's outgoing edges: Markdown links, and plain-text mentions."""
-    source = root / name
-    text = Document(source).text
+def resolve_link(source: Path, link: str) -> Path:
+    """The file a relative link points at, from the linking document's own
+    directory. A bare `#fragment` points back at the document itself, returned
+    unchanged so it keeps the path — and the cache key — it was loaded under."""
+    path_part = link.partition("#")[0]
+    return source if not path_part else (source.parent / path_part).resolve()
+
+
+def document_links(doc: Document) -> list[tuple[str, Path, str]]:
+    """Each relative link in a document as (link, target file, fragment).
+
+    The one place a link is turned into a path: the link check reports on the
+    target, and the reachability check only needs to know what it points at, so
+    both go through here rather than resolving the same target twice.
+    """
+    return [
+        (link, resolve_link(doc.path, link), urllib.parse.unquote(link.partition("#")[2]))
+        for link in LINK.findall(doc.text)
+        if relative_target(link)
+    ]
+
+
+def document_at(path: Path, documents: dict[Path, Document]) -> Document:
+    """The parsed document at `path`, reading it at most once."""
+    if path not in documents:
+        documents[path] = Document(path)
+    return documents[path]
+
+
+def page_edges(doc: Document, root: Path) -> tuple[set[str], set[str]]:
+    """A document's outgoing edges: link targets, and plain-text mentions."""
     linked: set[str] = set()
-    for link in LINK.findall(text):
-        if not relative_target(link):
-            continue
-        path_part = link.partition("#")[0]
-        if not path_part:
-            continue
+    for _, target, _ in document_links(doc):
         try:
-            linked.add(
-                (source.parent / path_part)
-                .resolve()
-                .relative_to(root.resolve())
-                .as_posix()
-            )
-        except ValueError:  # outside the repository, reported elsewhere
+            linked.add(target.relative_to(root.resolve()).as_posix())
+        except ValueError:  # outside the repository, reported by check()
             continue
-    return linked, set(plain_document_references(text))
+    return linked, set(plain_document_references(doc.text))
 
 
 def page_references(
-    files: list[str], root: Path
+    files: list[str],
+    root: Path,
+    documents: dict[Path, Document] | None = None,
 ) -> dict[str, tuple[set[str], set[str]]]:
     """For each page: the documents that link it, and the ones that name it.
 
     A page linking itself is not an entry point, so self-references are dropped.
     """
-    known = {name for name in files if (root / name).is_file()}
+    cache = load(files, root) if documents is None else documents
+    known = {name: root / name for name in files if root / name in cache}
     linked: dict[str, set[str]] = {name: set() for name in known}
     mentioned: dict[str, set[str]] = {name: set() for name in known}
-    for name in known:
-        edges, mentions = page_graph(name, root)
+    for name, path in known.items():
+        edges, mentions = page_edges(cache[path], root)
         for target in edges:
             if target in known and target != name:
                 linked[target].add(name)
@@ -351,9 +371,13 @@ def page_references(
     return {name: (linked[name], mentioned[name]) for name in known}
 
 
-def prose_only_notes(files: list[str], root: Path) -> list[str]:
+def prose_only_notes(
+    files: list[str],
+    root: Path,
+    documents: dict[Path, Document] | None = None,
+) -> list[str]:
     """docs pages no document links but some document names in prose."""
-    references = page_references(files, root)
+    references = page_references(files, root, documents)
     notes: list[str] = []
     for name in files:
         if not name.startswith("docs/") or name not in references:
@@ -378,28 +402,27 @@ def load(files: list[str], root: Path) -> dict[Path, Document]:
     return documents
 
 
-def check(files: list[str], root: Path) -> list[str]:
+def check(
+    files: list[str],
+    root: Path,
+    documents: dict[Path, Document] | None = None,
+) -> list[str]:
     """Return one message per broken link or missing risk anchor."""
-    documents = load(files, root)
+    if documents is None:
+        documents = load(files, root)
     failures: list[str] = []
 
     def document(path: Path) -> Document:
         # A target outside `files` is parsed on demand: links are resolved
         # wherever they point, not only between the listed documents.
-        if path not in documents:
-            documents[path] = Document(path)
-        return documents[path]
+        return document_at(path, documents)
 
     for name in files:
         source = root / name
         if not source.exists():
             failures.append(f"{name}: file does not exist")
             continue
-        for link in LINK.findall(document(source).text):
-            if not relative_target(link):
-                continue
-            path_part, _, fragment = link.partition("#")
-            target = source if not path_part else (source.parent / path_part).resolve()
+        for link, target, fragment in document_links(document(source)):
             try:
                 label = target.relative_to(root.resolve()).as_posix()
             except ValueError:
@@ -408,7 +431,6 @@ def check(files: list[str], root: Path) -> list[str]:
             if not target.is_file():
                 failures.append(f"{name}: {link}: no such file ({label})")
                 continue
-            fragment = urllib.parse.unquote(fragment)
             if not fragment:
                 continue
             target_doc = document(target)
@@ -432,7 +454,7 @@ def check(files: list[str], root: Path) -> list[str]:
 
     # Only a run that includes the index can say anything about reachability;
     # checking one file on its own would report it as an orphan.
-    references = page_references(files, root)
+    references = page_references(files, root, documents)
     if "README.md" in files:
         for name in files:
             if not name.startswith("docs/") or name not in references:
@@ -480,8 +502,8 @@ def report(files: list[str], root: Path) -> int:
                 external += 1
         plain += len(plain_document_references(doc.text))
 
-    failures = check(files, root)
-    notes = prose_only_notes(files, root)
+    failures = check(files, root, documents)
+    notes = prose_only_notes(files, root, documents)
     for name in files:
         path = root / name
         if path not in documents:
