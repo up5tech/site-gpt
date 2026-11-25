@@ -569,7 +569,7 @@ These are known, documented and deliberately deferred. They are not oversights.
   keep a `revoked_at` and a last-used timestamp; other tenant admin actions
   (users, roles, settings, model changes, exports, erasures) are not recorded.
   Only the platform-owner boundary writes `platform_audit_logs`.
-- **No tenant MFA/SSO (D13, V6-16 deferred to 2027-02-28).** Password login plus
+- **No tenant MFA/SSO (D13, V6-16 deferred to 2027-02-28, recorded as [R13](risk-register-v6.md#r13)).** Password login plus
   the 24-hour JWT is the whole tenant authentication story; there is no second
   factor, no federated login, no email verification and no login lockout beyond
   the per-IP rate limiter. No page, README section or launch copy may claim

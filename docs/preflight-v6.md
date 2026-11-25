@@ -48,7 +48,7 @@ An index of the thirteen decisions in this record: each question in a line, the 
 | [**D10**](#appendix--d10-decision-brief) | Where do the checks run, what blocks a change, how does the browser journey run, how are dependencies reviewed, and what does a passing run authorise? | **UNAPPROVED** | [R7](risk-register-v6.md#r7) |  |  |  |  |
 | [**D11**](#appendix--d11-decision-brief) | Who owns customer support, through which channel, with what coverage, escalation and response expectation? | **APPROVED** | [R4](risk-register-v6.md#r4), [R10](risk-register-v6.md#r10) | Jacky | Repository owner, single approver for all roles | 2026-11-24 | [Recorded decision D11](#recorded-decision-d11) |
 | [**D12**](#appendix--d12-decision-brief) | Track B only: are V5's commercial answers D2–D9 signed and how, which merchant account receives payment, how the catalog is published, who activates billing, and who owns refunds, disputes, reconciliation and webhook failures? V5 D10–D12 (operator boundary) are not carried. | **NOT APPLICABLE** | [R3](risk-register-v6.md#r3) | — | — | — | Track A chosen in [Recorded decision D1](#recorded-decision-d1) |
-| [**D13**](#appendix--d13-decision-brief-sessions-and-security-response) | Are tenant MFA/SSO, broader admin audit, a session-revocation UI and origin-bound widget auth required or deferred? | **APPROVED** | [R10](risk-register-v6.md#r10), [R11](risk-register-v6.md#r11), [R12](risk-register-v6.md#r12) | Jacky | Repository owner, single approver for all roles | 2026-11-24 | [Recorded decision D13](#recorded-decision-d13) |
+| [**D13**](#appendix--d13-decision-brief-sessions-and-security-response) | Are tenant MFA/SSO, broader admin audit, a session-revocation UI and origin-bound widget auth required or deferred? | **APPROVED** | [R10](risk-register-v6.md#r10), [R11](risk-register-v6.md#r11), [R12](risk-register-v6.md#r12), [R13](risk-register-v6.md#r13) | Jacky | Repository owner, single approver for all roles | 2026-11-24 | [Recorded decision D13](#recorded-decision-d13) |
 
 **Signing a row.** Put the approver's name, role and date in the row, put the evidence path or link in the last cell, and change the status cell from **UNAPPROVED** to **APPROVED**. Then copy the same four facts into [`plans/PLAN_V6.md` §4](../plans/PLAN_V6.md#4-pre-flight-decisions-blocking-for-the-affected-tasks) and into the risk rows named in the register, as “How an approval gets recorded” below describes. A row that is PROPOSED or BLOCKED stays unsigned, and no task whose decision is unsigned may start.
 
@@ -176,11 +176,11 @@ The launch track is **Track A (hosted core, billing off)**; **D12 is not applica
 **Defer all four tenant-side controls to 2027-02-28: tenant MFA/SSO, broader admin audit, a session-revocation UI and origin-bound widget authentication.**
 
 - Approver/date: Jacky, 2026-11-24. Unblocks V6-12/V6-14/V6-15/V6-16 as deferrals.
-- Tenant MFA/SSO: not built; password login plus the 24-hour JWT stays; no login or launch copy may claim a second factor or federated login.
+- Tenant MFA/SSO: not built; password login plus the 24-hour JWT stays; no login or launch copy may claim a second factor or federated login. The residual is [R13](risk-register-v6.md#r13).
 - Admin audit: only the platform-owner boundary is audited; tenant admin actions (settings, users, API keys, deletions, export/erasure) stay unaudited until V6-14, with the residual accepted.
 - Session revocation: account deactivation and user deletion end access immediately, but there is no way to end one session or revoke a live JWT; `DELETE /api/company/users/{id}` and JWT-secret rotation remain the incident tools.
 - Embed/origin: `SESSION_TOKEN_MODE=compat` and `EMBED_TOKEN_MODE=compat` stay; K18's soft Origin/Referer boundary remains accepted.
-- Residuals R10, R11 and R12 are owned by Jacky with expiry 2027-02-28; a review before that date must either implement a control or record a new deferral.
+- Residuals R10, R11, R12 and R13 are owned by Jacky with expiry 2027-02-28; a review before that date must either implement a control or record a new deferral.
 
 ## Appendix — D1 decision brief
 
@@ -1020,12 +1020,12 @@ None of these removes the K18 caveat that a public value in a customer's page is
 - **D7 owns the retention and erasure of any new audit rows**, and D8 the alerting any of these controls would feed.
 - **D13 owns the tenant-admin mutation list** the audit option B assumes; it is not V5 D11's operator mutation set, which covers different actions and is not re-listed here.
 - **D6 and D13 meet at the upload/admin boundary** — an audited admin action is what makes "a compromised admin imported that file" answerable.
-- **R10, R11 and R12 are this decision's risk rows**; every "defer" must fill their owner and expiry, which are blank today.
+- **R10, R11, R12 and R13 are this decision's risk rows**; every "defer" must fill their owner and expiry.
 
 ### Exact evidence an approver must sign
 
 1. For §1: **require** or **defer**, and if require, whether the factor applies to admins/managers or to every user, whether SSO is offered instead or beside it, and the recovery path for a lost factor.
-2. For §1 deferral: the residual statement (a stolen password is a full tenant takeover) and its expiry, recorded against R11.
+2. For §1 deferral: the residual statement (a stolen password is a full tenant takeover) and its expiry, recorded against [R13](risk-register-v6.md#r13).
 3. For §2: **require** or **defer**, and if require, the exact tenant-admin mutation list (this decision's §2 answer), where the row is written, and confirmation that it is in the same transaction as the change.
 4. For §2: whether reads are audited at all, and if so what an audited read records without storing the transcript again.
 5. The retention of every new audit row and its relationship to erasure requests (D7), plus confirmation that `platform_audit_logs` retention is settled at the same time.
@@ -1035,11 +1035,11 @@ None of these removes the K18 caveat that a public value in a customer's page is
 9. The residual that remains after the chosen option — the K18 public-value caveat cannot be removed by any of these — and the row it is recorded against.
 10. The role and permission model each answer implies (`admin`, `manager`, `user`), so a control cannot be bypassed by a role that was not considered.
 11. The demonstration each **require** answer must produce in a non-production environment — an unenrolled login refused, an audited action producing one row, a revoked session refused on its next request, an off-origin read refused — agreed now as acceptance criteria, with the evidence path recorded. The demonstrations are V6-12/V6-14/V6-15/V6-16 evidence, checked after this signature.
-12. The approver's role, date and a link or path to the signed evidence — recorded in this row and copied into [`plans/PLAN_V6.md` §4](../plans/PLAN_V6.md#4-pre-flight-decisions-blocking-for-the-affected-tasks) and into [R10](risk-register-v6.md#r10), [R11](risk-register-v6.md#r11) and [R12](risk-register-v6.md#r12) of `docs/risk-register-v6.md`.
+12. The approver's role, date and a link or path to the signed evidence — recorded in this row and copied into [`plans/PLAN_V6.md` §4](../plans/PLAN_V6.md#4-pre-flight-decisions-blocking-for-the-affected-tasks) and into [R10](risk-register-v6.md#r10), [R11](risk-register-v6.md#r11), [R12](risk-register-v6.md#r12) and [R13](risk-register-v6.md#r13) of `docs/risk-register-v6.md`.
 
 ### What an approval changes
 
-Only [the D13 row](#decision-register--one-page-to-sign) moves from **UNAPPROVED** to **APPROVED** — as four recorded require-or-defer answers, not as one blanket "yes" — which unblocks V6-12, V6-14 and V6-16, settles the embed/session posture V6-15 must follow, and turns R10, R11 and R12 from unnamed residuals into either controls or signed acceptances with an expiry. Gate V6-0G was signed on 2026-11-24 with this deferral, so Wave 1 is unblocked but not started and no control in this brief is implemented. Sessions stay bearer-only, tenant admin actions stay unaudited, the widget keeps its soft origin check, and `EMBED_TOKEN_MODE`/`SESSION_TOKEN_MODE` stay at `compat` until the 2027-02-28 review.
+Only [the D13 row](#decision-register--one-page-to-sign) moves from **UNAPPROVED** to **APPROVED** — as four recorded require-or-defer answers, not as one blanket "yes" — which unblocks V6-12, V6-14 and V6-16, settles the embed/session posture V6-15 must follow, and turns R10, R11, R12 and R13 from unnamed residuals into either controls or signed acceptances with an expiry. Gate V6-0G was signed on 2026-11-24 with this deferral, so Wave 1 is unblocked but not started and no control in this brief is implemented. Sessions stay bearer-only, tenant admin actions stay unaudited, the widget keeps its soft origin check, and `EMBED_TOKEN_MODE`/`SESSION_TOKEN_MODE` stay at `compat` until the 2027-02-28 review.
 
 ## Appendix — D9 decision brief
 
