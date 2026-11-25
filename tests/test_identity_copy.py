@@ -7,8 +7,10 @@ in code rather than in a note: it scans the SPA's sources, `frontend/index.html`
 (its title and meta copy are customer-facing but live outside `src/`), the
 modules that build the outgoing email/digest bodies, every API and schema
 module (the `detail` strings a toast or error banner shows, plus the field
-descriptions the OpenAPI docs publish) and `README.md` for the words a claim
-would be made of, and fails with file/line so the next author sees the rule.
+descriptions the OpenAPI docs publish), the service layer that raises the same
+`detail` strings and owns the refusal prose and assistant prompt, and
+`README.md` for the words a claim would be made of, and fails with file/line so
+the next author sees the rule.
 
 Deliberately strict — it does not try to tell a negation ("no MFA yet") from a
 claim. If a doc or page ever needs to mention the words, that is a copy decision
@@ -50,6 +52,14 @@ API_COPY_DIRS = (
     REPO_ROOT / "src" / "site_gpt" / "app" / "schemas",
 )
 
+# Services raise HTTPException details themselves (embed guard, session tokens,
+# rate limiter, disabled-website state, integration lookups) and hold the two
+# exception handlers `main.py` registers — `session_tokens.error_response` and
+# `embed_guard.embed_token_error_response` — so their refusal prose is copy. The
+# assistant prompt in `rag.py` is here too, and belongs: it is what a visitor is
+# told.
+SERVICES_COPY_DIR = REPO_ROOT / "src" / "site_gpt" / "app" / "services"
+
 # File types the SPA actually renders or ships as text. Images and fonts are
 # skipped by suffix rather than by sniffing, so a new asset cannot make the
 # test read megabytes.
@@ -80,7 +90,7 @@ def _frontend_sources() -> list[Path]:
 
 def _api_copy_sources() -> list[Path]:
     sources: list[Path] = []
-    for directory in API_COPY_DIRS:
+    for directory in (*API_COPY_DIRS, SERVICES_COPY_DIR):
         # A moved or renamed package would otherwise shrink the scan to nothing.
         if not directory.is_dir():
             raise RuntimeError(f"copy scan directory is missing: {directory}")
@@ -151,7 +161,7 @@ class NoIdentityClaimInCopyTests(unittest.TestCase):
             + "\n".join(hits),
         )
 
-    def test_the_api_and_schema_copy_makes_no_second_factor_or_federation_claim(
+    def test_the_api_schema_and_service_copy_makes_no_second_factor_or_federation_claim(
         self,
     ):
         hits: list[str] = []
@@ -162,8 +172,8 @@ class NoIdentityClaimInCopyTests(unittest.TestCase):
             hits,
             [],
             "D13 defers tenant MFA/SSO (docs/risk-register-v6.md#r13), so no "
-            "error detail, validation message or schema description may "
-            "claim one:\n" + "\n".join(hits),
+            "error detail, validation message, schema description, service "
+            "refusal or assistant prompt may claim one:\n" + "\n".join(hits),
         )
 
     def test_the_readme_makes_no_second_factor_or_federation_claim(self):
