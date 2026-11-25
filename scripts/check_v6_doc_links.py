@@ -52,8 +52,11 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # The V6 record: the documents that hold the decisions, the risks and the
-# topology, plus the two that index and gate them, and the security document
-# whose §5 residual points back into the register. Order is for the report only.
+# topology, plus the two that index and gate them, the security document whose §5
+# residual points back into the register, and README, which links into all of
+# them. `docs/billing.md` and `docs/platform.md` carry no relative link of their
+# own, so they are reached as link targets rather than scanned. Order is for the
+# report only.
 DOCUMENTS = (
     "docs/preflight-v6.md",
     "docs/risk-register-v6.md",
@@ -61,6 +64,7 @@ DOCUMENTS = (
     "plans/PLAN_V6.md",
     "docs/release-v5.md",
     "docs/security.md",
+    "README.md",
 )
 
 PREFLIGHT = "docs/preflight-v6.md"
