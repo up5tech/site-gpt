@@ -8,6 +8,8 @@ What is pinned here:
   a slug used twice is reported instead of silently landing on the first;
 * the GitHub slug keeps the double hyphen an em dash surrounded by spaces
   produces, which is what the V6 appendix anchors rely on;
+* one helper turns a link into a path for every check, and each document is
+  parsed once however many checks read it;
 * a document named in prose (`docs/platform.md`) is resolved from the repository
   root and must exist, while the same path used as a link target is not counted
   twice;
@@ -24,10 +26,14 @@ What is pinned here:
   file is renamed without the links being updated.
 """
 
+import contextlib
 import importlib.util
+import io
 import tempfile
 import unittest
+from collections import Counter
 from pathlib import Path
+from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = REPO_ROOT / "scripts" / "check_v6_doc_links.py"
@@ -64,6 +70,42 @@ class ResolutionTests(CheckerTestCase):
         self.write("docs/index.md", "See [other](other.md#other).\n")
 
         self.assertEqual(links.check(["docs/index.md"], self.root), [])
+
+    def test_document_links_resolves_from_the_linking_directory(self):
+        self.write("docs/a.md", "# A\n\n[x](sub/b.md#Head%20Two) [self](#top)\n")
+
+        found = links.document_links(links.Document(self.root / "docs/a.md"))
+
+        self.assertEqual([found_link for found_link, _, _ in found], [
+            "sub/b.md#Head%20Two",
+            "#top",
+        ])
+        self.assertEqual(found[0][1].resolve(), (self.root / "docs/sub/b.md").resolve())
+        self.assertEqual(found[1][1].resolve(), (self.root / "docs/a.md").resolve())
+        self.assertEqual(found[0][2], "Head Two")
+
+    def test_each_document_is_parsed_once_across_the_checks(self):
+        self.write("README.md", "# Readme\n\nSee [a](docs/a.md) and `docs/b.md`.\n")
+        self.write("docs/a.md", "# A\n\nSee [b](b.md).\n")
+        self.write("docs/b.md", "# B\n")
+        files = ["README.md", "docs/a.md", "docs/b.md"]
+
+        class CountingDocument(links.Document):
+            reads: Counter = Counter()
+
+            def __init__(self, path):
+                CountingDocument.reads[path.name] += 1
+                super().__init__(path)
+
+        with mock.patch.object(links, "Document", CountingDocument):
+            with contextlib.redirect_stdout(io.StringIO()):
+                exit_status = links.report(files, self.root)
+
+        self.assertEqual(exit_status, 0)
+        self.assertEqual(
+            dict(CountingDocument.reads),
+            {"README.md": 1, "a.md": 1, "b.md": 1},
+        )
 
     def test_a_missing_file_is_reported_with_the_link(self):
         self.write("docs/index.md", "See [gone](gone.md).\n")
