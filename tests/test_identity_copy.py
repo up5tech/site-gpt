@@ -4,9 +4,10 @@ D13 deferred tenant MFA/SSO, so the claim "we have MFA" would be a security
 statement the login path cannot back, and a login page is where a customer
 decides how much an account is worth protecting. This module pins the absence
 in code rather than in a note: it scans the SPA's sources, `frontend/index.html`
-(its title and meta copy are customer-facing but live outside `src/`) and
-`README.md` for the words a claim would be made of, and fails with file/line so
-the next author sees the rule.
+(its title and meta copy are customer-facing but live outside `src/`), the
+modules that build the outgoing email/digest bodies and `README.md` for the
+words a claim would be made of, and fails with file/line so the next author
+sees the rule.
 
 Deliberately strict — it does not try to tell a negation ("no MFA yet") from a
 claim. If a doc or page ever needs to mention the words, that is a copy decision
@@ -23,6 +24,22 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 FRONTEND_SRC = REPO_ROOT / "frontend" / "src"
 FRONTEND_INDEX = REPO_ROOT / "frontend" / "index.html"
 README = REPO_ROOT / "README.md"
+
+# The outgoing message bodies live in Python (f-strings, no template directory),
+# so these are the modules that carry copy a customer reads in their inbox:
+#   digest.py   — the weekly digest HTML body and its subject line
+#   user.py     — the password-reset subject and body
+#   handoff.py  — the handoff notification body (`_render_email`) and subject
+#   chat_page.py— the hosted /chat/{id} document served to a visitor, including
+#                 its unavailable notice
+# Scanned whole rather than by extracting literals: a claim in a comment would
+# also be read by a future author as a statement about the product.
+EMAIL_COPY_MODULES = (
+    REPO_ROOT / "src" / "site_gpt" / "app" / "services" / "digest.py",
+    REPO_ROOT / "src" / "site_gpt" / "app" / "api" / "user.py",
+    REPO_ROOT / "src" / "site_gpt" / "app" / "api" / "handoff.py",
+    REPO_ROOT / "src" / "site_gpt" / "app" / "api" / "chat_page.py",
+)
 
 # File types the SPA actually renders or ships as text. Images and fonts are
 # skipped by suffix rather than by sniffing, so a new asset cannot make the
@@ -98,6 +115,21 @@ class NoIdentityClaimInCopyTests(unittest.TestCase):
             "D13 defers tenant MFA/SSO (see docs/risk-register-v6.md#r13), so no "
             "page may claim a factor or a federated login the login path does "
             "not have:\n" + "\n".join(hits),
+        )
+
+    def test_the_email_and_digest_copy_makes_no_second_factor_or_federation_claim(
+        self,
+    ):
+        hits: list[str] = []
+        for path in EMAIL_COPY_MODULES:
+            hits.extend(_claims_in(path))
+
+        self.assertEqual(
+            hits,
+            [],
+            "D13 defers tenant MFA/SSO (docs/risk-register-v6.md#r13), so the "
+            "digest, reset, handoff and hosted-page copy may not claim one:\n"
+            + "\n".join(hits),
         )
 
     def test_the_readme_makes_no_second_factor_or_federation_claim(self):
