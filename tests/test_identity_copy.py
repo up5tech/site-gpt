@@ -5,9 +5,10 @@ statement the login path cannot back, and a login page is where a customer
 decides how much an account is worth protecting. This module pins the absence
 in code rather than in a note: it scans the SPA's sources, `frontend/index.html`
 (its title and meta copy are customer-facing but live outside `src/`), the
-modules that build the outgoing email/digest bodies and `README.md` for the
-words a claim would be made of, and fails with file/line so the next author
-sees the rule.
+modules that build the outgoing email/digest bodies, every API and schema
+module (the `detail` strings a toast or error banner shows, plus the field
+descriptions the OpenAPI docs publish) and `README.md` for the words a claim
+would be made of, and fails with file/line so the next author sees the rule.
 
 Deliberately strict — it does not try to tell a negation ("no MFA yet") from a
 claim. If a doc or page ever needs to mention the words, that is a copy decision
@@ -30,15 +31,23 @@ README = REPO_ROOT / "README.md"
 #   digest.py   — the weekly digest HTML body and its subject line
 #   user.py     — the password-reset subject and body
 #   handoff.py  — the handoff notification body (`_render_email`) and subject
-#   chat_page.py— the hosted /chat/{id} document served to a visitor, including
-#                 its unavailable notice
-# Scanned whole rather than by extracting literals: a claim in a comment would
-# also be read by a future author as a statement about the product.
+# The hosted /chat/{id} document also lives under api/ and is picked up by the
+# API scan below. Scanned whole rather than by extracting literals: a claim in a
+# comment would also be read by a future author as a statement about the
+# product.
 EMAIL_COPY_MODULES = (
     REPO_ROOT / "src" / "site_gpt" / "app" / "services" / "digest.py",
     REPO_ROOT / "src" / "site_gpt" / "app" / "api" / "user.py",
     REPO_ROOT / "src" / "site_gpt" / "app" / "api" / "handoff.py",
-    REPO_ROOT / "src" / "site_gpt" / "app" / "api" / "chat_page.py",
+)
+
+# Everything the API hands to a client: HTTPException details and other 4xx/5xx
+# copy a browser renders in a toast or an error banner, and the schema field
+# descriptions the OpenAPI page publishes. Scanned as whole modules for the same
+# reason as above — a detail string is copy wherever it is written.
+API_COPY_DIRS = (
+    REPO_ROOT / "src" / "site_gpt" / "app" / "api",
+    REPO_ROOT / "src" / "site_gpt" / "app" / "schemas",
 )
 
 # File types the SPA actually renders or ships as text. Images and fonts are
@@ -67,6 +76,16 @@ def _frontend_sources() -> list[Path]:
         for path in FRONTEND_SRC.rglob("*")
         if path.is_file() and path.suffix.lower() in SCANNED_SUFFIXES
     )
+
+
+def _api_copy_sources() -> list[Path]:
+    sources: list[Path] = []
+    for directory in API_COPY_DIRS:
+        # A moved or renamed package would otherwise shrink the scan to nothing.
+        if not directory.is_dir():
+            raise RuntimeError(f"copy scan directory is missing: {directory}")
+        sources.extend(sorted(directory.rglob("*.py")))
+    return sources
 
 
 def _claims_in(path: Path) -> list[str]:
@@ -130,6 +149,21 @@ class NoIdentityClaimInCopyTests(unittest.TestCase):
             "D13 defers tenant MFA/SSO (docs/risk-register-v6.md#r13), so the "
             "digest, reset, handoff and hosted-page copy may not claim one:\n"
             + "\n".join(hits),
+        )
+
+    def test_the_api_and_schema_copy_makes_no_second_factor_or_federation_claim(
+        self,
+    ):
+        hits: list[str] = []
+        for path in _api_copy_sources():
+            hits.extend(_claims_in(path))
+
+        self.assertEqual(
+            hits,
+            [],
+            "D13 defers tenant MFA/SSO (docs/risk-register-v6.md#r13), so no "
+            "error detail, validation message or schema description may "
+            "claim one:\n" + "\n".join(hits),
         )
 
     def test_the_readme_makes_no_second_factor_or_federation_claim(self):
