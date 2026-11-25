@@ -30,6 +30,7 @@ from site_gpt.app.api.website import router as website_router
 from site_gpt.app.core.config import (
     CORS_ORIGINS,
     DOCS_ENABLED,
+    compat_token_modes_in_production,
     ensure_production_config,
     ops_status_disabled_in_production,
     validate_billing_config,
@@ -86,6 +87,18 @@ async def lifespan(_app: FastAPI):
             "config.ops_status_disabled",
             level=logging.WARNING,
             environment="production",
+        )
+    # V6-15 (D13): both token modes stay `compat` for this cohort, which is an
+    # accepted residual — a legacy tokenless session read and an embed without
+    # its token are still served. Say it once at boot, naming the settings only,
+    # so a deployment does not silently forget which posture it is in.
+    compat_modes = compat_token_modes_in_production()
+    if compat_modes:
+        log_event(
+            "config.token_modes_compat",
+            level=logging.WARNING,
+            environment="production",
+            settings=compat_modes,
         )
     # Fail fast only when billing was explicitly enabled. The default/off path
     # remains independent of Stripe credentials and makes no provider calls.

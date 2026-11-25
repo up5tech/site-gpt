@@ -542,6 +542,40 @@ def ops_status_disabled_in_production(
     return not str(value or "").strip()
 
 
+def compat_token_modes_in_production(
+    env: str | None = None,
+    session_mode: str | None = None,
+    embed_mode: str | None = None,
+) -> list[str]:
+    """Which token modes a production boot still serves in `compat` (V6-15).
+
+    D13 keeps `SESSION_TOKEN_MODE` and `EMBED_TOKEN_MODE` at `compat` for the
+    launch cohort: a session read that presents no token is still accepted
+    (K4), and an embed without `X-Embed-Token` is still served (K18). That is an
+    accepted residual, not an oversight, so a production boot says so once
+    instead of leaving an operator to infer it from the defaults. Returns the
+    *names* only — the values are booleans in effect and nothing here is a
+    secret.
+
+    Deliberately not a `production_config_errors` entry: flipping to `enforce`
+    is a compatibility migration (every live embed has to reload the snippet
+    first), so a boot refusal would take a working deployment offline over a
+    posture it has not migrated yet.
+    """
+    if not is_production(env):
+        return []
+    session = (
+        SESSION_TOKEN_MODE if session_mode is None else session_mode
+    ).strip().lower()
+    embed = (EMBED_TOKEN_MODE if embed_mode is None else embed_mode).strip().lower()
+    modes: list[str] = []
+    if session == "compat":
+        modes.append("SESSION_TOKEN_MODE")
+    if embed == "compat":
+        modes.append("EMBED_TOKEN_MODE")
+    return modes
+
+
 def ensure_production_config(
     env: str | None = None,
     values: Mapping[str, Any] | None = None,
