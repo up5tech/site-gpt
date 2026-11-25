@@ -14,9 +14,9 @@ What is pinned here:
 * `docs/security.md` and `README.md` are checked documents — both because they
   are in `DOCUMENTS` and because a broken link in a copy of one is caught — so
   their links are no longer verified by eye;
-* the two documents that carry no relative link of their own (`docs/billing.md`,
-  `docs/platform.md`) stay out of `DOCUMENTS` only while that is true: adding a
-  link to one fails this module until it is scanned too;
+* the scanned set is a glob, not a list: every top-level `docs/*.md` is in
+  `DOCUMENTS`, and a new page under `docs/` is picked up (and its links checked)
+  without editing the script;
 * the record in this checkout passes, so the suite fails when a heading or a
   file is renamed without the links being updated.
 """
@@ -162,21 +162,24 @@ class SecurityDocumentTests(CheckerTestCase):
         self.assertEqual(len(failures), 1)
         self.assertIn("#no-such-section", failures[0])
 
-    def test_documents_without_relative_links_need_no_scanning(self):
-        # Why they are not in DOCUMENTS: nothing to resolve. The day one gains a
-        # link this fails, so the reason cannot quietly go stale.
-        for name in ("docs/billing.md", "docs/platform.md"):
-            path = REPO_ROOT / name
-            self.assertTrue(path.is_file(), f"{name} is missing")
-            text = path.read_text(encoding="utf-8")
-            found = [
-                link for link in links.LINK.findall(text) if links.relative_target(link)
-            ]
-            self.assertEqual(
-                found,
-                [],
-                f"{name} now carries {found}; add it to DOCUMENTS and scan it",
-            )
+    def test_every_docs_page_is_scanned(self):
+        pages = sorted(path.name for path in (REPO_ROOT / "docs").glob("*.md"))
+        self.assertGreater(len(pages), 5)
+        for name in pages:
+            self.assertIn(f"docs/{name}", links.DOCUMENTS)
+
+    def test_a_new_docs_page_is_picked_up_by_default(self):
+        self.write("docs/other.md", "# Other\n")
+        self.write("docs/notes.md", "See [gone](other.md#no-such-heading).\n")
+
+        scanned = links.default_documents(self.root)
+
+        self.assertIn("docs/notes.md", scanned)
+        failures = links.check(list(scanned), self.root)
+        self.assertTrue(
+            any("docs/notes.md" in failure for failure in failures),
+            f"a new docs page was not checked: {failures}",
+        )
 
     def test_the_record_in_this_checkout_passes(self):
         # The whole record, including docs/security.md and README: a renamed
