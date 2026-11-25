@@ -90,6 +90,26 @@ REDIS_PORT = os.getenv("REDIS_PORT", "6379")
 REDIS_PASSWORD = os.getenv("REDIS_PASSWORD")
 REDIS_DB = os.getenv("REDIS_DB", "0")
 
+# V6-23: bounded Redis I/O. Without these a reachable-but-silent Redis pins the
+# caller for as long as the kernel keeps the socket open — an API worker on a
+# request, or the worker's whole job loop — so every command gets a ceiling.
+# The connect timeout bounds a host that never answers the handshake, the socket
+# timeout bounds a command after connect, and the health check makes a pooled
+# connection the server already dropped (an idle timeout behind a proxy or a
+# managed Redis) fail on the next command instead of failing that one request.
+# The socket timeout must stay above the inbox stream heartbeat
+# (`INBOX_STREAM_HEARTBEAT_SECONDS`), because an SSE read legitimately waits that
+# long; the production validator refuses a value at or below it.
+REDIS_SOCKET_CONNECT_TIMEOUT_SECONDS = float(
+    os.getenv("REDIS_SOCKET_CONNECT_TIMEOUT_SECONDS", "5")
+)
+REDIS_SOCKET_TIMEOUT_SECONDS = float(
+    os.getenv("REDIS_SOCKET_TIMEOUT_SECONDS", "30")
+)
+REDIS_HEALTH_CHECK_INTERVAL_SECONDS = int(
+    os.getenv("REDIS_HEALTH_CHECK_INTERVAL_SECONDS", "30")
+)
+
 # V3-03 scaffolding (not yet wired into behaviour): every feature defaults to
 # the V2.1 behaviour. RATE_LIMIT_BACKEND switches the per-IP limiter between
 # the in-process `memory` backend (default, V2.1) and the shared `redis`
@@ -403,6 +423,8 @@ def _production_values() -> dict[str, Any]:
         "TRUSTED_PROXY_IPS": TRUSTED_PROXY_IPS,
         "DOCS_ENABLED": DOCS_ENABLED,
         "PLATFORM_CONSOLE_ENABLED": PLATFORM_CONSOLE_ENABLED,
+        "REDIS_SOCKET_TIMEOUT_SECONDS": REDIS_SOCKET_TIMEOUT_SECONDS,
+        "INBOX_STREAM_HEARTBEAT_SECONDS": INBOX_STREAM_HEARTBEAT_SECONDS,
     }
 
 
@@ -450,6 +472,20 @@ def production_config_errors(
     # Reopening the console needs a new D5 answer and a verified ingress control.
     if _truthy(source.get("PLATFORM_CONSOLE_ENABLED")):
         problems.append("PLATFORM_CONSOLE_ENABLED")
+
+    # V6-23: the socket timeout exists to fail a hung Redis promptly, but the
+    # inbox stream legitimately waits `INBOX_STREAM_HEARTBEAT_SECONDS` for its
+    # next frame. A socket timeout at or below that heartbeat cuts the read
+    # before the stream's own timer fires, so every open console would reconnect
+    # in a loop instead of idling. Skipped when a caller passes a partial mapping.
+    try:
+        socket_timeout = float(source["REDIS_SOCKET_TIMEOUT_SECONDS"])
+        stream_heartbeat = float(source["INBOX_STREAM_HEARTBEAT_SECONDS"])
+    except (KeyError, TypeError, ValueError):
+        pass
+    else:
+        if socket_timeout <= stream_heartbeat:
+            problems.append("REDIS_SOCKET_TIMEOUT_SECONDS")
 
     return problems
 

@@ -17,27 +17,53 @@ import json
 import logging
 import queue
 import threading
+from collections.abc import AsyncIterator, Mapping
+from contextlib import asynccontextmanager
+from typing import Any
 
 from site_gpt.app.core.logging import log_exception
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
 
 import redis.asyncio as aioredis
 
-from site_gpt.app.core.config import REDIS_HOST, REDIS_PORT, REDIS_PASSWORD, REDIS_DB
+from site_gpt.app.core.config import (
+    REDIS_DB,
+    REDIS_HEALTH_CHECK_INTERVAL_SECONDS,
+    REDIS_HOST,
+    REDIS_PASSWORD,
+    REDIS_PORT,
+    REDIS_SOCKET_CONNECT_TIMEOUT_SECONDS,
+    REDIS_SOCKET_TIMEOUT_SECONDS,
+)
 
 QUEUE_KEY = "queue:jobs"
 
+#: The only `maxmemory-policy` that cannot evict `queue:jobs`. `queue:jobs` is a
+#: plain list with no second copy: an OOM that evicts it deletes pending work, and
+#: a restart without persistence (`appendonly no` and an empty `save`) loses it
+#: the same way. Neither is visible from inside the app afterwards, so the settings
+#: are read and reported (V6-23) instead of assumed.
+DURABLE_MAXMEMORY_POLICY = "noeviction"
 
-def create_client() -> aioredis.Redis:
-    """Build a client. Construction is lazy — no I/O happens here."""
-    return aioredis.Redis(
-        host=REDIS_HOST,
-        port=int(REDIS_PORT),
-        password=REDIS_PASSWORD,
-        db=int(REDIS_DB),
-        decode_responses=True,
-    )
+
+def create_client(**overrides: Any) -> aioredis.Redis:
+    """Build a client. Construction is lazy — no I/O happens here.
+
+    V6-23: the timeouts and the health check are applied here, so every caller —
+    the API's shared client, the publisher thread's own client, `scripts/` — gets
+    the same bounds from one place.
+"""
+    options: dict[str, Any] = {
+        "host": REDIS_HOST,
+        "port": int(REDIS_PORT),
+        "password": REDIS_PASSWORD,
+        "db": int(REDIS_DB),
+        "decode_responses": True,
+        "socket_connect_timeout": REDIS_SOCKET_CONNECT_TIMEOUT_SECONDS,
+        "socket_timeout": REDIS_SOCKET_TIMEOUT_SECONDS,
+        "health_check_interval": REDIS_HEALTH_CHECK_INTERVAL_SECONDS,
+    }
+    options.update(overrides)
+    return aioredis.Redis(**options)
 
 
 # Module-level shared client. `redis.Redis()` does not connect at
@@ -56,6 +82,71 @@ async def ping() -> bool:
         return bool(await get_client().ping())
     except Exception:
         return False
+
+
+async def close_client() -> bool:
+    """Release the shared client's pooled connections; never raises.
+
+    Used by the API's shutdown (V6-23): uvicorn stops accepting after the
+    lifespan yields, and a connection left in the pool holds a file descriptor
+    (and, on a managed Redis, one of its client slots) until the process exits.
+    Closing is best-effort — the process is going away either way — and the pool
+    reconnects lazily if anything still uses this client afterwards, which is
+    what makes the call safe in tests that reuse the module-level client.
+    """
+    try:
+        await get_client().aclose()
+    except Exception as e:  # noqa: BLE001 - shutdown must not fail on Redis
+        log_exception("redis.close_failed", e, level=logging.WARNING)
+        return False
+    return True
+
+
+def durability_problems(values: Mapping[str, Any]) -> list[str]:
+    """The names of Redis settings that let an outage drop queued jobs (V6-23).
+
+    Two ways, both silent from inside the app: an eviction policy other than
+    `noeviction` frees `queue:jobs` when the instance reaches `maxmemory`, and a
+    restart without persistence (`appendonly no` and no `save` schedule) loses
+    the list outright. `noeviction` is not a guarantee of durability, it only
+    means a full instance refuses writes instead of deleting queued work.
+
+    A missing key is not a problem: managed Redis commonly restricts `CONFIG`,
+    so absent settings are reported as unreadable by `durability()` rather than
+    guessed here.
+    """
+    problems: list[str] = []
+    policy = values.get("maxmemory-policy")
+    if policy is not None and str(policy).strip().lower() != DURABLE_MAXMEMORY_POLICY:
+        problems.append("maxmemory-policy")
+    appendonly = str(values.get("appendonly") or "").strip().lower()
+    if appendonly not in {"yes", "true", "1"}:
+        if not str(values.get("save") or "").strip():
+            problems.append("appendonly")
+    return problems
+
+
+async def durability() -> dict[str, Any]:
+    """Read the durability-relevant Redis settings (V6-23). Never raises.
+
+    `ok: False` means the settings could not be read — Redis is down, or a
+    managed instance refuses `CONFIG GET`. That is reported as unknown, never as
+    safe: an empty `problems` list only means "nothing wrong was *seen*", and
+    the operator runbook has to say what a deployment with `ok: False` must be
+    verified against by hand. `queue:jobs` has no copy elsewhere, so the check is
+    about refusing to lose pending work, not about cache warmth.
+    """
+    report: dict[str, Any] = {"ok": False, "problems": [], "settings": {}}
+    try:
+        raw = await get_client().config_get(  # type: ignore[attr-defined]
+            "maxmemory-policy", "appendonly", "save"
+        )
+    except Exception as e:  # noqa: BLE001 - reported as unknown, not raised
+        log_exception("redis.durability_unreadable", e, level=logging.WARNING)
+        return report
+    settings = {str(key): value for key, value in dict(raw or {}).items()}
+    report.update(ok=True, settings=settings, problems=durability_problems(settings))
+    return report
 
 
 async def enqueue_job(data: dict):

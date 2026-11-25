@@ -535,6 +535,25 @@ def evaluate(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
                 )
             )
 
+        # V6-23: an eviction policy or a restart without persistence can delete
+        # `queue:jobs`, which has no copy anywhere else. Unreadable settings are
+        # not alerted (managed Redis often refuses CONFIG); a *read* settings set
+        # with a known-bad value is, because no later signal would show the loss.
+        durability = snapshot["redis"].get("durability") or {}
+        durably_bad = [
+            str(name) for name in (durability.get("problems") or []) if name
+        ]
+        if durability.get("ok") and durably_bad:
+            alerts.append(
+                _alert(
+                    "redis.durability_unsafe",
+                    "critical",
+                    "Redis can drop queued jobs: an eviction policy other than "
+                    "noeviction, or no persistence across a restart.",
+                    problems=durably_bad,
+                )
+            )
+
     api = snapshot.get("api") or {}
     fleet = api.get("fleet") or {}
     # V6-23: the fleet's sum when the buckets could be read, this instance's

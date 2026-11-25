@@ -27,7 +27,11 @@ from sqlalchemy.orm import Session
 from site_gpt.app.core import telemetry
 from site_gpt.app.core.config import OPS_STATUS_TOKEN
 from site_gpt.app.db.session import get_db
-from site_gpt.app.services.redis import get_client, ping as redis_ping
+from site_gpt.app.services.redis import (
+    durability as redis_durability,
+    get_client,
+    ping as redis_ping,
+)
 
 router = APIRouter(tags=["ops"])
 
@@ -78,9 +82,14 @@ async def ops_status(
         raise HTTPException(status_code=401, detail="invalid ops token")
 
     client = get_client()
+    redis_state = await telemetry.redis_snapshot(client)
+    # V6-23: persistence/eviction, read beside the keys they can delete. It rides
+    # inside the redis section so a reader sees "queue is fine" and "a restart
+    # would drop it" together instead of one hiding the other.
+    redis_state["durability"] = await redis_durability()
     snapshot = telemetry.build_snapshot(
         db_ok=_db_answers(db),
-        redis=await telemetry.redis_snapshot(client),
+        redis=redis_state,
         # V6-23: the sum every replica writes, beside this instance's window.
         fleet=await telemetry.fleet_window(client),
     )
