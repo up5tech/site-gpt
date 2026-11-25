@@ -8,9 +8,12 @@ What is pinned here:
   a slug used twice is reported instead of silently landing on the first;
 * the GitHub slug keeps the double hyphen an em dash surrounded by spaces
   produces, which is what the V6 appendix anchors rely on;
-* `docs/security.md` is one of the checked documents — both because it is in
-  `DOCUMENTS` and because a broken link in a copy of it is caught — so §5's
-  links are no longer verified by eye;
+* `docs/security.md` and `README.md` are checked documents — both because they
+  are in `DOCUMENTS` and because a broken link in a copy of one is caught — so
+  their links are no longer verified by eye;
+* the two documents that carry no relative link of their own (`docs/billing.md`,
+  `docs/platform.md`) stay out of `DOCUMENTS` only while that is true: adding a
+  link to one fails this module until it is scanned too;
 * the record in this checkout passes, so the suite fails when a heading or a
   file is renamed without the links being updated.
 """
@@ -114,9 +117,41 @@ class SecurityDocumentTests(CheckerTestCase):
         self.assertIn("risk-register-v6.md", failures[0])
         self.assertIn("no such file", failures[0])
 
+    def test_readme_is_one_of_the_checked_documents(self):
+        self.assertIn("README.md", links.DOCUMENTS)
+
+    def test_a_broken_fragment_in_a_readme_copy_is_caught(self):
+        self.write(
+            "README.md",
+            "# Readme\n\nSee [billing](docs/billing.md#no-such-section).\n",
+        )
+        self.write("docs/billing.md", "# Billing\n")
+
+        failures = links.check(["README.md"], self.root)
+
+        self.assertEqual(len(failures), 1)
+        self.assertIn("#no-such-section", failures[0])
+
+    def test_documents_without_relative_links_need_no_scanning(self):
+        # Why they are not in DOCUMENTS: nothing to resolve. The day one gains a
+        # link this fails, so the reason cannot quietly go stale.
+        for name in ("docs/billing.md", "docs/platform.md"):
+            path = REPO_ROOT / name
+            self.assertTrue(path.is_file(), f"{name} is missing")
+            text = path.read_text(encoding="utf-8")
+            found = [
+                link for link in links.LINK.findall(text) if links.relative_target(link)
+            ]
+            self.assertEqual(
+                found,
+                [],
+                f"{name} now carries {found}; add it to DOCUMENTS and scan it",
+            )
+
     def test_the_record_in_this_checkout_passes(self):
-        # The whole record, including docs/security.md: a renamed heading or a
-        # moved file fails the suite here rather than in a later read-through.
+        # The whole record, including docs/security.md and README: a renamed
+        # heading or a moved file fails the suite here rather than in a later
+        # read-through.
         self.assertEqual(links.check(list(links.DOCUMENTS), REPO_ROOT), [])
 
 
