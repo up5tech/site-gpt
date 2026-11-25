@@ -13,6 +13,11 @@ every relative link those documents carry, and fails on:
   `<a name="..."></a>` anchor in the target file;
 * a fragment that matches a heading slug used more than once in the target, so
   the reader lands on whichever copy GitHub numbered first;
+* a `docs/` page no scanned document links to, so nothing reaches it from
+  README. A page reached only through a plain-text mention is reported as a
+  note rather than a failure: the reader can still find it, but not by following
+  a link. Reachability only means something for a complete scan, so it is
+  skipped when README is not among the documents being checked;
 * a plain-text reference to a repository document (`docs/platform.md`,
   `plans/PLAN_V4.md`, `README.md`) whose file does not exist. The record also
   names documents without a Markdown link — `docs/security.md` points at
@@ -301,6 +306,64 @@ def plain_document_references(text: str) -> list[str]:
     return sorted(set(PLAIN_DOC.findall(without_links)))
 
 
+def page_graph(name: str, root: Path) -> tuple[set[str], set[str]]:
+    """A document's outgoing edges: Markdown links, and plain-text mentions."""
+    source = root / name
+    text = Document(source).text
+    linked: set[str] = set()
+    for link in LINK.findall(text):
+        if not relative_target(link):
+            continue
+        path_part = link.partition("#")[0]
+        if not path_part:
+            continue
+        try:
+            linked.add(
+                (source.parent / path_part)
+                .resolve()
+                .relative_to(root.resolve())
+                .as_posix()
+            )
+        except ValueError:  # outside the repository, reported elsewhere
+            continue
+    return linked, set(plain_document_references(text))
+
+
+def _walk(start: str, graph: dict[str, set[str]]) -> set[str]:
+    """Every node reachable from `start`, staying inside the graph's nodes."""
+    seen = {start}
+    stack = [start]
+    while stack:
+        for target in graph.get(stack.pop(), ()):
+            if target in graph and target not in seen:
+                seen.add(target)
+                stack.append(target)
+    return seen
+
+
+def reachability(files: list[str], root: Path) -> tuple[set[str], set[str]]:
+    """Pages reachable from README through links, and through links or mentions."""
+    graph: dict[str, set[str]] = {}
+    mentions: dict[str, set[str]] = {}
+    for name in files:
+        if (root / name).is_file():
+            graph[name], mentions[name] = page_graph(name, root)
+    if "README.md" not in graph:
+        return set(), set()
+    loose = {name: edges | mentions.get(name, set()) for name, edges in graph.items()}
+    return _walk("README.md", graph), _walk("README.md", loose)
+
+
+def plain_text_only_pages(files: list[str], root: Path) -> list[str]:
+    """docs pages reached only because something names them in prose."""
+    linked, loose = reachability(files, root)
+    return [
+        name
+        for name in files
+        if name.startswith("docs/") and name in loose and name not in linked
+    ]
+
+
 def load(files: list[str], root: Path) -> dict[Path, Document]:
     """Parse each named document once; paths that do not exist are skipped."""
     documents: dict[Path, Document] = {}
@@ -363,6 +426,18 @@ def check(files: list[str], root: Path) -> list[str]:
             if not (root / reference).is_file():
                 failures.append(f"{name}: {reference}: no such document")
 
+    # Only a complete scan can say a page is unreachable; checking one file on
+    # its own would report every other page as an orphan.
+    linked, loose = reachability(files, root)
+    if "README.md" in files:
+        for name in files:
+            if not name.startswith("docs/") or name in loose:
+                continue
+            failures.append(
+                f"{name}: no scanned document links to it, so nothing reaches it"
+                " from README"
+            )
+
     register = root / RISK_REGISTER
     if register.is_file():
         rows = risk_rows(document(register).text)
@@ -399,6 +474,7 @@ def report(files: list[str], root: Path) -> int:
         plain += len(plain_document_references(doc.text))
 
     failures = check(files, root)
+    notes = plain_text_only_pages(files, root)
     for name in files:
         path = root / name
         if path not in documents:
@@ -422,6 +498,11 @@ def report(files: list[str], root: Path) -> int:
         f"references, {rows} risk rows and "
         f"{len(cells)} decisions ({pairings} decision-risk pairings) checked"
     )
+    for name in notes:
+        print(
+            f"note: {name} is reachable only through a plain-text mention, "
+            "not a link"
+        )
     if failures:
         print(f"\nFAILED — {len(failures)} problem(s):")
         for failure in failures:
