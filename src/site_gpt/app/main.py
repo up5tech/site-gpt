@@ -2,6 +2,7 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 
 from site_gpt.app.api.api_key import router as api_key_router
@@ -35,6 +36,7 @@ from site_gpt.app.core.config import (
     ops_status_disabled_in_production,
     validate_billing_config,
 )
+from site_gpt.app.core.errors import request_validation_error_response
 from site_gpt.app.core.logging import (
     RequestContextMiddleware,
     configure_logging,
@@ -139,6 +141,12 @@ app.add_exception_handler(SessionTokenError, error_response)
 # are deliberately separate codes: an embed refusal must never make the widget
 # reset the visitor's session.
 app.add_exception_handler(EmbedTokenRefused, embed_token_error_response)
+
+# V6-1G box 4: FastAPI's default 422 echoes the submitted input, which hands a
+# per-request credential (Notion token, Drive access token, password) back in
+# the body whenever an unrelated field fails validation. The sanitising handler
+# keeps FastAPI's `{detail: [{type, loc, msg}]}` shape and drops the values.
+app.add_exception_handler(RequestValidationError, request_validation_error_response)
 
 # Browsers reject `allow_credentials=True` together with a wildcard origin,
 # so credentials are only enabled for explicit (non-wildcard) origin lists.
