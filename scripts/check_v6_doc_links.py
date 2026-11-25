@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """Check the internal links of the V6 decision and risk documents (V6-31 prep).
 
-The checked set is every page under `docs/` plus `plans/PLAN_V6.md` and
+The checked set is every page under `docs/`, every plan under `plans/` and
 `README.md` — Markdown that points at each other's sections and, in the risk
 register, at individual table rows. Nothing renders them in CI, so a
 reworded heading or a moved file breaks a link silently. This script resolves
@@ -58,17 +58,21 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-# Every page under `docs/` is scanned, plus the V6 plan and README. A hand-kept
-# list had to be extended by hand each time a document gained a link — the four
-# that only ever appeared as link targets (`api-v1.md`, `billing.md`,
+# Every page under `docs/` and every plan under `plans/` is scanned, plus
+# README. A hand-kept list had to be extended each time a document gained a link
+# — the four that only ever appeared as link targets (`api-v1.md`, `billing.md`,
 # `platform.md`, `worker-delivery.md`) went unchecked for exactly that reason.
-# Only Markdown at the top of `docs/` is included: subdirectories would need a
-# policy of their own. Order is for the report only.
+# The older plans are scanned on the same terms as V6: their plain-text
+# references are what a maintainer follows, historical or not. Only Markdown at
+# the top of each directory is included: subdirectories would need a policy of
+# their own. Order is for the report only.
 def default_documents(root: Path) -> tuple[str, ...]:
     pages = sorted(
-        path.relative_to(root).as_posix() for path in (root / "docs").glob("*.md")
+        path.relative_to(root).as_posix()
+        for directory in (root / "docs", root / "plans")
+        for path in directory.glob("*.md")
     )
-    return (*pages, "plans/PLAN_V6.md", "README.md")
+    return (*pages, "README.md")
 
 
 DOCUMENTS = default_documents(REPO_ROOT)
