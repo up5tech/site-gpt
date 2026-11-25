@@ -451,23 +451,27 @@ class BackgroundLoopRetentionTests(unittest.TestCase):
 
         self.assertEqual(len(tasks), 8)
 
-    def test_the_worker_starts_the_kept_loops(self):
-        # `worker()` never returns on its own; cancelling the queue read ends it
-        # after startup, leaving the loops it created behind for inspection.
+    def test_the_worker_starts_the_kept_loops_and_cancels_them_on_the_way_out(self):
+        # V6-23: leaving `worker()` — a stop event or a cancellation — must not
+        # leave the scheduler loops running behind it. Shutdown cancels them,
+        # waits for them to unwind and closes the pools.
         async def scenario():
-            with patch.object(worker, "requeue_stuck_ingests", new=AsyncMock()):
-                with patch.object(
+            with (
+                patch.object(worker, "requeue_stuck_ingests", new=AsyncMock()),
+                patch.object(worker, "configure_logging"),
+                patch.object(
+                    worker, "close_client", new=AsyncMock(return_value=True)
+                ),
+                patch.object(worker, "dispose_engine") as dispose,
+                patch.object(
                     worker.redis_client,
                     "brpop",
                     new=AsyncMock(side_effect=asyncio.CancelledError),
-                ):
-                    with self.assertRaises(asyncio.CancelledError):
-                        await worker.worker()
-            tasks = list(worker._background_tasks)
-            self.assertEqual(len(tasks), 7)
-            for task in tasks:
-                task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
+                ),
+            ):
+                with self.assertRaises(asyncio.CancelledError):
+                    await worker.worker()
+            dispose.assert_called_once()
             for _ in range(3):
                 await asyncio.sleep(0)
 
