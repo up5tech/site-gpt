@@ -1,6 +1,8 @@
 from fastapi import HTTPException, Header, status, Depends
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from datetime import datetime, timedelta, UTC
+from uuid import UUID
+
 from jose import jwt
 from passlib.context import CryptContext
 from requests import Session
@@ -13,6 +15,15 @@ from site_gpt.app.services import platform as platform_service
 
 
 pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
+
+# D13 (recorded 2026-11-24): the 24-hour tenant JWT stays for the launch cohort,
+# and there is no per-session revocation. This number is therefore the ceiling on
+# how long a stolen token or a leaked password stays usable on its own; the
+# incident tools around it are account deactivation, user deletion, API-key
+# revocation and a `JWT_SECRET_KEY` rotation, which `docs/security.md` records as
+# the runbook. One named constant, so the enforced lifetime cannot drift away
+# from the documented posture without this line changing.
+ACCESS_TOKEN_TTL = timedelta(hours=24)
 
 
 def hash_password(password: str) -> str:
@@ -27,11 +38,15 @@ def create_access_token(
     data: dict,
     secret_key: str,
     algorithm: str = "HS256",
-    expires_delta: timedelta = timedelta(hours=24),
+    expires_delta: timedelta | None = None,
 ):
     to_encode = data.copy()
-    expire = datetime.now(UTC) + expires_delta
-    to_encode.update({"exp": expire})
+    issued_at = datetime.now(UTC)
+    expire = issued_at + (expires_delta or ACCESS_TOKEN_TTL)
+    # `iat` is what makes the issued lifetime readable after the fact (an
+    # incident review can say when a token was minted without trusting the
+    # client), and `exp` is what this app enforces on every request.
+    to_encode.update({"iat": issued_at, "exp": expire})
     encoded_jwt = jwt.encode(to_encode, secret_key, algorithm=algorithm)
     return encoded_jwt
 
@@ -43,13 +58,23 @@ def verify_token(
 ):
     try:
         payload = jwt.decode(token, secret_key, algorithms=algorithms)
-        return payload
     except jwt.JWTError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid token",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    if payload.get("exp") is None:
+        # python-jose verifies `exp` only when it is present, so a signed token
+        # without one would never age out — the 24-hour posture (D13) does not
+        # allow a token that outlives it. Every token this app issues carries
+        # `exp`, so refusing the rest cannot break a legitimate session.
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return payload
 
 
 def get_current_user(
@@ -58,8 +83,12 @@ def get_current_user(
 ):
     token = credentials.credentials
     payload = verify_token(token, JWT_SECRET_KEY, [JWT_ALGORITHM])
-    user_id = payload.get("sub")
-    if user_id is None:
+    # `sub` is attacker-controlled for anything that can sign with the key and
+    # garbage for a corrupted token: coerce it here so a malformed value is a
+    # 401 like every other bad token, not a database error surfacing as a 500.
+    try:
+        user_id = UUID(str(payload.get("sub")))
+    except (TypeError, ValueError):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid token",
