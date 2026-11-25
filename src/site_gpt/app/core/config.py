@@ -271,6 +271,18 @@ API_ERROR_RATE_MIN_REQUESTS = int(
 # token is compared in constant time and never echoed.
 OPS_STATUS_TOKEN = os.getenv("OPS_STATUS_TOKEN", "").strip()
 
+# V6-23: how many worker processes the deployment expects to run. 0 (the
+# default) disables the check: an app cannot see its own replica count, so a
+# guessed number would either page a single-worker deployment or hide a dead
+# worker behind a lower expectation. When set, `evaluate` compares it with the
+# fresh per-worker heartbeat keys and raises `worker.count_low`. This is the only
+# signal that can see a worker which never started or whose key already expired —
+# both leave nothing for the per-worker alerts to name. It is configuration, not
+# discovery: a deployment that changes its worker count has to change this with
+# it, which is the trade recorded under V6-23 (a live registry would move that
+# failure mode into the alert path itself).
+OPS_EXPECTED_WORKERS = max(0, int(os.getenv("OPS_EXPECTED_WORKERS", "0")))
+
 # Serve /docs, /redoc and /openapi.json. Development keeps them on; production
 # requires this off (D4), and `main.py` passes the flag to FastAPI.
 DOCS_ENABLED = os.getenv("DOCS_ENABLED", "true").strip().lower() in (

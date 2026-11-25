@@ -48,6 +48,7 @@ from site_gpt.app.core.config import (
     API_ERROR_RATE_WINDOW_SECONDS,
     JOB_FAILURE_ALERT_COUNT,
     JOB_FAILURE_WINDOW_SECONDS,
+    OPS_EXPECTED_WORKERS,
     QUEUE_AGE_ALERT_SECONDS,
     QUEUE_DEPTH_ALERT,
     WORKER_HEARTBEAT_INTERVAL_SECONDS,
@@ -359,6 +360,26 @@ async def _worker_snapshots(client: Any, moment: datetime) -> list[dict[str, Any
     return sorted(workers, key=lambda worker: worker["worker"])
 
 
+def fresh_worker_count(workers: list[dict[str, Any]] | None) -> int:
+    """How many workers are inside the stale window (V6-23).
+
+    A per-worker key's TTL (three intervals) outlives the stale threshold, so a
+    stopped worker can still have a key that is present and too old: counting
+    every key would let a corpse satisfy the deployment's expected count. A key
+    with no usable timestamp is not fresh either. This is the number
+    `OPS_EXPECTED_WORKERS` is compared with, so it lives next to the snapshot's
+    own `workers` list and both numbers are computed one way.
+    """
+    fresh = 0
+    for worker in workers or []:
+        if not isinstance(worker, dict):
+            continue
+        age = worker.get("age_seconds")
+        if age is not None and age <= WORKER_HEARTBEAT_STALE_SECONDS:
+            fresh += 1
+    return fresh
+
+
 async def redis_snapshot(client: Any, *, now: datetime | None = None) -> dict[str, Any]:
     """Read the worker heartbeat, queue depth and counters. Never raises."""
     moment = now or datetime.now(UTC)
@@ -370,6 +391,7 @@ async def redis_snapshot(client: Any, *, now: datetime | None = None) -> dict[st
         "queue_age_seconds": None,
         "job_failures": 0,
         "workers": [],
+        "workers_live": 0,
     }
     try:
         raw_heartbeat = await client.get(HEARTBEAT_KEY)
@@ -401,6 +423,7 @@ async def redis_snapshot(client: Any, *, now: datetime | None = None) -> dict[st
 
     # V6-23: per-worker keys beside the legacy document, worst-first detection.
     snapshot["workers"] = await _worker_snapshots(client, moment)
+    snapshot["workers_live"] = fresh_worker_count(snapshot["workers"])
 
     # Age only means something while there is something waiting.
     if snapshot["queue_depth"]:
@@ -480,6 +503,29 @@ def evaluate(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
                         worker=identity,
                         age_seconds=round(age, 1),
                         threshold_seconds=WORKER_HEARTBEAT_STALE_SECONDS,
+                    )
+                )
+
+        # V6-23: the deployment's roster. Per-worker alerts can only name a key
+        # that exists; a worker that never started, or whose key already expired,
+        # leaves nothing behind, so only a deployment-fed count sees it. 0 means
+        # the roster is not configured and never alerts.
+        if OPS_EXPECTED_WORKERS:
+            live = snapshot["redis"].get("workers_live")
+            if live is None:
+                # An older producer's snapshot has no count; derive it from the
+                # same definition rather than assume zero.
+                live = fresh_worker_count(snapshot["redis"].get("workers"))
+            if live < OPS_EXPECTED_WORKERS:
+                alerts.append(
+                    _alert(
+                        "worker.count_low",
+                        "critical",
+                        "Fewer workers are heartbeating than the deployment "
+                        "expects: a worker is stopped or never started.",
+                        expected=OPS_EXPECTED_WORKERS,
+                        live=live,
+                        missing=OPS_EXPECTED_WORKERS - live,
                     )
                 )
 
@@ -610,6 +656,7 @@ def build_snapshot(
     snapshot["thresholds"] = {
         "worker_heartbeat_stale_seconds": WORKER_HEARTBEAT_STALE_SECONDS,
         "worker_heartbeat_interval_seconds": WORKER_HEARTBEAT_INTERVAL_SECONDS,
+        "expected_workers": OPS_EXPECTED_WORKERS,
         "queue_depth": QUEUE_DEPTH_ALERT,
         "queue_age_seconds": QUEUE_AGE_ALERT_SECONDS,
         "job_failures": JOB_FAILURE_ALERT_COUNT,
@@ -636,6 +683,7 @@ __all__ = [
     "build_snapshot",
     "evaluate",
     "fleet_window",
+    "fresh_worker_count",
     "note_job_failure",
     "note_queue_pop",
     "record_request",
