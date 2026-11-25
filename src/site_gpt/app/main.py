@@ -39,7 +39,8 @@ from site_gpt.app.core.logging import (
     configure_logging,
     log_event,
 )
-from site_gpt.app.services.redis import get_client
+from site_gpt.app.db.session import dispose_engine
+from site_gpt.app.services.redis import close_client, get_client
 from site_gpt.app.services.embed_guard import (
     EmbedTokenRefused,
     embed_token_error_response,
@@ -89,7 +90,17 @@ async def lifespan(_app: FastAPI):
     # Fail fast only when billing was explicitly enabled. The default/off path
     # remains independent of Stripe credentials and makes no provider calls.
     validate_billing_config()
-    yield
+    try:
+        yield
+    finally:
+        # V6-23: uvicorn has drained the requests by the time shutdown runs, so
+        # this is where the process gives its pooled resources back. Without it a
+        # rolling deploy leaves Redis client slots and Postgres backends open
+        # until each side times them out, and a replica that stopped answering
+        # keeps holding them while it is replaced. Both calls are best-effort and
+        # log a failure instead of raising: a stop must not become an error.
+        await close_client()
+        dispose_engine()
 
 
 app = FastAPI(

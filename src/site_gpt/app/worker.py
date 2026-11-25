@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import signal
 import time
 from datetime import datetime, timedelta, UTC
 from uuid import UUID
@@ -11,7 +12,7 @@ from site_gpt.app.services.ingest import ingest_document, ingest_extra_document
 from site_gpt.app.services.ingest_claim import STUCK_INGEST_AFTER, claim_ingest
 from site_gpt.app.services.sitemap import add_missing_pages
 from site_gpt.app.services.parse import extract_text_from_file
-from site_gpt.app.services.redis import redis_client, enqueue_job
+from site_gpt.app.services.redis import close_client, redis_client, enqueue_job
 from site_gpt.app.core.config import (
     CRAWL_REFRESH_HOURS,
     DELIVERY_CHECK_SECONDS,
@@ -22,6 +23,7 @@ from site_gpt.app.core.config import (
     SITEMAP_SCAN_INTERVAL_SECONDS,
     TOPIC_CLUSTER_INTERVAL_SECONDS,
     WORKER_HEARTBEAT_INTERVAL_SECONDS,
+    WORKER_QUEUE_POP_TIMEOUT_SECONDS,
     DIGEST_ENABLED,
     DIGEST_HOUR,
 )
@@ -30,7 +32,7 @@ from site_gpt.app.services.integrations import (
     process_due_deliveries,
     purge_deliveries,
 )
-from site_gpt.app.db.session import SessionLocal
+from site_gpt.app.db.session import SessionLocal, dispose_engine
 from site_gpt.app.core.logging import (
     bind_request_id,
     configure_logging,
@@ -194,7 +196,59 @@ async def heartbeat_loop():
         await asyncio.sleep(WORKER_HEARTBEAT_INTERVAL_SECONDS)
 
 
-async def worker():
+def install_stop_handlers(
+    stop: asyncio.Event,
+    *,
+    loop: object | None = None,
+    signals: tuple[signal.Signals, ...] = (signal.SIGTERM, signal.SIGINT),
+) -> list[signal.Signals]:
+    """Turn the deployment's stop signals into one event (V6-23).
+
+    A container stop (SIGTERM) and Ctrl-C (SIGINT) both mean "finish the job you
+    are running, then leave". Without a handler SIGTERM terminates the process
+    wherever it happens to be, which is exactly the crash-before-progress window
+    V6-20 owns; with one, the consumer finishes its current job and only then
+    shuts the loops down. `loop` is injectable so this is testable without a real
+    signal, and a loop that cannot install handlers (a non-main thread, or a
+    platform without them) is left with the default disposition rather than
+    failing startup.
+    """
+    target = loop if loop is not None else asyncio.get_running_loop()
+    installed: list[signal.Signals] = []
+    for sig in signals:
+        try:
+            target.add_signal_handler(sig, stop.set)  # type: ignore[attr-defined]
+        except (AttributeError, NotImplementedError, RuntimeError, ValueError):
+            continue
+        installed.append(sig)
+    return installed
+
+
+async def _stop_background_loops(tasks: list[asyncio.Task]) -> None:
+    """Cancel the scheduler loops and wait for them to unwind (V6-23).
+
+    They are cancelled rather than drained: each tick is a read plus idempotent
+    enqueues (every job claims its own row), so stopping one mid-tick either
+    loses nothing or leaves one job for the next process — which is what the
+    stuck-ingest recovery already expects. The job this process was running is
+    not a background task: the consumer awaits it inline, so it has finished
+    before this runs.
+    """
+    for task in tasks:
+        task.cancel()
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+async def worker(stop: asyncio.Event | None = None):
+    """Consume the queue until `stop` is set, then leave cleanly.
+
+    `stop` is the graceful-shutdown signal (see `install_stop_handlers`). A job
+    that was already popped is always run to completion: `BRPOP` removed it from
+    the list and nothing else would execute it, so stopping between jobs and
+    stopping mid-job are deliberately different.
+    """
+    stop = stop or asyncio.Event()
     configure_logging()
     log_event("worker.started")
     # Pick up ingests orphaned by a previous process before consuming jobs.
@@ -205,41 +259,59 @@ async def worker():
     # Scheduler loops. `start_background_loops` keeps a strong reference to every
     # task: the event loop holds only weak references, so an unreferenced loop
     # could be garbage-collected mid-run and stop silently.
-    start_background_loops()
-    while True:
-        try:
-            _, job = await redis_client.brpop("queue:jobs")  # type: ignore
-        except Exception as e:
-            log_exception("worker.queue.read_failed", e)
-            await asyncio.sleep(2)
-            continue
-
-        # V6-21: a queue that is no longer being drained is the alert; the pop
-        # time is what makes "backlog age" readable from a Redis list.
-        await note_queue_pop(redis_client)
-
-        data = json.loads(job)
-        job_type = data.get("type")
-        # One correlation id per job: its handler's events and any failure share
-        # it, so a support report resolves to one job without guessing by time.
-        with bind_request_id() as job_request_id:
-            log_event("worker.job.received", job_type=job_type)
-            handler = _JOB_HANDLERS.get(str(job_type))
-            if handler is None:
-                log_event(
-                    "worker.job.unknown",
-                    level=logging.WARNING,
-                    job_type=job_type,
-                )
-                continue
+    tasks = start_background_loops()
+    try:
+        while not stop.is_set():
             try:
-                await handler(data)
+                # A bounded pop, not `0`: the timeout is what lets this loop see
+                # `stop` while it is idle, and a pushed job still wakes it at once.
+                item = await redis_client.brpop(  # type: ignore[attr-defined]
+                    "queue:jobs", timeout=WORKER_QUEUE_POP_TIMEOUT_SECONDS
+                )
             except Exception as e:
-                # The handler owns its claims and rows; this loop does not retry,
-                # so the failure must be visible as one structured event and in
-                # the repeated-failure counter V6-21 alerts on.
-                log_exception("worker.job.failed", e, job_type=job_type)
-                await note_job_failure(redis_client)
+                log_exception("worker.queue.read_failed", e)
+                await asyncio.sleep(2)
+                continue
+            if item is None:
+                continue
+
+            _, job = item
+
+            # V6-21: a queue that is no longer being drained is the alert; the pop
+            # time is what makes "backlog age" readable from a Redis list.
+            await note_queue_pop(redis_client)
+
+            data = json.loads(job)
+            job_type = data.get("type")
+            # One correlation id per job: its handler's events and any failure share
+            # it, so a support report resolves to one job without guessing by time.
+            with bind_request_id() as job_request_id:
+                log_event("worker.job.received", job_type=job_type)
+                handler = _JOB_HANDLERS.get(str(job_type))
+                if handler is None:
+                    log_event(
+                        "worker.job.unknown",
+                        level=logging.WARNING,
+                        job_type=job_type,
+                    )
+                    continue
+                try:
+                    await handler(data)
+                except Exception as e:
+                    # The handler owns its claims and rows; this loop does not retry,
+                    # so the failure must be visible as one structured event and in
+                    # the repeated-failure counter V6-21 alerts on.
+                    log_exception("worker.job.failed", e, job_type=job_type)
+                    await note_job_failure(redis_client)
+    finally:
+        # V6-23: give the process's pooled resources back and say so. The
+        # heartbeat is deliberately left to expire: a planned stop and a crash
+        # should look the same to the alert until the next worker refreshes the
+        # key, otherwise a rolling restart would have to suppress its own alert.
+        await _stop_background_loops(tasks)
+        await close_client()
+        dispose_engine()
+        log_event("worker.stopped", graceful=stop.is_set())
 
 
 async def handle_ingest(data):
@@ -1093,5 +1165,16 @@ _JOB_HANDLERS = {
 }
 
 
+async def main() -> None:
+    """The process entry point: signals first, then the consumer.
+
+    Handlers are installed before any work is consumed, so a stop that arrives
+    during startup is still one event rather than a kill.
+    """
+    stop = asyncio.Event()
+    install_stop_handlers(stop)
+    await worker(stop=stop)
+
+
 if __name__ == "__main__":
-    asyncio.run(worker())
+    asyncio.run(main())

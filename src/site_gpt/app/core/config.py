@@ -230,6 +230,14 @@ WORKER_HEARTBEAT_INTERVAL_SECONDS = int(
 WORKER_HEARTBEAT_STALE_SECONDS = int(
     os.getenv("WORKER_HEARTBEAT_STALE_SECONDS", "90")
 )
+# V6-23: how long one `BRPOP` blocks before the consumer re-checks its stop
+# signal. `BRPOP 0` would hold the loop until a job arrives, so a graceful stop
+# (SIGTERM on a deploy) could not be noticed between jobs; this is the worst-case
+# shutdown delay for an idle worker, not a poll interval for jobs — a pushed job
+# still wakes the pop immediately.
+WORKER_QUEUE_POP_TIMEOUT_SECONDS = int(
+    os.getenv("WORKER_QUEUE_POP_TIMEOUT_SECONDS", "5")
+)
 QUEUE_DEPTH_ALERT = int(os.getenv("QUEUE_DEPTH_ALERT", "100"))
 QUEUE_AGE_ALERT_SECONDS = int(os.getenv("QUEUE_AGE_ALERT_SECONDS", "900"))
 JOB_FAILURE_ALERT_COUNT = int(os.getenv("JOB_FAILURE_ALERT_COUNT", "3"))
