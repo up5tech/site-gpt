@@ -37,4 +37,4 @@
 - Retry limits, backoff, dead-letter ownership and the replay procedure.
 - Any further code change: finding 1's missing `await` was repaired as a standalone bug fix (it restored the behaviour the loop already claimed), and nothing else recorded here is a change, a policy choice or a D9 decision.
 
-The first three questions above are D9's, and the brief that now records their options is `docs/preflight-v6.md` → `Appendix — D9 decision brief`; D9 is still **UNAPPROVED**, so this document still decides none of them.
+The first three questions above are D9's, and the brief that records their options is `docs/preflight-v6.md` → `Appendix — D9 decision brief`: §1a carries the consequences of an acknowledgement list and of a durable job record for each of the six job types, and §6 the evidence matrix that would close V6-20 and gate V6-2G box 1. D9 is still **UNAPPROVED**, so this document still decides none of them.
