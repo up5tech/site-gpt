@@ -574,6 +574,21 @@ These are known, documented and deliberately deferred. They are not oversights.
   factor, no federated login, no email verification and no login lockout beyond
   the per-IP rate limiter. No page, README section or launch copy may claim
   otherwise.
+
+  The rule is enforced, not hand-checked: `tests/test_identity_copy.py` fails
+  with `file:line` when MFA/2FA/two-factor/multi-factor/SSO/SAML/single-sign-on
+  appears in the SPA sources under `frontend/src`, `frontend/index.html`, the
+  modules that build the outgoing email and digest copy (`services/digest.py`,
+  `api/user.py`, `api/handoff.py`), every module under `api/`, `schemas/` and
+  `services/` — which covers the error `detail` strings a toast or banner
+  renders, the refusal prose of the `session_tokens`/`embed_guard` handlers
+  `main.py` registers, the OpenAPI field descriptions and the `rag.py` assistant
+  prompt a visitor is answered from — and `README.md`. The test also checks
+  itself: a known claim string must produce one hit and a plain sentence none,
+  so a broken pattern cannot pass quietly. It is deliberately strict (a
+  negation such as "no MFA yet" counts too), and it covers only this checkout,
+  so external launch copy is outside it; `core/config.py`'s operator comment on
+  unapproved MFA/SSO is excluded because it is never rendered to a customer.
 - **No per-session revocation UI (D13, V6-12 residual).** Ending access means
   deactivating or deleting the account, or rotating the signing key for all
   tenants; the tools and their blast radius are in §"Session incidents".
