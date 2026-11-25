@@ -12,6 +12,12 @@ every relative link those documents carry, and fails on:
   `<a name="..."></a>` anchor in the target file;
 * a fragment that matches a heading slug used more than once in the target, so
   the reader lands on whichever copy GitHub numbered first;
+* a plain-text reference to a repository document (`docs/platform.md`,
+  `plans/PLAN_V4.md`, `README.md`) whose file does not exist. The record also
+  names documents without a Markdown link — `docs/security.md` points at
+  `docs/platform.md` and `docs/billing.md` that way — and those were invisible to
+  a link-only check. These references are repo-relative by convention, so they
+  resolve from the repository root, not from the linking document;
 * a risk row in `docs/risk-register-v6.md` without its own `<a name="rN">`
   anchor, or with an anchor naming a different row — the rows are table rows,
   so their anchors are hand-written and can be dropped without any heading
@@ -76,6 +82,10 @@ RISK_ROW = re.compile(r'^\| (?:<a name="([^"]+)"></a>)?\*\*(R\d+)\*\* \|', re.MU
 # `[text](target)` and `[text](target "title")`, but not `![alt](image)`.
 LINK = re.compile(r'(?<!!)\[[^\]]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)')
 CUSTOM_ANCHOR = re.compile(r'<a name="([^"]+)"></a>')
+# A repository document named in prose or backticks, not as a link target.
+PLAIN_DOC = re.compile(
+    r"(?<![\w/.-])((?:docs|plans)/[A-Za-z0-9._/-]+\.md|README\.md)"
+)
 EXTERNAL = re.compile(r"^(?:[a-z][a-z0-9+.-]*:|//)", re.IGNORECASE)
 
 # The decision register's header, the appendix headings and the sign-off item
@@ -281,6 +291,12 @@ def relative_target(link: str) -> bool:
     return not EXTERNAL.match(link)
 
 
+def plain_document_references(text: str) -> list[str]:
+    """Every repo document named in prose, ignoring Markdown link targets."""
+    without_links = LINK.sub("", text)
+    return sorted(set(PLAIN_DOC.findall(without_links)))
+
+
 def load(files: list[str], root: Path) -> dict[Path, Document]:
     """Parse each named document once; paths that do not exist are skipped."""
     documents: dict[Path, Document] = {}
@@ -326,12 +342,22 @@ def check(files: list[str], root: Path) -> list[str]:
                 continue
             target_doc = document(target)
             if not target_doc.resolves(fragment):
+                # Reported once: the same text also matches PLAIN_DOC below, but
+                # the link check already names the fragment precisely.
                 failures.append(f"{name}: {link}: no anchor #{fragment} in {label}")
             elif target_doc.slugs[fragment] > 1:
                 failures.append(
                     f"{name}: {link}: #{fragment} matches {target_doc.slugs[fragment]}"
                     f" headings in {label}, so it lands on the first"
                 )
+
+        for reference in plain_document_references(document(source).text):
+            # A link target is checked above with its fragment; a bare mention
+            # has nothing but its path, and an invented one reads as a file that
+            # exists. Resolved from the root because that is how they are
+            # written everywhere in the record.
+            if not (root / reference).is_file():
+                failures.append(f"{name}: {reference}: no such document")
 
     register = root / RISK_REGISTER
     if register.is_file():
@@ -358,7 +384,7 @@ def check(files: list[str], root: Path) -> list[str]:
 def report(files: list[str], root: Path) -> int:
     documents = load(files, root)
 
-    relative = fragments = external = 0
+    relative = fragments = external = plain = 0
     for doc in documents.values():
         for link in LINK.findall(doc.text):
             if relative_target(link):
@@ -366,6 +392,7 @@ def report(files: list[str], root: Path) -> int:
                 fragments += bool(link.partition("#")[2])
             else:
                 external += 1
+        plain += len(plain_document_references(doc.text))
 
     failures = check(files, root)
     for name in files:
@@ -387,7 +414,8 @@ def report(files: list[str], root: Path) -> int:
     pairings = sum(len(risks) for risks in cells.values())
     print(
         f"\n{relative} relative links ({fragments} with a fragment), "
-        f"{external} external links skipped, {rows} risk rows and "
+        f"{external} external links skipped, {plain} plain-text document "
+        f"references, {rows} risk rows and "
         f"{len(cells)} decisions ({pairings} decision-risk pairings) checked"
     )
     if failures:
