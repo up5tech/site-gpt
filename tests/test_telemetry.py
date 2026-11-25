@@ -622,8 +622,9 @@ class PerWorkerHeartbeatTests(unittest.TestCase):
         self.assertEqual(snapshot["workers"], [])
 
     def test_an_expired_worker_key_is_not_invented(self):
-        # A dead worker's key expires; without a deployment-fed expected count
-        # the snapshot cannot name it — a recorded limit, not a claim.
+        # A dead worker's key expires and leaves nothing to name: only the
+        # deployment-fed roster (OPS_EXPECTED_WORKERS, tested below) can see that
+        # worker, and with the roster unset this snapshot stays silent.
         client = _Client(
             values={
                 telemetry.HEARTBEAT_KEY: json.dumps({"at": NOW.isoformat()}),
@@ -638,6 +639,140 @@ class PerWorkerHeartbeatTests(unittest.TestCase):
             [worker["worker"] for worker in snapshot["workers"]], ["worker-a:1"]
         )
         self.assertNotIn("worker.heartbeat_missing", _codes(_snapshot(redis=snapshot)))
+
+
+class ExpectedWorkerCountTests(unittest.TestCase):
+    """V6-23: the deployment-fed roster, for the worker a key cannot name.
+
+    A per-worker key only exists while its process keeps refreshing it, so a
+    worker that never started — or whose key already expired — is invisible to
+    the per-worker alerts. `OPS_EXPECTED_WORKERS` closes that gap; it is counted
+    from *fresh* keys, because a key lives three intervals and a corpse's key
+    would otherwise satisfy the roster.
+    """
+
+    def _worker(self, identity, age):
+        return {"worker": identity, "age_seconds": age, "loops": ["queue"]}
+
+    def test_an_unset_roster_never_alerts(self):
+        with patch.object(telemetry, "OPS_EXPECTED_WORKERS", 0):
+            codes = _codes(_snapshot(redis={"workers": [], "workers_live": 0}))
+
+        self.assertNotIn("worker.count_low", codes)
+
+    def test_a_met_roster_is_quiet(self):
+        with patch.object(telemetry, "OPS_EXPECTED_WORKERS", 2):
+            alerts = telemetry.evaluate(
+                _snapshot(
+                    redis={
+                        "workers": [self._worker("a:1", 5), self._worker("b:2", 10)],
+                        "workers_live": 2,
+                    }
+                )
+            )
+
+        self.assertNotIn("worker.count_low", [a["code"] for a in alerts])
+
+    def test_a_short_roster_alerts_with_counts_only(self):
+        with patch.object(telemetry, "OPS_EXPECTED_WORKERS", 3):
+            alerts = telemetry.evaluate(_snapshot(redis={"workers_live": 1}))
+
+        alert = next(a for a in alerts if a["code"] == "worker.count_low")
+        self.assertEqual(alert["severity"], "critical")
+        self.assertEqual(
+            alert["evidence"], {"expected": 3, "live": 1, "missing": 2}
+        )
+        self.assertNotIn("worker", alert["evidence"])
+
+    def test_a_zero_live_count_alerts_with_the_roster(self):
+        with patch.object(telemetry, "OPS_EXPECTED_WORKERS", 2):
+            alerts = telemetry.evaluate(
+                _snapshot(
+                    redis={"workers_live": 0, "heartbeat_age_seconds": None}
+                )
+            )
+
+        codes = [a["code"] for a in alerts]
+        self.assertIn("worker.count_low", codes)
+        # The aggregate missing-heartbeat alert still fires separately: a dead
+        # fleet and a short fleet are different facts.
+        self.assertIn("worker.heartbeat_missing", codes)
+
+    def test_a_stale_key_does_not_satisfy_the_roster(self):
+        client = _Client(
+            values={
+                f"{telemetry.WORKER_HEARTBEAT_PREFIX}worker-a:1": json.dumps(
+                    {
+                        "at": (NOW - timedelta(seconds=5)).isoformat(),
+                        "worker": "worker-a:1",
+                    }
+                ),
+                f"{telemetry.WORKER_HEARTBEAT_PREFIX}worker-b:2": json.dumps(
+                    {
+                        "at": (NOW - timedelta(seconds=500)).isoformat(),
+                        "worker": "worker-b:2",
+                    }
+                ),
+            },
+            depth=0,
+        )
+
+        snapshot = _snapshot_of(client)
+
+        self.assertEqual(snapshot["workers_live"], 1)
+        with patch.object(telemetry, "OPS_EXPECTED_WORKERS", 2):
+            codes = _codes(_snapshot(redis=snapshot))
+        self.assertIn("worker.count_low", codes)
+        self.assertIn("worker.heartbeat_stale", codes)
+
+    def test_a_key_without_a_timestamp_does_not_satisfy_the_roster(self):
+        client = _Client(
+            values={
+                f"{telemetry.WORKER_HEARTBEAT_PREFIX}worker-a:1": json.dumps(
+                    {"worker": "worker-a:1"}
+                ),
+                telemetry.HEARTBEAT_KEY: json.dumps({"at": NOW.isoformat()}),
+            },
+            depth=0,
+        )
+
+        snapshot = _snapshot_of(client)
+
+        self.assertEqual(snapshot["workers_live"], 0)
+        with patch.object(telemetry, "OPS_EXPECTED_WORKERS", 1):
+            self.assertIn("worker.count_low", _codes(_snapshot(redis=snapshot)))
+
+    def test_the_snapshot_exposes_the_live_count_and_the_roster(self):
+        client = _Client(
+            values={
+                f"{telemetry.WORKER_HEARTBEAT_PREFIX}worker-a:1": json.dumps(
+                    {"at": NOW.isoformat(), "worker": "worker-a:1"}
+                )
+            },
+            depth=0,
+        )
+
+        snapshot = _snapshot_of(client)
+        with patch.object(telemetry, "OPS_EXPECTED_WORKERS", 1):
+            built = telemetry.build_snapshot(db_ok=True, redis=snapshot, now=NOW)
+
+        self.assertEqual(snapshot["workers_live"], 1)
+        self.assertEqual(built["redis"]["workers_live"], 1)
+        self.assertEqual(built["thresholds"]["expected_workers"], 1)
+        self.assertNotIn("worker.count_low", [a["code"] for a in built["alerts"]])
+
+    def test_an_older_snapshot_derives_the_count_from_the_workers(self):
+        # A producer before this change has no `workers_live`; deriving it keeps
+        # the roster honest instead of reading a missing key as zero.
+        with patch.object(telemetry, "OPS_EXPECTED_WORKERS", 2):
+            alerts = telemetry.evaluate(
+                _snapshot(
+                    redis={"workers": [self._worker("a:1", 5), self._worker("b:2", 500)]}
+                )
+            )
+
+        alert = next(a for a in alerts if a["code"] == "worker.count_low")
+        self.assertEqual(alert["evidence"]["live"], 1)
 
 
 def _shared(client, status_code, now):
