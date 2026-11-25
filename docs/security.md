@@ -33,7 +33,7 @@ processes.
 | --- | --- | --- |
 | Passwords | `argon2` hashes, never plaintext | `core/auth.py` (`pwd_context`) |
 | Password reset | Only `sha256(token)` is stored and compared with `hmac.compare_digest`; the raw token exists only in the emailed link and is cleared on use | `api/user.py` |
-| Sessions | HS256 JWT with an expiry (24h by default), verified on every request; a user must still be `status="active"` | `core/auth.py` |
+| Sessions | HS256 JWT with `exp` and `iat`, 24 hours (`ACCESS_TOKEN_TTL`, per D13), verified on every request; a token without `exp` or with a malformed `sub` is refused with 401, and a user must still be `status="active"` | `core/auth.py` |
 | Roles | `get_admin_user` / `get_manager_user` on every admin route; company scoping comes from the token, never from a query parameter | `core/auth.py`, `api/*` |
 | Tenant isolation | Every admin query filters on the caller's `company_id`; a foreign id answers 404, not 403, so ids cannot be probed | `api/*`, `api/privacy.py` |
 | API keys | Only `sha256(pepper + raw)` is stored; comparison uses `hmac.compare_digest`; keys carry scopes, a prefix for identification and a `revoked_at`; the raw value is returned once | `services/api_keys.py`, `api/api_key.py` |
@@ -183,6 +183,37 @@ working directory at startup only.
   `DELETE /api/privacy/conversations/{session_id}` and
   `DELETE /api/privacy/contacts/{session_id}`; then handle the backups as above.
 - Keep `SQL_ECHO=false` — verbose SQL logging can put row values in the logs.
+
+### Session incidents (V6-12, D13)
+
+D13 defers per-session revocation (and tenant MFA/SSO and broader admin audit)
+to 2027-02-28, so an incident has to be answered with the tools that exist. Each
+row below is the whole response for one kind of loss, with what it invalidates
+and how to confirm it took effect; the first two are pinned by
+`tests/test_session_incidents.py`.
+
+| Incident | Action | What it ends | Verify |
+| --- | --- | --- | --- |
+| An employee or customer admin leaves | `PUT /api/company/users/{id}` with `status: inactive`, or `DELETE /api/company/users/{id}` | That account's JWTs on their **next request** (the row is re-read every time), scoped to that tenant | Log in as the account (401) or use its old token (401) |
+| One user's token is stolen, tenant keeps running | The row above; the 24-hour `exp` bounds a token nobody acts on | Only that user | Same as above; other tenants and other users in the tenant are untouched |
+| A `/api/v1` key leaks | **Settings → API keys → revoke** (`POST /api/api-keys/{id}/revoke`) | That key immediately (`revoked_at`), leaving other keys and scopes | A request with the old key answers 401 |
+| The signing key is suspected compromised | Rotate `JWT_SECRET_KEY` and restart every process | **Every tenant's** JWTs at once (they must sign in again); API keys and widget session tokens are unaffected | Any old token answers 401; a new login works |
+| An operator grant is compromised | `scripts/platform_owner.py revoke` (the console is off for this launch anyway) | That operator on the next request; see `docs/platform.md` | `/api/platform/session` answers 404 while the console is off |
+
+What is **not** available, by D13: ending one session without touching the rest
+of the tenant (the tenant-scoped tool is deactivation), and invalidating a live
+JWT after a password reset. A password reset changes the hash but not the issued
+tokens; the 24-hour expiry is the bound. Widget visitors are unaffected by all of
+the above — their K4 session tokens are random values hashed in `session_tokens`
+and are verified without the JWT signing key.
+
+**Token-mode posture (V6-15).** `SESSION_TOKEN_MODE` and `EMBED_TOKEN_MODE` stay
+`compat` for this cohort, so a tokenless legacy session read and an embed without
+its `X-Embed-Token` are still served (K4/K18). A production boot logs one
+`config.token_modes_compat` warning naming the modes still in `compat`; it is not
+a boot error, because switching to `enforce` is a compatibility migration. Roll
+one mode forward only after its snippet is live on the customer sites, and roll
+back by setting it to `compat` again — no code change or restart of data.
 
 ### 5.1 Session tokens (K4)
 
@@ -534,8 +565,18 @@ These are known, documented and deliberately deferred. They are not oversights.
   database's own encryption — all deployment concerns.
 - **Uploads are not virus-scanned.** Only the owner's own files and admin-triggered
   imports reach `uploads/`, but a compromised admin account can import anything.
-- **No admin audit log.** API keys keep a `revoked_at` and a last-used timestamp;
-  other admin actions are not recorded.
+- **No tenant admin audit log (D13, V6-14 deferred to 2027-02-28).** API keys
+  keep a `revoked_at` and a last-used timestamp; other tenant admin actions
+  (users, roles, settings, model changes, exports, erasures) are not recorded.
+  Only the platform-owner boundary writes `platform_audit_logs`.
+- **No tenant MFA/SSO (D13, V6-16 deferred to 2027-02-28).** Password login plus
+  the 24-hour JWT is the whole tenant authentication story; there is no second
+  factor, no federated login, no email verification and no login lockout beyond
+  the per-IP rate limiter. No page, README section or launch copy may claim
+  otherwise.
+- **No per-session revocation UI (D13, V6-12 residual).** Ending access means
+  deactivating or deleting the account, or rotating the signing key for all
+  tenants; the tools and their blast radius are in §"Session incidents".
 
 ## 6. Deployment checklist
 
