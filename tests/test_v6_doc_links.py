@@ -14,9 +14,9 @@ What is pinned here:
 * `docs/security.md` and `README.md` are checked documents — both because they
   are in `DOCUMENTS` and because a broken link in a copy of one is caught — so
   their links are no longer verified by eye;
-* the scanned set is a glob, not a list: every top-level `docs/*.md` is in
-  `DOCUMENTS`, and a new page under `docs/` is picked up (and its links checked)
-  without editing the script;
+* the scanned set is a glob, not a list: every top-level `docs/*.md` and every
+  `plans/*.md` is in `DOCUMENTS`, and a new page under `docs/` is picked up (and
+  its links checked) without editing the script;
 * the record in this checkout passes, so the suite fails when a heading or a
   file is renamed without the links being updated.
 """
@@ -167,6 +167,12 @@ class SecurityDocumentTests(CheckerTestCase):
         self.assertGreater(len(pages), 5)
         for name in pages:
             self.assertIn(f"docs/{name}", links.DOCUMENTS)
+
+    def test_every_plan_is_scanned(self):
+        plans = sorted(path.name for path in (REPO_ROOT / "plans").glob("*.md"))
+        self.assertGreater(len(plans), 3)
+        for name in plans:
+            self.assertIn(f"plans/{name}", links.DOCUMENTS)
 
     def test_a_new_docs_page_is_picked_up_by_default(self):
         self.write("docs/other.md", "# Other\n")
