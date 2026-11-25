@@ -11,9 +11,9 @@ What is pinned here:
 * a document named in prose (`docs/platform.md`) is resolved from the repository
   root and must exist, while the same path used as a link target is not counted
   twice;
-* a `docs/` page nothing links to is a failure, a page reached through a chain of
-  links passes, and a page only mentioned in prose is reported as a note rather
-  than a failure;
+* a `docs/` page nothing links to and nothing names is a failure, a page linked
+  from any scanned document passes even when that document is not itself linked
+  from README, and a page only named in prose is a note naming that document;
 * `docs/security.md` and `README.md` are checked documents — both because they
   are in `DOCUMENTS` and because a broken link in a copy of one is caught — so
   their links are no longer verified by eye;
@@ -116,7 +116,19 @@ class ReachabilityTests(CheckerTestCase):
 
         self.assertEqual(len(failures), 1)
         self.assertIn("docs/orphan.md", failures[0])
-        self.assertIn("nothing reaches it", failures[0])
+        self.assertIn("no scanned document links to it", failures[0])
+
+    def test_a_page_linked_from_an_unreachable_document_is_reachable(self):
+        # The rule is "some scanned document links it", not "README can reach
+        # it": a plan nothing links to still counts as an entry point.
+        self.write("README.md", "# Readme\n")
+        self.write("plans/PLAN_V9.md", "# Plan\n\nSee [target](../docs/target.md).\n")
+        self.write("docs/target.md", "# Target\n")
+
+        files = ["README.md", "plans/PLAN_V9.md", "docs/target.md"]
+
+        self.assertEqual(links.check(files, self.root), [])
+        self.assertEqual(links.prose_only_notes(files, self.root), [])
 
     def test_a_page_reached_through_another_page_passes(self):
         self.write("README.md", "# Readme\n\nSee [a](docs/a.md).\n")
@@ -126,7 +138,7 @@ class ReachabilityTests(CheckerTestCase):
         files = ["README.md", "docs/a.md", "docs/b.md"]
 
         self.assertEqual(links.check(files, self.root), [])
-        self.assertEqual(links.plain_text_only_pages(files, self.root), [])
+        self.assertEqual(links.prose_only_notes(files, self.root), [])
 
     def test_a_page_named_only_in_prose_is_a_note_not_a_failure(self):
         self.write("README.md", "# Readme\n\nSee `docs/notes.md` for details.\n")
@@ -135,9 +147,10 @@ class ReachabilityTests(CheckerTestCase):
         files = ["README.md", "docs/notes.md"]
 
         self.assertEqual(links.check(files, self.root), [])
-        self.assertEqual(
-            links.plain_text_only_pages(files, self.root), ["docs/notes.md"]
-        )
+        notes = links.prose_only_notes(files, self.root)
+        self.assertEqual(len(notes), 1)
+        self.assertTrue(notes[0].startswith("docs/notes.md"), notes[0])
+        self.assertIn("README.md", notes[0])
 
     def test_reachability_is_skipped_when_readme_is_not_scanned(self):
         # A single-file run cannot judge reachability; it must not report the
@@ -145,7 +158,7 @@ class ReachabilityTests(CheckerTestCase):
         self.write("docs/alone.md", "# Alone\n")
 
         self.assertEqual(links.check(["docs/alone.md"], self.root), [])
-        self.assertEqual(links.plain_text_only_pages(["docs/alone.md"], self.root), [])
+        self.assertEqual(links.prose_only_notes(["docs/alone.md"], self.root), [])
 
 
 class PlainReferenceTests(CheckerTestCase):
