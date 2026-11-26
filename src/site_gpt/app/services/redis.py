@@ -102,6 +102,10 @@ async def close_client() -> bool:
     return True
 
 
+#: The settings `durability()` reads, one `CONFIG GET` each.
+DURABILITY_SETTINGS = ("maxmemory-policy", "appendonly", "save")
+
+
 def durability_problems(values: Mapping[str, Any]) -> list[str]:
     """The names of Redis settings that let an outage drop queued jobs (V6-23).
 
@@ -129,22 +133,45 @@ def durability_problems(values: Mapping[str, Any]) -> list[str]:
 async def durability() -> dict[str, Any]:
     """Read the durability-relevant Redis settings (V6-23). Never raises.
 
-    `ok: False` means the settings could not be read — Redis is down, or a
-    managed instance refuses `CONFIG GET`. That is reported as unknown, never as
+    One name per `CONFIG GET`: Redis before 7 answers a multi-name read with
+    "wrong number of arguments", so the combined call turned a healthy instance
+    into a permanently unknown durability state — and `redis.durability_unsafe`
+    could never fire on it, which is what gate V6-2G item 11 observed. Reading
+    them one at a time works on both, for two extra round trips on the ops route
+    only.
+
+    `ok: False` means at least one setting could not be read — Redis is down, or
+    the instance refuses `CONFIG GET`. That is reported as unknown, never as
     safe: an empty `problems` list only means "nothing wrong was *seen*", and
     the operator runbook has to say what a deployment with `ok: False` must be
     verified against by hand. `queue:jobs` has no copy elsewhere, so the check is
     about refusing to lose pending work, not about cache warmth.
     """
     report: dict[str, Any] = {"ok": False, "problems": [], "settings": {}}
-    try:
-        raw = await get_client().config_get(  # type: ignore[attr-defined]
-            "maxmemory-policy", "appendonly", "save"
+    settings: dict[str, Any] = {}
+    failures: list[Exception] = []
+    for name in DURABILITY_SETTINGS:
+        try:
+            raw = await get_client().config_get(name)  # type: ignore[attr-defined]
+        except Exception as e:  # noqa: BLE001 - reported as unknown, not raised
+            failures.append(e)
+            continue
+        for key, value in dict(raw or {}).items():
+            settings[str(key)] = value
+
+    missing = [name for name in DURABILITY_SETTINGS if name not in settings]
+    if missing:
+        # Partial settings are kept for the reader but never classified: a
+        # setting nobody could read must not be guessed as a problem either.
+        log_exception(
+            "redis.durability_unreadable",
+            failures[0] if failures else RuntimeError("setting not returned"),
+            level=logging.WARNING,
+            settings=missing,
         )
-    except Exception as e:  # noqa: BLE001 - reported as unknown, not raised
-        log_exception("redis.durability_unreadable", e, level=logging.WARNING)
+        report["settings"] = settings
         return report
-    settings = {str(key): value for key, value in dict(raw or {}).items()}
+
     report.update(ok=True, settings=settings, problems=durability_problems(settings))
     return report
 

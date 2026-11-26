@@ -9,6 +9,9 @@ What is pinned here:
   (an eviction policy other than `noeviction`, and a restart with no
   persistence), and treats an unreadable `CONFIG GET` as unknown rather than
   safe;
+* the settings are read one name per call, so a server that refuses a multi-name
+  `CONFIG GET` — Redis before 7 — is still classified instead of being
+  permanently "unknown" (the state gate V6-2G item 11 observed);
 * `evaluate` raises `redis.durability_unsafe` only when the settings were read
   and one of them is bad;
 * the production validator refuses a socket timeout at or below the inbox
@@ -24,18 +27,25 @@ from site_gpt.app.services import redis as redis_mod
 
 
 class _DurabilityClient:
-    """Just enough async Redis for `config_get`."""
+    """Just enough async Redis for `config_get`.
 
-    def __init__(self, values=None, fail=False):
+    `strict` models Redis before 7: a multi-name `CONFIG GET` is an argument
+    error there, so only one name per call answers.
+    """
+
+    def __init__(self, values=None, fail=False, strict=False):
         self.values = values
         self.fail = fail
-        self.params = None
+        self.strict = strict
+        self.calls = []
 
     async def config_get(self, *names):
-        self.params = names
+        self.calls.append(names)
         if self.fail:
             raise RuntimeError("CONFIG is disabled")
-        return dict(self.values or {})
+        if self.strict and len(names) > 1:
+            raise RuntimeError("wrong number of arguments for 'config|get'")
+        return {key: value for key, value in (self.values or {}).items() if key in names}
 
 
 class ClientBoundsTests(unittest.TestCase):
@@ -166,7 +176,7 @@ class DurabilityProblemsTests(unittest.TestCase):
 
 
 class DurabilityReadTests(unittest.TestCase):
-    def test_the_three_settings_are_read(self):
+    def test_the_three_settings_are_read_one_name_at_a_time(self):
         client = _DurabilityClient(
             {"maxmemory-policy": "noeviction", "appendonly": "yes", "save": ""}
         )
@@ -176,8 +186,50 @@ class DurabilityReadTests(unittest.TestCase):
         self.assertTrue(report["ok"])
         self.assertEqual(report["problems"], [])
         self.assertEqual(
-            client.params, ("maxmemory-policy", "appendonly", "save")
+            client.calls,
+            [("maxmemory-policy",), ("appendonly",), ("save",)],
         )
+
+    def test_a_server_that_refuses_a_multi_name_read_is_still_classified(self):
+        # Redis before 7: the combined call this used to make can only fail, so
+        # a healthy instance read as "unknown" and the unsafe-policy alert could
+        # never fire (gate V6-2G item 11).
+        client = _DurabilityClient(
+            {
+                "maxmemory-policy": "noeviction",
+                "appendonly": "no",
+                "save": "3600 1 300 100 60 10000",
+            },
+            strict=True,
+        )
+        with patch.object(redis_mod, "get_client", lambda: client):
+            report = asyncio.run(redis_mod.durability())
+
+        self.assertTrue(report["ok"])
+        self.assertEqual(report["problems"], [])
+        self.assertEqual(report["settings"]["maxmemory-policy"], "noeviction")
+
+    def test_an_unsafe_policy_is_named_on_that_same_server(self):
+        client = _DurabilityClient(
+            {"maxmemory-policy": "allkeys-lru", "appendonly": "yes", "save": ""},
+            strict=True,
+        )
+        with patch.object(redis_mod, "get_client", lambda: client):
+            report = asyncio.run(redis_mod.durability())
+
+        self.assertTrue(report["ok"])
+        self.assertEqual(report["problems"], ["maxmemory-policy"])
+
+    def test_a_partial_read_stays_unknown_and_is_not_guessed(self):
+        # `save` and `appendonly` were not returned: the policy is readable, so
+        # it is kept, but nothing is classified from a half-read instance.
+        client = _DurabilityClient({"maxmemory-policy": "allkeys-lru"})
+        with patch.object(redis_mod, "get_client", lambda: client):
+            report = asyncio.run(redis_mod.durability())
+
+        self.assertFalse(report["ok"])
+        self.assertEqual(report["settings"], {"maxmemory-policy": "allkeys-lru"})
+        self.assertEqual(report["problems"], [])
 
     def test_a_bad_policy_is_reported_with_its_setting_name(self):
         client = _DurabilityClient(
