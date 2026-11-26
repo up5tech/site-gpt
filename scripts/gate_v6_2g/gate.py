@@ -41,8 +41,10 @@ Shortcuts, stated where they are used
 * Item 4 backdates `ops:queue:last_pop` instead of waiting the 900 s threshold.
 * Item 5 needs PostgreSQL: on SQLite `"not-a-uuid"` is not a bind error.
 * Item 13 needs a *slow* job and there is no network or provider here, so a
-  retention purge is held on a PostgreSQL table lock. The property under test is
-  the same: a popped job finishes before the process exits.
+  digest build and a retention purge are each held on a PostgreSQL table lock —
+  two handlers, two completion events (`digest.period_completed`,
+  `retention.purged`). The property under test is the same: a popped job finishes
+  before the process exits.
 
 Every shortcut is printed in the row it affects.
 """
@@ -895,24 +897,60 @@ def item_5(gate: Gate) -> None:
     payload = snapshot(gate.origin("api-a"))
     failures_alert = alert(payload, "worker.job_failures")
 
-    combined = "".join(
-        gate.procs[name].text()[offset:] for name, offset in offsets.items()
-    )
-    failure_lines = [
-        line for line in combined.splitlines() if '"worker.job.failed"' in line
-    ]
-    visible = wait_until(
-        lambda: len(
-            [
-                line
-                for name, offset in offsets.items()
-                for line in gate.procs[name].text()[offset:].splitlines()
-                if '"worker.job.failed"' in line
-            ]
+    def _failed_lines() -> list[str]:
+        combined = "".join(
+            gate.procs[name].text()[offset:] for name, offset in offsets.items()
         )
-        >= expected,
-        timeout=10,
-        interval=0.5,
+        return [line for line in combined.splitlines() if '"worker.job.failed"' in line]
+
+    visible = wait_until(
+        lambda: len(_failed_lines()) >= expected, timeout=20, interval=0.5
+    )
+    failure_lines = _failed_lines()
+    received_lines = [
+        line
+        for name, offset in offsets.items()
+        for line in gate.procs[name].text()[offset:].splitlines()
+        if '"worker.job.received"' in line
+    ]
+
+    def _payloads(lines: list[str]) -> list[dict]:
+        """The JSON object on each log line, skipping anything unparseable."""
+        parsed = []
+        for line in lines:
+            try:
+                entry = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(entry, dict):
+                parsed.append(entry)
+        return parsed
+
+    failures = _payloads(failure_lines)
+    failure_ids = {str(entry.get("job_id")) for entry in failures}
+    # Only the receipts of the jobs that failed: another item's pop (a `noop`
+    # from item 4, say) must not be able to satisfy this count.
+    receipts = [
+        entry for entry in _payloads(received_lines) if str(entry.get("job_id")) in failure_ids
+    ]
+    by_job_id = {str(entry.get("job_id")): entry for entry in receipts}
+    # V6-20's identity chain, asserted rather than assumed: each failure's
+    # `job_id` must be a job this item received, and both lines must report the
+    # same attempt and type. Three pushes, three ids, three pairs.
+    identity_ok = (
+        bool(visible)
+        and len(receipts) == expected
+        and len(by_job_id) == expected
+        and len(failures) == expected
+        and {str(entry.get("job_id")) for entry in failures} == set(by_job_id)
+        and all(
+            str(failed.get("job_id")) in by_job_id
+            and by_job_id[str(failed.get("job_id"))].get("attempt")
+            == failed.get("attempt")
+            and by_job_id[str(failed.get("job_id"))].get("job_type")
+            == failed.get("job_type")
+            for failed in failures
+        )
     )
     current.observe(
         "$ for i in 1 2 3; do redis-cli LPUSH queue:jobs "
@@ -926,8 +964,18 @@ def item_5(gate: Gate) -> None:
         f"{json.dumps([failures_alert])}"
     )
     current.observe(
-        f"worker logs: {len(failure_lines)} x worker.job.failed "
-        f"(job_type: {sorted({json.loads(line).get('job_type') for line in failure_lines if line.startswith('{')})})"
+        f"worker logs: {len(receipts)} x worker.job.received -> "
+        f"{len(failure_lines)} x worker.job.failed "
+        f"(job_type: {sorted({entry.get('job_type') for entry in failures})})"
+    )
+    current.observe(
+        "job identity: "
+        + ", ".join(
+            f"{str(failed.get('job_id'))[:8]}… received attempt "
+            f"{by_job_id.get(str(failed.get('job_id')), {}).get('attempt')} / "
+            f"failed attempt {failed.get('attempt')}"
+            for failed in failures
+        )
     )
 
     consuming = False
@@ -948,11 +996,10 @@ def item_5(gate: Gate) -> None:
         == expected,
         "one worker.job.failed line per job": len(failure_lines) == expected,
         "each line names job_type=ingest": all(
-            json.loads(line).get("job_type") == "ingest"
-            for line in failure_lines
-            if line.startswith("{")
+            entry.get("job_type") == "ingest" for entry in failures
         )
-        and bool(failure_lines),
+        and bool(failures),
+        "job_id and attempt match received for every failed job": identity_ok,
         "the loop keeps consuming": consuming,
     }
     failed = [name for name, ok in checks.items() if not ok]
@@ -1470,30 +1517,43 @@ def item_12(gate: Gate) -> None:
         )
 
 
-def item_13(gate: Gate, company_id: str) -> None:
-    current = row(13, "Graceful shutdown (V6-23)")
+def _shutdown_mid_job(
+    gate: Gate,
+    current: Row,
+    *,
+    name: str,
+    payload: dict,
+    lock_table: str,
+    completion_event: str,
+) -> dict:
+    """One `kill -TERM` with the handler provably inside a locked table.
+
+    The lock is what makes the job slow without a network or a provider: the
+    handler blocks on its first read of `lock_table`, which is why the signal
+    arrives mid-job rather than between jobs. The process may only leave after
+    the job's own completion event, and the lock is released by this function so
+    a dead worker cannot hold it.
+    """
     gate.stop_all_workers()
-    worker = gate.start_worker("worker-shutdown", env=gate.env())
+    worker = gate.start_worker(f"worker-shutdown-{name}", env=gate.env())
     wait_until(lambda: worker.alive(), timeout=5)
 
     lock = gate_connect()
     lock.autocommit = False
     with lock.cursor() as cursor:
-        cursor.execute("LOCK TABLE chat_messages IN ACCESS EXCLUSIVE MODE")
-    gate.client.lpush(
-        "queue:jobs", json.dumps({"type": "retention", "company_id": company_id})
-    )
+        cursor.execute(f"LOCK TABLE {lock_table} IN ACCESS EXCLUSIVE MODE")
+    gate.client.lpush("queue:jobs", json.dumps(payload))
     started = time.monotonic()
+    marker = json.dumps(str(payload["type"]))
     in_flight = wait_until(
-        lambda: '"retention"' in worker.text() or time.monotonic() - started > 30,
+        lambda: marker in worker.text() or time.monotonic() - started > 30,
         timeout=30,
         interval=0.2,
     )
     time.sleep(1.5)
     current.observe(
-        f"$ redis-cli LPUSH queue:jobs '{{\"type\":\"retention\",\"company_id\":\"{company_id}\"}}'"
-        f" -> received: {bool(in_flight)}; chat_messages held by a table lock "
-        "(the slow job this checkout can produce without network/providers)"
+        f"$ redis-cli LPUSH queue:jobs '{json.dumps(payload)}' -> received: "
+        f"{bool(in_flight)}; {lock_table} held by a table lock"
     )
 
     worker.popen.send_signal(15)
@@ -1501,8 +1561,8 @@ def item_13(gate: Gate, company_id: str) -> None:
     still_running = worker.alive()
     before_release = worker.text()
     current.observe(
-        f"$ kill -TERM {worker.pid} while the job runs -> process still alive: "
-        f"{still_running}, worker.stopped logged yet: "
+        f"$ kill -TERM {worker.pid} while the {payload['type']} job runs -> process "
+        f"still alive: {still_running}, worker.stopped logged yet: "
         f"{'worker.stopped' in before_release}"
     )
 
@@ -1520,27 +1580,75 @@ def item_13(gate: Gate, company_id: str) -> None:
     graceful = bool(stopped_lines) and json.loads(stopped_lines[-1]).get("graceful") is True
     failed_lines = [line for line in log.splitlines() if '"worker.job.failed"' in line]
     order_ok = (
-        events.index("retention.purged") < events.index("worker.stopped")
-        if "retention.purged" in events and "worker.stopped" in events
+        events.index(completion_event) < events.index("worker.stopped")
+        if completion_event in events and "worker.stopped" in events
         else False
     )
-    deleted = _message_count(gate)
-
-    stop_grace = os.getenv("GATE_STOP_GRACE_SECONDS")
     current.observe(
         f"released the lock -> exit {exit_code} after {finished:.1f} s; last events "
         f"{events[-3:]}; worker.stopped graceful={graceful}; "
-        f"worker.job.failed={len(failed_lines)}; chat_messages left={deleted}"
+        f"worker.job.failed={len(failed_lines)}; {completion_event} seen "
+        f"{events.count(completion_event)}"
+    )
+    return {
+        "still_running": still_running,
+        "order_ok": order_ok,
+        "graceful": graceful,
+        "failed_lines": failed_lines,
+        "finished": finished,
+    }
+
+
+def item_13(gate: Gate, company_id: str) -> None:
+    current = row(13, "Graceful shutdown (V6-23)")
+    now = datetime.now(UTC)
+    # Two job types, not one: the digest handler builds from `chat_messages` and
+    # ends in `digest.period_completed` (no recipients configured, no SMTP here),
+    # the retention handler purges the same table and ends in `retention.purged`.
+    # The digest runs first so the purge it is not about still has rows to hold.
+    digest_result = _shutdown_mid_job(
+        gate,
+        current,
+        name="digest",
+        payload={
+            "type": "digest",
+            "company_id": company_id,
+            "period_start": (now - timedelta(days=14)).isoformat(),
+            "period_end": (now - timedelta(days=7)).isoformat(),
+        },
+        lock_table="chat_messages",
+        completion_event="digest.period_completed",
+    )
+    retention_result = _shutdown_mid_job(
+        gate,
+        current,
+        name="retention",
+        payload={"type": "retention", "company_id": company_id},
+        lock_table="chat_messages",
+        completion_event="retention.purged",
+    )
+    still_running = retention_result["still_running"]
+    order_ok = retention_result["order_ok"]
+    graceful = retention_result["graceful"]
+    failed_lines = retention_result["failed_lines"]
+    finished = retention_result["finished"]
+    deleted = _message_count(gate)
+    current.observe(f"chat_messages left after the retention purge: {deleted}")
+
+    stop_grace = os.getenv("GATE_STOP_GRACE_SECONDS")
+    durations = (
+        f"digest {digest_result['finished']:.1f} s / retention {finished:.1f} s"
     )
     if stop_grace:
+        slowest = max(digest_result["finished"], finished)
         current.observe(
-            f"job duration {finished:.1f} s vs stop_grace_period {stop_grace} s "
-            f"(within: {finished < float(stop_grace)})"
+            f"job durations {durations} vs stop_grace_period {stop_grace} s "
+            f"(within: {slowest < float(stop_grace)})"
         )
     else:
         current.observe(
-            f"job duration {finished:.1f} s; platform stop_grace_period not set "
-            "here — record it beside this number on the deployment"
+            f"job durations {durations}; platform stop_grace_period not set here "
+            "— record these beside one number on the deployment"
         )
 
     api = gate.procs["api-b"]
@@ -1565,11 +1673,19 @@ def item_13(gate: Gate, company_id: str) -> None:
     gate.start_worker("worker-2", env=gate.env())
 
     checks = {
-        "the job finishes before the process leaves": still_running
+        "digest: the job finishes before the process leaves": digest_result[
+            "still_running"
+        ]
+        and digest_result["order_ok"],
+        "digest: worker.stopped graceful:true": digest_result["graceful"],
+        "digest: no worker.job.failed for that job": not digest_result[
+            "failed_lines"
+        ],
+        "retention: the job finishes before the process leaves": still_running
         and order_ok
         and deleted == 0,
-        "worker.stopped graceful:true": graceful,
-        "no worker.job.failed for that job": not failed_lines,
+        "retention: worker.stopped graceful:true": graceful,
+        "retention: no worker.job.failed for that job": not failed_lines,
         "the API stops without a dispose/close failure": api_exit is not None
         and not leaked,
     }

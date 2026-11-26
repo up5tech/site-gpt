@@ -99,18 +99,30 @@ Redis 6.2 refuses the multi-name `CONFIG GET`, which makes this run double as th
 pre-7 cover for the one-name-per-call read in `services/redis.py::durability()`:
 the snapshot reports `ok: true` with all three settings on a server that would
 have read as permanently unknown before that fix. Recorded run against
-`redis:6.2` (6.2.16): **11 passed, 3 blocked (6, 8, 12), 0 failed**.
+`redis:6.2` (6.2.16): **11 passed, 3 blocked (6, 8, 12), 0 failed**. Re-recorded
+2026-11-26T04:26:31+00:00 on `ff17bc1+dirty` with item 5 pairing the
+`job_id`/`attempt` on `worker.job.received` and `worker.job.failed`, and item 13
+running `digest` and `retention`: same counts, exit 0.
 
 ## Stated shortcuts
 
 * Item 4 backdates `ops:queue:last_pop` instead of waiting the 900 s threshold;
   the threshold itself is unchanged and is read from the snapshot.
-* Item 5 needs PostgreSQL: on SQLite `"not-a-uuid"` binds without error.
+* Item 5 needs PostgreSQL: on SQLite `"not-a-uuid"` binds without error. It also
+  asserts V6-20's identity chain rather than just counting lines: each of the
+  three `worker.job.failed` lines must name a `job_id` this item's own pushes
+  produced, and its `attempt` and `job_type` must equal the ones on that job's
+  `worker.job.received` line.
 * Item 13 needs a slow job, and this checkout has no network or provider, so a
-  retention purge is held on an `ACCESS EXCLUSIVE` lock on `chat_messages`. The
-  property under test is unchanged: a popped job finishes before the process
-  exits, then `worker.stopped {"graceful":true}`. The job's duration is printed;
-  set `GATE_STOP_GRACE_SECONDS` to compare it with the platform's stop window.
+  **digest build** and a **retention purge** are each held on an `ACCESS
+  EXCLUSIVE` lock on `chat_messages` — two handlers and two completion events
+  (`digest.period_completed`, then `retention.purged`). The digest runs first so
+  the purge still has the seeded rows to delete; with no recipients configured
+  it releases its claim instead of sending. The property under test is unchanged
+  for both: a popped job finishes before the process exits, then
+  `worker.stopped {"graceful":true}`, with no `worker.job.failed`. The durations
+  are printed; set `GATE_STOP_GRACE_SECONDS` to compare the slower one with the
+  platform's stop window.
 * Item 14 starts every process with its own libpq `application_name`
   (`gate-<process>`), so `pg_stat_activity` can be grouped per process: each one
   is checked against its own `DB_POOL_SIZE + DB_MAX_OVERFLOW`, not just the
