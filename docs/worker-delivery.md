@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | **Evidence for V6-20, plus its mechanism-neutral seam.** V6-20 has not started and **D9 is not decided**: this records what the queue and each handler do today, not what they should do. The defects in findings 1, 8 and 9 were repaired as standalone fixes on the same branch, and the last section's seam — job envelope, `NullDelivery`, no observable behaviour change — was implemented on 2026-11-26 without deciding anything. Nothing else here is a change or a policy choice. |
+| Status | **Evidence for V6-20, plus its mechanism-neutral seam.** V6-20 has not started and **D9 is not decided**: this records what the queue and each handler do today, not what they should do. The defects in findings 1, 8 and 9 were repaired as standalone fixes on the same branch, and the seam section's job envelope and `NullDelivery` — no observable behaviour change — was implemented on 2026-11-26 without deciding anything. Nothing else here is a change or a policy choice. |
 | Snapshot | Readings taken on `feat/v6` at `3a4dbde`, Alembic head `0b22b30bf930` (2026-11-23); findings 1, 8 and 9 were then fixed on the same branch (`e4bdc21`, `ab7cb8a`, `88860c6`) and this document was updated to match. |
 | Queue | `enqueue_job` is `LPUSH queue:jobs` (`services/redis.py:152`); the consumer is `BRPOP queue:jobs` (`worker.py:268`) followed by dispatch. There is **no acknowledgement, visibility timeout, retry counter or dead-letter list**: once `BRPOP` returns, the message exists only in the worker's memory, and a handler exception is caught, printed with a traceback, and the message is gone. `lpush` + `brpop` makes the queue FIFO. |
 | Readings | `worker.py`, `services/redis.py`, `services/ingest_claim.py`, `services/digest.py`, `services/topics.py`, `services/insights.py`, `services/retention.py`, `services/sitemap.py`, `services/mail.py`. The crash column is what those paths imply; no crash was injected. |
@@ -89,3 +89,55 @@ Both D9 candidates need the same four things — a stable job identity, an in-fl
 **Tests and the re-run.** `tests/test_worker_delivery.py` is new (16 cases): the envelope's additive contract through `enqueue_job` (field for field, plus distinct ids), a legacy payload normalised at pop time, an existing envelope preserved, a malformed id or attempt replaced rather than trusted, `next_attempt` counting up without moving the id; one claim per job, with `complete` on return, `fail` on a raise, two claims for two jobs and an unknown type never claimed; and the unchanged failure count — one event, one `note_failure` call with the worker's own client, `retry=False`, the loop counting through the hook it always used; and that the `job_id`/`attempt` on `worker.job.received`, `worker.job.unknown` and `worker.job.failed` are the same for one job, including for a payload that carried no envelope. `tests/test_redis_helpers.py`'s old exact-payload pin was replaced by an additive-contract pin (`test_enqueue_payload_is_additive`), which still asserts every producer field by name. Recorded 2026-11-26: full suite **79 modules / 1343 Python tests OK**, `node --test tests/*.mjs` **46/46**, Alembic head unchanged at `0b22b30bf930`; gate V6-2G re-run through `scripts/gate_v6_2g/run_disposable_redis.sh` — **11 passed, 3 blocked (items 6, 8, 12), 0 failed**, exit 0, identical to the run recorded above, with item 5 `Repeated job failure` passing at `ops:worker:job_failures -> 3` and item 13 `Graceful shutdown` passing on a hand-pushed payload that carries no envelope, which exercises the pop-time normalisation path for real.
 
 **Sequence:** this was the first V6-20 commit — a refactor plus two additive log fields, with no policy in it. The replay/dead-letter procedure can be written in the same mechanism-neutral form (job id, outcome, who may re-push), but its pass conditions in the D9 brief's §6 stay unmet until the second implementation exists.
+## What a crash, a duplicate and an unknown actually do (rehearsal)
+
+Everything above is read from the code. This section is the same six types **run**, with the worker killed, a payload delivered twice and a payload nothing handles, so the recovery column stops being an inference. Recorded 2026-11-26 on commit `ff17bc1`, Alembic head `0b22b30bf930`:
+
+```
+bash scripts/v6_20_rehearsal/run.sh
+```
+
+That wrapper starts its own `redis:6.2` container on a random loopback port, runs the rehearsal against a throwaway database `v6_gate_2g_rehearsal` (created and dropped by the run), and removes the container afterwards. The shared PostgreSQL server is never stopped and the shared Redis is never contacted. Every observation is the worker's own JSON log plus the rows the rehearsal reads back; no handler is patched and no fault is simulated inside the code. The full row output was rows.md in the run's log directory.
+
+### A crash mid-job
+
+`kill -9` was sent 0.5 s after `worker.job.received` appeared for the pushed `job_id`, with a table the handler must read held by an `ACCESS EXCLUSIVE` lock, so the job is provably inside its handler when the process dies. A second, fresh worker then ran for 8 s with no help, and only after that was the type's own scheduler function called.
+
+| Type | What the kill left behind | A fresh worker, 8 s, unhelped | The recovery path that actually ran | How long it waits in production |
+|---|---|---|---|---|
+| **`ingest`** | `websites.ingest_status=processing` | nothing: the killed `job_id` never reappears, no new `ingest` job | `requeue_stuck_ingests` re-queued it after the row was backdated -7 h; the fresh worker consumed it and the ingest completed | up to `STUCK_INGEST_AFTER` — 6 h |
+| **`digest`** | a `digest_log` claim row with `sent_at` NULL | nothing | `enqueue_due_digests` re-queued it after the claim was backdated -2 h; the fresh worker consumed it | up to `DIGEST_CHECK_SECONDS` (1 h) before the claim is retakeable, then the next send hour |
+| **`retention`** | nothing durable (the duplicate run below had already purged the rows, so the killed purge had nothing left to lose) | nothing | `enqueue_due_retention` re-queued it on the next tick | up to `RETENTION_CHECK_SECONDS` — 24 h |
+| **`topic_clusters`** | the `topic_cluster_runs` row left `running` | nothing | `enqueue_due_topics` re-queued it after the run row was backdated -31 min; a second run completed while the killed row stayed `running` | up to `STALE_RUN_AFTER` — 30 min |
+| **`sitemap_scan`** | nothing durable; the `sitemap:scan:<website_id>` key absent | nothing | `enqueue_due_sitemap_scans` re-queued it, and the scan set the key | up to `SITEMAP_SCAN_INTERVAL_SECONDS` — 24 h |
+| **`insights`** | nothing durable | nothing | `enqueue_due_insights` re-queued it | up to `INSIGHT_INTERVAL_SECONDS` — 24 h |
+
+Two things in that table are the point of the rehearsal. **A crash is invisible to the process.** In all six cases, a replacement worker started and did nothing about the job that had just died — no redelivery, no compensation, not even a `worker.job.failed` line, because the process that would have written one is gone. The only thing that ever recovered the work was the type's own stale-row rule or its loop tick, and for four of the six types that rule does not exist, so the wait is a full day. And **the left-behind state is a claim, not a delivery record**: `ingest` leaves `processing`, `digest` leaves an unsent period, `topic_clusters` leaves `running`, and the other three leave nothing at all. That is exactly the gap D9 §1 has to close, now measured rather than argued.
+
+### The same payload delivered twice
+
+One worker, the byte-identical payload pushed twice (same `job_id`, `attempt: 0`, so this is a producer replay, not a retry):
+
+| Type | Runs observed | What the second one did |
+|---|---|---|
+| **`ingest`** | 2 × `worker.job.received`, 2 × `ingest.completed` | crawled and re-embedded the whole site again; the handler never consults `claim_ingest`, so nothing suppressed it |
+| **`digest`** | 2 × `digest.period_completed`, both `reason: no recipients configured` | claimed, built, found no recipients and released the claim — so with recipients configured the second run would build again; nothing carried over from the first |
+| **`retention`** | 2 × `retention.purged` | first deleted 203 `chat_messages` and 2 `conversations`; second deleted 0. Idempotent through the age cutoff, not through a record |
+| **`topic_clusters`** | `topics.window_built` `completed`, then `skipped` | the unique run row suppressed the repeat — the one type whose own claim rejects a duplicate outright |
+| **`sitemap_scan`** | 2 × `sitemap.nothing_changed` | fetched and diffed again (the rehearsal has no network, so the fetch failed and the handler returned before touching a row) |
+| **`insights`** | 2 × `insights.run_completed`, both `status: skipped, eligible: 0` | the per-conversation claim had nothing to claim in this fixture; with eligible conversations the second batch would re-run whatever the first left `failed` |
+
+This is D9 §2's input, not its answer: today a duplicate is harmless for `retention` and `topic_clusters`, repeats real work for `ingest` and `sitemap_scan`, and would repeat a send for `digest` once recipients exist. Which of those is acceptable per type is the question D9 has to name.
+
+### A payload nothing handles
+
+`LPUSH queue:jobs '{"type":"rehearsal.unhandled"}'` was consumed (queue depth back to 0) with one `worker.job.received` and one `worker.job.unknown` sharing the same `job_id`, **no** `worker.job.failed`, and `ops:worker:job_failures` unchanged at 0. So an unknown type is dropped silently by the counter the V6-21 alert reads — it is a log line and nothing else. That is also why the identity work matters: without `job_id` on both lines, the pop and the skip could only be matched by timestamp.
+
+### The shortcuts, stated
+
+* **Mid-job is a held table lock**, the trick gate item 13 already uses: `embeddings` for `ingest` (after the row is `processing`), `chat_messages` for `digest` and `retention`, `topic_clusters` for `topic_clusters`, `websites` for `sitemap_scan`, `conversation_insights` for `insights`. The handler is blocked inside the job, which is what "mid-job" means when there is no network to slow a crawl down.
+* **The waits were not sat through.** Where the recovery is time-gated, the rehearsal backdated the one column that gates it (`websites.updated_at` -7 h, `digest_log.created_at` -2 h, `topic_cluster_runs.updated_at` -31 min) and then called the real scheduler function in a child process with the application environment. The observation is what the next tick would do; the row and column are printed beside it, so the shortcut is visible in the output, not just here.
+* **No network, no SMTP, no model provider.** So `sitemap_scan` sees an empty fetch, `digest` finds no recipients, `insights` finds nothing eligible, and `ingest` crawls nothing — the embed of one seeded extra document is the work that makes its crash window reachable. Every one of those is reported in the row as the reason the handler finished the way it did.
+
+**What this does not do.** It ticks no box in `plans/PLAN_V6.md`: V6-20 stays unticked, gate V6-2G box 1 stays unsignable, and the D9 brief's §6 pass conditions are unchanged. It decides none of D9's four questions — it does not say whether a lost job is acceptable, whether a duplicate is, what the retry limit should be, or where a failure should be surfaced. It measures the behaviour those questions are about, on the day of the run, so the answer can be chosen against numbers instead of a reading of the code.
+
