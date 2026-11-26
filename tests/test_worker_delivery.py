@@ -15,9 +15,17 @@ envelope makes a job identifiable:
 * a failure still writes one `worker.job.failed` event and one increment of the
   `ops:worker:job_failures` counter V6-21 alerts on, and an unknown job type
   claims nothing and counts nothing.
+
+`AckListDelivery` at the bottom is a second implementation, written here and used
+nowhere else: an acknowledgement list (claim marks the id in flight, complete
+drops it, fail increments the attempt). The same consumer scenarios run through
+it by replacing `worker.NullDelivery`, so the three calls are shown to be enough
+for a mechanism that keeps state — without one line of `worker.py` or a handler
+changing, and without this file choosing a mechanism for D9.
 """
 
 import asyncio
+import inspect
 import json
 import unittest
 from contextlib import ExitStack
@@ -102,6 +110,56 @@ def _run_consumer(pops, handlers, stop, *, seam=None, on_pop=None):
             stack.enter_context(patch.object(worker, "NullDelivery", seam))
         asyncio.run(worker.worker(stop=stop))
     return queue
+
+
+class AckListDelivery:
+    """Test-only second `Delivery`: an acknowledgement list, no worker code.
+
+    The state is what a real ack list keeps, in memory: `in_flight` holds the
+    ids claimed and not yet acknowledged, `acked`/`nacked` are the finished
+    transitions, and `attempts` is the count a redelivery is claimed at.
+
+    * `claim` returns `None` for an id already in flight — a duplicate delivery of
+      a job this consumer still holds — and otherwise marks the id in flight.
+    * `complete` drops it (and remembers the ack).
+    * `fail` drops it too, because a nacked ack goes back for redelivery, and
+      increments the attempt so the next claim carries `attempt + 1`.
+
+    It deliberately does not log, count or remember a settled job: those are
+    mechanism choices D9 owns. What it does prove is that the loop needs nothing
+    from `Delivery` but `claim`/`complete`/`fail`.
+    """
+
+    name = "ack-list"
+
+    def __init__(self):
+        self.attempts = {}
+        self.in_flight = {}
+        self.claimed = []
+        self.acked = []
+        self.nacked = []
+
+    async def claim(self, job):
+        payload = delivery.claim_of(job)
+        if payload.job_id in self.in_flight:
+            return None
+        attempt = self.attempts.get(payload.job_id, payload.attempt)
+        claim = delivery.Claim(
+            job_id=payload.job_id, attempt=attempt, job_type=payload.job_type
+        )
+        self.in_flight[payload.job_id] = claim
+        self.claimed.append(claim)
+        return claim
+
+    async def complete(self, claim):
+        self.in_flight.pop(claim.job_id, None)
+        self.acked.append(claim)
+
+    async def fail(self, claim, exc):
+        self.in_flight.pop(claim.job_id, None)
+        self.attempts[claim.job_id] = claim.attempt + 1
+        self.nacked.append((claim, exc))
+        return delivery.Outcome(claim=delivery.next_attempt(claim), retry=True)
 
 
 class EnvelopeTests(unittest.TestCase):
@@ -366,6 +424,203 @@ class UnchangedFailureCountingTests(unittest.TestCase):
             asyncio.run(worker.worker(stop=stop))
 
         counter.assert_awaited_once_with(queue)
+
+
+class AcknowledgementListTests(unittest.TestCase):
+    """The consumer scenarios above, driven through the second implementation.
+
+    Every case here goes through `_run_consumer`, which patches exactly one name
+    the loop already reads (`worker.NullDelivery`); no handler, loop line or
+    module under `src/` knows this class exists.
+    """
+
+    def _ack_seam(self):
+        ack = AckListDelivery()
+        return ack, (lambda *a, **k: ack)
+
+    def test_it_satisfies_the_seam_without_being_the_null_implementation(self):
+        ack = AckListDelivery()
+        for name in ("claim", "complete", "fail"):
+            self.assertTrue(inspect.iscoroutinefunction(getattr(ack, name)), name)
+        self.assertNotIsInstance(ack, delivery.NullDelivery)
+
+    def test_a_handled_job_is_claimed_and_acked_once(self):
+        stop = asyncio.Event()
+        seen = []
+
+        async def handler(data):
+            seen.append(data)
+            stop.set()
+
+        ack, seam = self._ack_seam()
+        _run_consumer(
+            [_raw_job({"type": "ingest", "website_id": "w1"})],
+            {"ingest": handler},
+            stop,
+            seam=seam,
+        )
+
+        self.assertEqual(len(ack.claimed), 1)
+        self.assertEqual(len(ack.acked), 1)
+        self.assertEqual(ack.nacked, [])
+        # Nothing is left claimed: the handler's return dropped the id.
+        self.assertEqual(ack.in_flight, {})
+        self.assertEqual(ack.claimed[0].job_id, seen[0]["job_id"])
+
+    def test_a_raising_handler_is_nacked_once_and_the_loop_continues(self):
+        stop = asyncio.Event()
+        calls = []
+
+        async def handler(data):
+            calls.append(data["website_id"])
+            if data["website_id"] == "w1":
+                raise RuntimeError("crawl exploded")
+            stop.set()
+
+        ack, seam = self._ack_seam()
+        _run_consumer(
+            [
+                _raw_job({"type": "ingest", "website_id": "w1"}),
+                _raw_job({"type": "ingest", "website_id": "w2"}),
+            ],
+            {"ingest": handler},
+            stop,
+            seam=seam,
+        )
+
+        self.assertEqual(calls, ["w1", "w2"])
+        self.assertEqual(len(ack.claimed), 2)
+        self.assertEqual(len(ack.nacked), 1)
+        self.assertEqual(len(ack.acked), 1)
+        self.assertEqual(ack.in_flight, {})
+        failed = ack.nacked[0][0]
+        self.assertEqual(ack.attempts[failed.job_id], 1)
+
+    def test_an_unknown_type_is_never_claimed(self):
+        stop = asyncio.Event()
+        stop.set()
+        ack, seam = self._ack_seam()
+        _run_consumer([_raw_job({"type": "nope"})], {}, stop, seam=seam)
+
+        self.assertEqual(ack.claimed, [])
+        self.assertEqual(ack.acked, [])
+        self.assertEqual(ack.nacked, [])
+
+    def test_a_redelivery_of_a_failed_job_is_claimed_at_the_next_attempt(self):
+        # The payload carries its id, so both pops are the same job; the mechanism
+        # remembered the increment and the second claim carries it. That is the
+        # whole reason for `attempt` on the envelope and in `Claim`.
+        stop = asyncio.Event()
+        calls = []
+
+        async def handler(data):
+            calls.append(data["job_id"])
+            if len(calls) == 1:
+                raise RuntimeError("first attempt")
+            stop.set()
+
+        ack, seam = self._ack_seam()
+        payload = {"type": "ingest", "website_id": "w1", "job_id": "job-1"}
+        _run_consumer(
+            [_raw_job(payload), _raw_job(payload)],
+            {"ingest": handler},
+            stop,
+            seam=seam,
+        )
+
+        self.assertEqual(len(calls), 2)
+        self.assertEqual([claim.attempt for claim in ack.claimed], [0, 1])
+        self.assertEqual(len(ack.nacked), 1)
+        self.assertEqual(len(ack.acked), 1)
+        self.assertEqual(ack.acked[0].attempt, 1)
+        self.assertEqual(ack.in_flight, {})
+
+    def test_an_id_already_in_flight_is_not_claimed_twice(self):
+        # Two deliveries of one id while the first is unacknowledged: the second
+        # claim says "nothing to do", which is the `None` branch the loop already
+        # has. This is the state an ack list exists to carry, not a policy choice.
+        job = delivery.envelope(
+            {"type": "ingest", "website_id": "w1", "job_id": "job-1"}
+        )
+        ack = AckListDelivery()
+
+        first = asyncio.run(ack.claim(job))
+        self.assertEqual(first.job_id, "job-1")
+        self.assertIsNone(asyncio.run(ack.claim(job)))
+        asyncio.run(ack.complete(first))
+        again = asyncio.run(ack.claim(job))
+        self.assertEqual(again.job_id, "job-1")
+        self.assertEqual(len(ack.claimed), 2)
+
+    def test_a_copy_pushed_after_completion_is_a_new_job_under_this_implementation(self):
+        # Two identical payloads with no id: each pop mints its own id, so both
+        # run. The ack list remembers nothing once the id is dropped, exactly like
+        # `NullDelivery` — the duplicate rule is D9's (§2) and is not decided here.
+        stop = asyncio.Event()
+        calls = []
+
+        async def handler(_data):
+            calls.append(1)
+            if len(calls) == 2:
+                stop.set()
+
+        ack, seam = self._ack_seam()
+        payload = {"type": "ingest", "website_id": "w1"}
+        _run_consumer(
+            [_raw_job(payload), _raw_job(payload)],
+            {"ingest": handler},
+            stop,
+            seam=seam,
+        )
+
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(len(ack.claimed), 2)
+        self.assertNotEqual(ack.claimed[0].job_id, ack.claimed[1].job_id)
+        self.assertEqual(len(ack.acked), 2)
+
+    def test_both_implementations_leave_the_same_events_and_counter_alone(self):
+        # The second implementation logs and counts nothing itself, so the only
+        # `worker.job.failed` and only counter increment in either run come from
+        # the loop's `fail` call — the seam does not force a mechanism's logging.
+        def run_null():
+            stop = asyncio.Event()
+            counter = AsyncMock(return_value=1)
+
+            async def handler(_data):
+                stop.set()
+                raise RuntimeError("boom")
+
+            with patch.object(delivery, "log_exception") as logged:
+                _run_consumer(
+                    [_raw_job({"type": "ingest", "website_id": "w1"})],
+                    {"ingest": handler},
+                    stop,
+                    seam=lambda *a, **k: delivery.NullDelivery(
+                        MagicMock(), note_failure=counter
+                    ),
+                )
+            return logged, counter
+
+        logged, counter = run_null()
+        self.assertEqual(logged.call_count, 1)
+        counter.assert_awaited_once()
+
+        ack, seam = self._ack_seam()
+        stop = asyncio.Event()
+
+        async def handler(_data):
+            stop.set()
+            raise RuntimeError("boom")
+
+        with patch.object(delivery, "log_exception") as logged:
+            _run_consumer(
+                [_raw_job({"type": "ingest", "website_id": "w1"})],
+                {"ingest": handler},
+                stop,
+                seam=seam,
+            )
+        logged.assert_not_called()
+        self.assertEqual(len(ack.nacked), 1)
 
 
 if __name__ == "__main__":
