@@ -35,8 +35,9 @@ def _raw_job(payload):
 class _Queue:
     """The Redis surface the consumer touches: `brpop`, `set` and `incr`."""
 
-    def __init__(self, pops):
+    def __init__(self, pops, on_pop=None):
         self._pops = list(pops)
+        self.on_pop = on_pop
         self.calls = []
         self.set = AsyncMock(return_value=True)
         self.incr = AsyncMock(return_value=1)
@@ -48,6 +49,9 @@ class _Queue:
             await asyncio.sleep(0)
             return None
         item = self._pops.pop(0)
+        if self.on_pop is not None:
+            # Lets a test stop the loop after this pop, once its item is handled.
+            self.on_pop()
         if isinstance(item, BaseException):
             raise item
         return item
@@ -76,9 +80,9 @@ class _Recorder(delivery.NullDelivery):
         return await super().fail(claim, exc)
 
 
-def _run_consumer(pops, handlers, stop, *, seam=None):
+def _run_consumer(pops, handlers, stop, *, seam=None, on_pop=None):
     """Drive `worker()` over `pops`; `seam` replaces the delivery implementation."""
-    queue = _Queue(pops)
+    queue = _Queue(pops, on_pop=on_pop)
     with ExitStack() as stack:
         stack.enter_context(patch.object(worker, "redis_client", queue))
         stack.enter_context(patch.object(worker, "configure_logging", MagicMock()))
@@ -222,6 +226,80 @@ class ClaimOncePerJobTests(unittest.TestCase):
         # No retry under this implementation: the failed job is not re-queued and
         # the second job is the only other one the loop saw.
         self.assertEqual(recorder.failed[0][0].job_id, recorder.claimed[0].job_id)
+
+
+class JobIdentityOnEventsTests(unittest.TestCase):
+    """A job can be followed from the pop to its failure by `job_id`.
+
+    The envelope is a label on events that already existed: nothing here is a
+    new event or a delivery record, it only stops the three events about one job
+    from being matched by timestamp.
+    """
+
+    def test_received_and_failed_events_carry_the_same_id(self):
+        stop = asyncio.Event()
+
+        async def handler(_data):
+            stop.set()
+            raise RuntimeError("boom")
+
+        with patch.object(worker, "log_event") as events, patch.object(
+            delivery, "log_exception"
+        ) as failed:
+            _run_consumer(
+                [_raw_job({"type": "ingest", "website_id": "w1"})],
+                {"ingest": handler},
+                stop,
+            )
+
+        received = [
+            c for c in events.call_args_list if c.args[0] == "worker.job.received"
+        ]
+        self.assertEqual(len(received), 1)
+        self.assertEqual(len(failed.call_args_list), 1)
+        received_kwargs = received[0].kwargs
+        failed_kwargs = failed.call_args.kwargs
+        self.assertTrue(received_kwargs["job_id"])
+        self.assertEqual(received_kwargs["job_id"], failed_kwargs["job_id"])
+        self.assertEqual(received_kwargs["attempt"], 0)
+        self.assertEqual(failed_kwargs["attempt"], 0)
+
+    def test_an_unknown_type_reports_the_same_id_it_popped(self):
+        stop = asyncio.Event()
+        with patch.object(worker, "log_event") as events:
+            # Stop after the single pop, so the skip is logged and the loop leaves.
+            _run_consumer(
+                [_raw_job({"type": "nope"})], {}, stop, on_pop=stop.set
+            )
+
+        by_event = {
+            c.args[0]: c.kwargs
+            for c in events.call_args_list
+            if str(c.args[0]).startswith("worker.job.")
+        }
+        self.assertEqual(
+            set(by_event), {"worker.job.received", "worker.job.unknown"}
+        )
+        self.assertEqual(by_event["worker.job.unknown"]["job_type"], "nope")
+        self.assertEqual(
+            by_event["worker.job.unknown"]["job_id"],
+            by_event["worker.job.received"]["job_id"],
+        )
+        self.assertEqual(by_event["worker.job.unknown"]["attempt"], 0)
+
+    def test_a_legacy_payload_gets_an_id_before_the_first_event(self):
+        stop = asyncio.Event()
+        # No job_id and no attempt on the wire: the id on the events is minted
+        # at pop time, so even a hand-pushed job is followable.
+        with patch.object(worker, "log_event") as events:
+            _run_consumer(
+                [_raw_job({"type": "nope"})], {}, stop, on_pop=stop.set
+            )
+
+        received = [
+            c for c in events.call_args_list if c.args[0] == "worker.job.received"
+        ]
+        self.assertEqual(len(str(UUID(received[0].kwargs["job_id"]))), 36)
 
 
 class UnchangedFailureCountingTests(unittest.TestCase):

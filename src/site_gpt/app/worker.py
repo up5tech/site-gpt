@@ -13,7 +13,7 @@ from site_gpt.app.services.ingest_claim import STUCK_INGEST_AFTER, claim_ingest
 from site_gpt.app.services.sitemap import add_missing_pages
 from site_gpt.app.services.parse import extract_text_from_file
 from site_gpt.app.services.redis import close_client, redis_client, enqueue_job
-from site_gpt.app.services.delivery import NullDelivery, envelope
+from site_gpt.app.services.delivery import NullDelivery, claim_of, envelope
 from site_gpt.app.core.config import (
     CRAWL_REFRESH_HOURS,
     DELIVERY_CHECK_SECONDS,
@@ -291,16 +291,28 @@ async def worker(stop: asyncio.Event | None = None):
             # the id and attempt number the seam needs.
             data = envelope(json.loads(job))
             job_type = data.get("type")
+            # V6-20: the envelope's identity goes on every event about this job, so
+            # the pop, a skip and a failure can be followed as one job instead of by
+            # time. It is a label on the events that already existed — no new event,
+            # no counter, and nothing about where delivery state lives.
+            identity = claim_of(data)
             # One correlation id per job: its handler's events and any failure share
             # it, so a support report resolves to one job without guessing by time.
             with bind_request_id() as job_request_id:
-                log_event("worker.job.received", job_type=job_type)
+                log_event(
+                    "worker.job.received",
+                    job_type=job_type,
+                    job_id=identity.job_id,
+                    attempt=identity.attempt,
+                )
                 handler = _JOB_HANDLERS.get(str(job_type))
                 if handler is None:
                     log_event(
                         "worker.job.unknown",
                         level=logging.WARNING,
                         job_type=job_type,
+                        job_id=identity.job_id,
+                        attempt=identity.attempt,
                     )
                     continue
                 # V6-20: the single delivery call site. `claim` is where a
