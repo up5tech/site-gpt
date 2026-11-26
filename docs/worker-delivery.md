@@ -143,3 +143,186 @@ This is D9 §2's input, not its answer: today a duplicate is harmless for `reten
 * **No network, no SMTP, no model provider.** So `sitemap_scan` sees an empty fetch, `digest` finds no recipients, `insights` finds nothing eligible, and `ingest` crawls nothing — the embed of one seeded extra document is the work that makes its crash window reachable. Every one of those is reported in the row as the reason the handler finished the way it did.
 
 **What this does not do.** It ticks no box in `plans/PLAN_V6.md`: V6-20 stays unticked, gate V6-2G box 1 stays unsignable, and the D9 brief's §6 pass conditions are unchanged. It decides none of D9's four questions — it does not say whether a lost job is acceptable, whether a duplicate is, what the retry limit should be, or where a failure should be surfaced. It measures the behaviour those questions are about, on the day of the run, so the answer can be chosen against numbers instead of a reading of the code.
+
+## Operator runbook for background jobs (mechanism-neutral, before D9)
+
+What an operator can do **today**, on a queue that acknowledges nothing. It describes
+telling that work is happening, recognising a lost or stopped job from outside, and
+putting the work back through the job's own producer with that producer's claim and
+idempotency caveat attached. It is deliberately **not** the replay procedure V6-20's
+Done-when asks for: the questions only D9 can answer — who may replay, and where a
+replay is recorded — are left as blanks in §5.
+
+Read-only throughout. Nothing here re-queues automatically, changes a job's handling
+or decides a mechanism; the two actions it describes are a producer tick and, as a
+last resort, a hand push.
+
+### 1. Telling that work is happening
+
+Queue-level, for the deployment as a whole:
+
+```bash
+redis-cli LLEN queue:jobs                       # backlog depth
+redis-cli GET ops:queue:last_pop                # when a worker last took something off
+redis-cli GET ops:worker:heartbeat              # legacy: some worker is alive
+redis-cli --scan --pattern 'ops:worker:heartbeat:*'   # one per worker: <host>:<pid>
+redis-cli GET ops:worker:job_failures           # handler raises inside the alert window
+OPS_STATUS_TOKEN=… uv run python scripts/ops_status.py   # exit 0 clean / 1 critical / 2 unreadable
+```
+
+What each of those does **not** prove: `last_pop` is "a worker popped *a* job", not
+"this job ran"; the heartbeat names the loops the process started (`queue`,
+`scheduler`, `delivery`, `retention`, `topics`, `sitemap`, `insights`, plus `digest`
+only when `DIGEST_ENABLED`), not that any of them did work; `job_failures` counts
+handler exceptions only, so a kill and an unknown type never move it; and a depth of
+0 means the queue is empty, not that the work happened.
+
+Per type, the smallest set of outside signals that shows a job of that type was
+**taken** and then **finished** — the first is always the loop's
+`worker.job.received` line with `job_type`, `job_id` and `attempt`, and the last is
+the handler's own event:
+
+| Type | Handler's completion line | Durable state to read beside it | The producer's own line |
+|---|---|---|---|
+| **`ingest`** | `ingest.completed` (`website_id`); `worker.stuck_ingest.requeued` when recovery re-queued it | `websites.ingest_status` (`processing`/`completed`/`failed`) and `websites.updated_at`; `documents.updated_at` for the crawl's own commits | none — the API route enqueues after `claim_ingest`; `sitemap.diff_applied` when a scan queued one |
+| **`digest`** | `digest.period_completed` | `digest_log` row for `(company_id, period_start)`: `sent_at` is the final stamp, its absence a claim | `digest.queued` |
+| **`retention`** | `retention.purged` (counts) and the service's `retention.purge_completed` | none: the run leaves no record beyond the rows it deleted, so the line's counts are the only evidence | `retention.queued` (`companies`) |
+| **`topic_clusters`** | `topics.window_built` (`status`) and `topics.clustered` | `topic_cluster_runs.status` (`running`/`completed`/`failed`) and `updated_at` for the window | `topics.queued` |
+| **`sitemap_scan`** | `sitemap.diff_applied` (`added`, `removed`) or `sitemap.nothing_changed` | `sitemap:scan:<website_id>` Redis key with its TTL, and the website's page rows | `sitemap.queued` |
+| **`insights`** | `insights.run_completed` (`status`, `eligible`, `claimed`, `completed`, `failed`) and `insights.run_summary` | `conversation_insights.status` and `updated_at` per conversation | `insights.queued` |
+
+One detail that matters when reading logs: the three `worker.job.*` lines carry
+`job_id` and `attempt`; the handler's own lines carry the **request id** the loop
+bound for that job and no `job_id`. A job is followed by grepping its `job_id` for
+the pop/failure pair, taking the `request_id` from that line, and grepping the
+`request_id` for what the handler did.
+
+### 2. What a lost or stopped job looks like from outside
+
+Three failures look different, and only one of them says anything:
+
+1. **The worker stopped or crashed.** Heartbeat missing or stale
+   (`worker.heartbeat_missing`/`worker.heartbeat_stale`), queue depth climbing while
+   `ops:queue:last_pop` ages (`queue.age_high` once there is work waiting), and
+   `worker.count_low` when `OPS_EXPECTED_WORKERS` is configured. Anything the dead
+   process had already popped is gone: no `worker.job.failed`, no counter increment,
+   because the process that would have written either is gone.
+2. **One job was lost while the worker stayed healthy.** Heartbeat fresh, depth 0,
+   `last_pop` recent, no completion line for that type — and whatever the type's own
+   claim had time to write, left in its claim state:
+
+   | Type | What a lost job leaves behind |
+   |---|---|
+   | `ingest` | `websites.ingest_status = processing` until the 6 h stale window |
+   | `digest` | a `digest_log` claim with `sent_at` NULL |
+   | `topic_clusters` | a `topic_cluster_runs` row left `running` |
+   | `retention`, `sitemap_scan`, `insights` | nothing at all |
+
+   **No `worker.job.failed` line and a flat `ops:worker:job_failures` is the normal
+   appearance of a lost job.** The absence of failures never means nothing was lost.
+3. **A handler raised.** `worker.job.failed` with `job_type`, `job_id` and `attempt`,
+   plus one increment of `ops:worker:job_failures` (the alert at
+   `JOB_FAILURE_ALERT_COUNT`). The loop moves on and does not retry, so the message is
+   gone; a failure that is deterministic reappears on the type's next tick — `digest`
+   after `DIGEST_CHECK_SECONDS` and the next send hour, `topic_clusters` on its tick
+   or after the 30 min stale window, `insights` on the next interval,
+   `retention`/`sitemap_scan` daily, `ingest` at the 6 h stuck-ingest recovery — and
+   nothing bounds how often.
+
+A fourth case is neither lost nor failed in the alert's sense: a payload whose `type`
+nothing handles gets one `worker.job.received` and one `worker.job.unknown` with the
+same `job_id`, **no** `worker.job.failed`, and no counter movement. It is a log line
+and nothing else.
+
+### 3. Putting the work back, through its producer
+
+Use the producer. It is the only path that takes the type's own claim, mints the
+envelope and has known duplicate semantics; a hand push skips all three.
+
+Each producer is an ordinary async worker function that the loop calls on its
+interval, so an operator can run one tick against the same Redis and Postgres the
+worker uses — this bypasses the **interval**, never the claim:
+
+```bash
+uv run python -c "import asyncio; from site_gpt.app import worker; print(asyncio.run(worker.enqueue_due_retention()))"
+uv run python -c "import asyncio; from site_gpt.app import worker; print(asyncio.run(worker.enqueue_due_topics()))"
+uv run python -c "import asyncio; from site_gpt.app import worker; print(asyncio.run(worker.enqueue_due_sitemap_scans()))"
+uv run python -c "import asyncio; from site_gpt.app import worker; print(asyncio.run(worker.enqueue_due_insights()))"
+uv run python -c "import asyncio; from site_gpt.app import worker; print(asyncio.run(worker.enqueue_due_digests()))"
+```
+
+`ingest` has no such helper: its producer is the HTTP route, so the operator action
+is `POST /api/ingest` (or `/api/v1/ingest` with a key) with the `website_id`, or a
+worker restart, which runs `requeue_stuck_ingests` before consuming.
+
+| Type | Producer to use | What makes the producer queue nothing | Idempotency caveat if it does run | Wait when left alone |
+|---|---|---|---|---|
+| **`ingest`** | `POST /api/ingest` | `claim_ingest` refuses while `ingest_status = processing` and younger than `STUCK_INGEST_AFTER` (6 h); after that it takes the claim over | Re-crawls and re-embeds the whole site. Upserts are by `(website_id, url)` and chunks are replaced, so text is rewritten rather than duplicated — but the crawl also deletes documents it no longer lists, cascading their embeddings | up to 6 h (stuck-ingest recovery), otherwise `CRAWL_REFRESH_HOURS` (24 h) |
+| **`digest`** | `enqueue_due_digests()` | a stamped `sent_at`, or an unsent claim younger than `DIGEST_CHECK_SECONDS` (1 h); with `DIGEST_ENABLED=false` nothing is ever queued | Sends the period's email again. The unique `(company_id, period_start)` row is written **before** the send, so a crash after the mail server accepted but before `sent_at` commits is a real duplicate-send path (finding 3), not a theoretical one | up to 1 h for the claim to go stale, then the next `digest_hour` |
+| **`retention`** | `enqueue_due_retention()` | a company with no policy or a zero-day policy | Safe to repeat: deletes `created_at < cutoff` in id-scoped committed batches, so a second run past the same cutoff finds nothing new. It is destructive — the handler honours `"dry_run": true` (and `POST /api/privacy/retention` is the same preview) — so preview before re-running | `RETENTION_CHECK_SECONDS` (24 h) |
+| **`topic_clusters`** | `enqueue_due_topics()` | a `completed` run for that window (final) or a `running` one younger than `STALE_RUN_AFTER` (30 min) | Re-embeds the window and calls the naming model again; clusters are replaced only after both succeed, so a failed run leaves the previous labels intact | the next tick, or 30 min for a stale claim |
+| **`sitemap_scan`** | `enqueue_due_sitemap_scans()` | the best-effort `sitemap:scan:<website_id>` key inside `SITEMAP_SCAN_INTERVAL_SECONDS` | Re-fetching an unchanged sitemap changes nothing and queues no ingest — which is exactly why a repeat scan does **not** repair a crash that landed after the page diff committed (finding 5); replay the `ingest` instead | `SITEMAP_SCAN_INTERVAL_SECONDS` (24 h) |
+| **`insights`** | `enqueue_due_insights()` | nothing: every opted-in company is queued on every tick. Per conversation, a `completed` row is refreshed only when the conversation grew and a `processing` row younger than `STALE_CLAIM_AFTER` (30 min) is skipped | Re-runs the provider classification for whatever is `failed` or stale; labels are refreshed in place, never duplicated, so the cost is provider spend | `INSIGHT_INTERVAL_SECONDS` (24 h) |
+
+The one thing that is not a producer: `redis-cli LPUSH queue:jobs '{"type":
+"retention", "company_id": "<uuid>"}'` still works, and the seam accepts a payload
+with no envelope (the id is minted at pop time, `attempt: 0`). It skips every
+producer claim, so it can repeat work the claim exists to prevent, and nothing
+distinguishes it from ordinary work afterwards. It is recorded here because it is
+the only path left when the producer itself is broken — whether it stays available
+to an operator is D9 §3's call, not this document's.
+
+### 4. What `job_id` does and does not prove
+
+It **does** prove:
+
+- that one pop, one skip (`worker.job.unknown`) and one failure (`worker.job.failed`)
+  are about the same delivery — the three lines that carry it;
+- that a redelivery carried the same identity: `envelope()` preserves an existing
+  `job_id` and `claim_of()` reports the `attempt` the payload arrived with;
+- that a payload pushed without one — by an operator, by `redis-cli`, or by a
+  producer that predates the seam — is still followable from its pop, because the id
+  is minted there;
+- which `request_id` the handler's own lines will carry, since the loop binds one per
+  job.
+
+It **does not** prove:
+
+- that the job ran, finished or changed anything: `complete` is a no-op and no
+  terminal record exists, so a crashed job leaves its id in exactly one line (the
+  pop) and nowhere else;
+- uniqueness or de-duplication: nothing enforces one id per unit of work, and two
+  payloads that arrive without a `job_id` get two different ids — a duplicate push is
+  indistinguishable from a new job, while the same id appearing twice is the only
+  evidence of a redelivery;
+- attempt semantics: `attempt` is whatever the payload said, and only a mechanism
+  increments it. Under `NullDelivery` every delivered job is `attempt: 0`, so a
+  non-zero attempt proves a producer set it, not that an earlier attempt was
+  recorded;
+- that a replay is safe: `attempt: 1` says nothing about what the first attempt left
+  behind (a half-refreshed crawl, an email already at the mail server);
+- age: the id is not a timestamp and a Redis list entry carries none, so `job_id`
+  cannot say when the job was queued or how long it has waited — `ops:queue:last_pop`
+  is the only age proxy and it is per queue, not per job;
+- that the log holds the only copy, or that a copy survives: nothing durable stores
+  the id, so log retention is the trace's retention;
+- authority: nothing in the id says who asked for the run, or whether it was allowed.
+
+### 5. Left blank for D9
+
+| Question | Owner | Recorded here |
+|---|---|---|
+| Who may re-push a job — role, on-call, approval, self-service? | D9 §3 | **blank** |
+| Where a replay is recorded — audit row, event, log? | D9 §3/§4 | **blank**; today a replay is indistinguishable from a first delivery, because a hand push or a producer tick produces the same `worker.job.received` line |
+| Whether a replay may happen before the cause is found, and for which types | D9 §3 | **blank** |
+| Whether the hand push stays available to an operator at all | D9 §3 | **blank** |
+
+Until those are answered this is a description, not the procedure: V6-20 stays
+unticked and gate V6-2G box 1 stays unsignable.
+
+### 6. What this runbook does not decide
+
+The guarantee per type, the mechanism (acknowledgement list or durable record), the
+retry limit and backoff, dead-letter ownership, the replay authority and audit trail
+above, and where a failure is surfaced — all of it is D9's, and the options are
+the D9 brief in [`preflight-v6.md`](preflight-v6.md#appendix--d9-decision-brief).
