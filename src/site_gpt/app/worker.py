@@ -13,6 +13,7 @@ from site_gpt.app.services.ingest_claim import STUCK_INGEST_AFTER, claim_ingest
 from site_gpt.app.services.sitemap import add_missing_pages
 from site_gpt.app.services.parse import extract_text_from_file
 from site_gpt.app.services.redis import close_client, redis_client, enqueue_job
+from site_gpt.app.services.delivery import NullDelivery, envelope
 from site_gpt.app.core.config import (
     CRAWL_REFRESH_HOURS,
     DELIVERY_CHECK_SECONDS,
@@ -251,6 +252,10 @@ async def worker(stop: asyncio.Event | None = None):
     stop = stop or asyncio.Event()
     configure_logging()
     log_event("worker.started")
+    # V6-20: the delivery seam. `NullDelivery` records nothing and re-queues
+    # nothing, which is today's behaviour; the mechanism D9 chooses replaces this
+    # one constructor argument and leaves the loop and every handler alone.
+    delivery = NullDelivery(redis_client, note_failure=note_job_failure)
     # Pick up ingests orphaned by a previous process before consuming jobs.
     try:
         await requeue_stuck_ingests()
@@ -281,7 +286,10 @@ async def worker(stop: asyncio.Event | None = None):
             # time is what makes "backlog age" readable from a Redis list.
             await note_queue_pop(redis_client)
 
-            data = json.loads(job)
+            # V6-20: a job pushed before the seam (or by hand with `redis-cli`)
+            # carries no envelope, so it is normalised here — same fields, plus
+            # the id and attempt number the seam needs.
+            data = envelope(json.loads(job))
             job_type = data.get("type")
             # One correlation id per job: its handler's events and any failure share
             # it, so a support report resolves to one job without guessing by time.
@@ -295,14 +303,23 @@ async def worker(stop: asyncio.Event | None = None):
                         job_type=job_type,
                     )
                     continue
+                # V6-20: the single delivery call site. `claim` is where a
+                # mechanism records the attempt (and returns None when it has
+                # already settled this job); `complete`/`fail` are its two
+                # outcomes. `NullDelivery` makes both of them today's behaviour.
+                claim = await delivery.claim(data)
+                if claim is None:
+                    continue
                 try:
                     await handler(data)
                 except Exception as e:
                     # The handler owns its claims and rows; this loop does not retry,
                     # so the failure must be visible as one structured event and in
-                    # the repeated-failure counter V6-21 alerts on.
-                    log_exception("worker.job.failed", e, job_type=job_type)
-                    await note_job_failure(redis_client)
+                    # the repeated-failure counter V6-21 alerts on — which is what
+                    # `fail` does under `NullDelivery`.
+                    await delivery.fail(claim, e)
+                else:
+                    await delivery.complete(claim)
     finally:
         # V6-23: give the process's pooled resources back and say so. The
         # heartbeat is deliberately left to expire: a planned stop and a crash

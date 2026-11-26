@@ -22,6 +22,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from site_gpt.app.core.logging import log_exception
+from site_gpt.app.services.delivery import envelope
 
 import redis.asyncio as aioredis
 
@@ -177,7 +178,13 @@ async def durability() -> dict[str, Any]:
 
 
 async def enqueue_job(data: dict):
-    await redis_client.lpush(QUEUE_KEY, json.dumps(data))  # type: ignore
+    """Push one job, stamped with its delivery envelope (V6-20).
+
+    `delivery.envelope` adds `job_id` and `attempt` and changes nothing else: the
+    producer's own fields and the top-level `type` reach the consumer exactly as
+    they were, so this contract stays additive (`tests/test_redis_helpers.py`).
+    """
+    await redis_client.lpush(QUEUE_KEY, json.dumps(envelope(data)))  # type: ignore
 
 
 async def publish_event(channel: str, payload: dict | str) -> bool:

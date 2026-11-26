@@ -45,7 +45,10 @@ class PingTests(unittest.TestCase):
 
 
 class EnqueueTests(unittest.TestCase):
-    def test_enqueue_payload_unchanged(self):
+    def test_enqueue_payload_is_additive(self):
+        # V6-20's envelope adds `job_id`/`attempt` and changes nothing else: the
+        # producer's fields and the top-level `type` reach `queue:jobs` verbatim,
+        # which is what every handler and the gate's redis-cli recipes read.
         fake = MagicMock()
         fake.lpush = AsyncMock()
         with patch.object(redis_mod, "redis_client", fake):
@@ -53,7 +56,11 @@ class EnqueueTests(unittest.TestCase):
         fake.lpush.assert_awaited_once()
         key, payload = fake.lpush.call_args.args
         self.assertEqual(key, "queue:jobs")
-        self.assertEqual(json.loads(payload), {"type": "ingest", "website_id": "w1"})
+        body = json.loads(payload)
+        self.assertEqual(body["type"], "ingest")
+        self.assertEqual(body["website_id"], "w1")
+        self.assertEqual(body["attempt"], 0)
+        self.assertEqual(set(body), {"type", "website_id", "job_id", "attempt"})
 
 
 class PublishSubscribeTests(unittest.TestCase):
