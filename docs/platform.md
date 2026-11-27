@@ -131,7 +131,7 @@ operator is allowed and a tenant admin is refused; `scripts/platform_owner.py
 revoke` is refused on the very next request with no restart and `list` reports
 no active operator; re-granting restores access; switching off again takes it
 away and leaves 2 grant rows (1 active) and 3 audit rows. Recorded run:
-**14/14 checks passed**.
+**15/15 checks passed**.
 
 It does not replace an ingress control: nothing here is MFA/SSO or a private
 operator network, which is why the switch stays off.

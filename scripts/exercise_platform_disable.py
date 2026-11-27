@@ -15,7 +15,10 @@ out-of-band CLI:
 2. With the switch off, every `/api/platform` route answers 404 — to a granted
    operator and to a tenant admin — and an alternate `Host`,
    `X-Forwarded-Host`, `X-Forwarded-Proto` or `Origin` changes nothing.
-3. With it on, the granted operator is allowed and a tenant admin is refused.
+3. With it on, the granted operator is allowed and a tenant admin is refused;
+   with an allowlist set, an allowed address claimed in `X-Forwarded-For` by a
+   private peer that is not a listed proxy is refused, while the same header
+   from a peer listed in `TRUSTED_PROXY_IPS` is honoured.
 4. `scripts/platform_owner.py revoke` takes effect on the very next request,
    with no restart, and `list` reports no active grant.
 5. Re-granting restores access (recovery) without touching the switch.
@@ -266,6 +269,36 @@ def main() -> int:
                 "an alternate hostname does not replace the owner check",
                 alt_admin.status_code == 403,
                 f"status {alt_admin.status_code}",
+            )
+
+            # --- 3b. the allowlist judges the socket peer ----------------------
+            # An allowed address claimed in `X-Forwarded-For` by a private peer
+            # that is not a listed proxy must not be believed: the peer is the
+            # client. The owner is granted here, so a 403 can only come from the
+            # network boundary. The same header from a listed proxy is honoured,
+            # which is what shows the refusal is the trust rule and not a header
+            # that is ignored for everyone.
+            current["user"] = owner
+            with patch.object(
+                config, "OPERATOR_ALLOWED_NETWORKS", ("10.20.0.0/16",)
+            ), patch.object(config, "TRUSTED_PROXY_IPS", ()):
+                forged = TestClient(app, client=("10.99.0.5", 50000)).get(
+                    "/api/platform/session",
+                    headers={"X-Forwarded-For": "10.20.1.7"},
+                )
+            with patch.object(
+                config, "OPERATOR_ALLOWED_NETWORKS", ("10.20.0.0/16",)
+            ), patch.object(config, "TRUSTED_PROXY_IPS", ("10.99.0.5",)):
+                forwarded = TestClient(app, client=("10.99.0.5", 50000)).get(
+                    "/api/platform/session",
+                    headers={"X-Forwarded-For": "10.20.1.7"},
+                )
+            check(
+                "an allowlist set refuses an allowed address forged by a non-proxy private peer, and honours it from a listed proxy",
+                forged.status_code == 403
+                and forged.json() == {"detail": "Not enough permissions"}
+                and forwarded.status_code == 200,
+                f"forged {forged.status_code}, listed proxy {forwarded.status_code}",
             )
 
             # --- 4. revocation is immediate ---------------------------------
