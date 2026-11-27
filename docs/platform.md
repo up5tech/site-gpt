@@ -68,7 +68,10 @@ substitute for it.
 `APP_ENV=production` refuses to start with the console on unless the list is
 non-empty, valid, and not a blanket `0.0.0.0/0`/`::/0`
 (`core/config.py::production_config_errors`, setting name only). Outside
-production an empty list means "not restricted".
+production an empty list means "not restricted". A proxy or load balancer in
+front of the console must have its address in `TRUSTED_PROXY_IPS`; if it is
+missing, the forwarded header is ignored, every request is judged by the
+proxy's address, and the allowlist refuses it.
 
 The allowlist is a network boundary, not authentication: MFA/SSO and operator
 re-authentication remain deferred to 2027-02-28 (R2), so put an ingress

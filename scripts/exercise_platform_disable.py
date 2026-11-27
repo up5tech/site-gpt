@@ -9,7 +9,9 @@ It creates a throwaway SQLite database in a temporary directory (and removes it
 afterwards), then proves the operator half of D5 end to end, using the real
 out-of-band CLI:
 
-1. `APP_ENV=production` refuses to boot with `PLATFORM_CONSOLE_ENABLED=true`.
+1. `APP_ENV=production` refuses to boot with `PLATFORM_CONSOLE_ENABLED=true`
+   unless `OPERATOR_ALLOWED_NETWORKS` is a valid, non-blanket list (the
+   V6-11 rule since D5 was reopened on 2026-11-27), naming only that setting.
 2. With the switch off, every `/api/platform` route answers 404 — to a granted
    operator and to a tenant admin — and an alternate `Host`,
    `X-Forwarded-Host`, `X-Forwarded-Proto` or `Origin` changes nothing.
@@ -172,11 +174,11 @@ def main() -> int:
                 audit = db.query(models.PlatformAuditLog).count()
             return grants, active, audit
 
-        # --- 1. production refuses the switch -------------------------------
+        # --- 1. production refuses the switch without a network boundary -----
         problems = config.production_config_errors(VALID_PRODUCTION)
         check(
-            "APP_ENV=production refuses PLATFORM_CONSOLE_ENABLED=true, naming only the setting",
-            problems == ["PLATFORM_CONSOLE_ENABLED"],
+            "APP_ENV=production refuses the console switch without a valid operator allowlist, naming only that setting",
+            problems == ["OPERATOR_ALLOWED_NETWORKS"],
             str(problems),
         )
 
