@@ -100,9 +100,11 @@ pre-7 cover for the one-name-per-call read in `services/redis.py::durability()`:
 the snapshot reports `ok: true` with all three settings on a server that would
 have read as permanently unknown before that fix. Recorded run against
 `redis:6.2` (6.2.16): **11 passed, 3 blocked (6, 8, 12), 0 failed**. Re-recorded
-2026-11-26T04:26:31+00:00 on `ff17bc1+dirty` with item 5 pairing the
-`job_id`/`attempt` on `worker.job.received` and `worker.job.failed`, and item 13
-running `digest` and `retention`: same counts, exit 0.
+2026-11-27T00:23:03+00:00 on `2c59e9f` — the pushed `feat/v6` HEAD, clean tree, so
+the gate printed the commit cell with no `+dirty` — with item 5 pairing the
+`job_id`/`attempt`/`job_type` on `worker.job.received` and `worker.job.failed`, and
+item 13 running `digest` then `retention`: same counts, exit 0. That run is what
+`plans/PLAN_V6.md`'s table cites, all fourteen rows from the one log directory.
 
 ## Stated shortcuts
 
