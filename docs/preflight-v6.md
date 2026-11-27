@@ -1045,7 +1045,7 @@ Only [the D13 row](#decision-register--one-page-to-sign) moves from **UNAPPROVED
 
 ## Appendix — D9 decision brief
 
-**Status: D9 remains UNAPPROVED.** This brief lays out the choices for background-job delivery; it names no mechanism, no attempt limit or deadline, no backoff interval, no dead-letter owner and no replay authority, and it recommends none of the options. The windows and limits quoted below are what the code does today, recorded in `docs/worker-delivery.md` as evidence, not as a proposal. The mechanism-neutral seam built ahead of this decision is recorded there too; §6 marks which of its evidence rows that seam moves and which still wait on the answers above. None of the four questions is answered or narrowed by it.
+**Status: D9 remains UNAPPROVED.** This brief lays out the choices for background-job delivery; it names no mechanism, no attempt limit or deadline, no backoff interval, no dead-letter owner and no replay authority, and it recommends none of the options. The windows and limits quoted below are what the code does today, recorded in `docs/worker-delivery.md` as evidence, not as a proposal. The mechanism-neutral seam built ahead of this decision is recorded there too; §6 marks which of its evidence rows that seam moves and which still wait on the answers above. None of the four questions is answered or narrowed by it. A separate signable brief names one combination, its costs and its recommendation — [`decision-d9-delivery.md`](decision-d9-delivery.md) — and that recommendation is a proposal until the owner signs it; this appendix remains the neutral option record.
 
 ### The question
 
