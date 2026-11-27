@@ -28,7 +28,14 @@ from site_gpt.app.core.config import (
     DIGEST_ENABLED,
     DIGEST_HOUR,
 )
-from site_gpt.app.services import company_settings, digest, insights, retention, topics
+from site_gpt.app.services import (
+    audit,
+    company_settings,
+    digest,
+    insights,
+    retention,
+    topics,
+)
 from site_gpt.app.services.integrations import (
     process_due_deliveries,
     purge_deliveries,
@@ -549,6 +556,21 @@ async def enqueue_due_retention() -> list[str]:
     return queued
 
 
+def purge_expired_audit_logs() -> int:
+    """Delete tenant-audit rows past the one-year window (V6-14, D7).
+
+    Global rather than per company on purpose: only companies with a
+    `retention_days` policy are queued for the visitor-data purge, so a company
+    without one would otherwise keep its trail for ever. The window is the
+    approved audit retention, not the company's visitor-data policy.
+    """
+    db = SessionLocal()
+    try:
+        return audit.purge_expired(db)
+    finally:
+        db.close()
+
+
 async def retention_loop():
     """Wake every RETENTION_CHECK_SECONDS and queue the daily purges."""
     while True:
@@ -559,6 +581,12 @@ async def retention_loop():
                 log_event("retention.queued", companies=len(queued))
         except Exception as e:
             log_exception("retention.enqueue_failed", e)
+        try:
+            removed = purge_expired_audit_logs()
+            if removed:
+                log_event("audit.purged", rows=removed)
+        except Exception as e:
+            log_exception("audit.purge_failed", e)
 
 
 async def handle_digest(data):

@@ -219,18 +219,57 @@ class ProductionConfigTests(unittest.TestCase):
             config.production_config_errors(_with(DOCS_ENABLED=False)),
         )
 
-    def test_platform_console_cannot_be_enabled_in_production(self):
-        # V6-11 / D5: the console's approved state for this launch is off, and
-        # nothing at the ingress enforces the MFA/SSO or operator network a
-        # re-opened console would need, so production refuses the switch rather
-        # than serving an operator surface behind a tenant JWT and a grant.
+    def test_platform_console_needs_the_operator_allowlist(self):
+        # V6-11 / D5 (reopened 2026-11-27): the console may be on in production
+        # only behind the approved control — an operator network allowlist
+        # enforced on every /api/platform request. A tenant JWT plus a grant is
+        # not a control, and neither is "everyone".
         for value in (True, "true", "1", "on"):
             with self.subTest(value=value):
                 self.assertEqual(
                     config.production_config_errors(
                         _with(PLATFORM_CONSOLE_ENABLED=value)
                     ),
-                    ["PLATFORM_CONSOLE_ENABLED"],
+                    ["OPERATOR_ALLOWED_NETWORKS"],
+                )
+                self.assertEqual(
+                    config.production_config_errors(
+                        _with(
+                            PLATFORM_CONSOLE_ENABLED=value,
+                            OPERATOR_ALLOWED_NETWORKS="",
+                        )
+                    ),
+                    ["OPERATOR_ALLOWED_NETWORKS"],
+                )
+
+    def test_platform_console_is_accepted_with_a_real_allowlist(self):
+        self.assertEqual(
+            config.production_config_errors(
+                _with(
+                    PLATFORM_CONSOLE_ENABLED=True,
+                    OPERATOR_ALLOWED_NETWORKS="10.20.0.0/16,203.0.113.10",
+                )
+            ),
+            [],
+        )
+
+    def test_a_blanket_operator_allowlist_is_not_a_control(self):
+        for networks in (
+            "0.0.0.0/0",
+            "::/0",
+            "10.0.0.0/8,0.0.0.0/0",
+            "not-a-network",
+            (),
+        ):
+            with self.subTest(networks=networks):
+                self.assertIn(
+                    "OPERATOR_ALLOWED_NETWORKS",
+                    config.production_config_errors(
+                        _with(
+                            PLATFORM_CONSOLE_ENABLED=True,
+                            OPERATOR_ALLOWED_NETWORKS=networks,
+                        )
+                    ),
                 )
 
     def test_platform_console_off_or_absent_is_accepted(self):
@@ -245,13 +284,13 @@ class ProductionConfigTests(unittest.TestCase):
                     [],
                 )
 
-    def test_production_startup_names_the_console_switch(self):
+    def test_production_startup_names_the_missing_allowlist(self):
         with self.assertRaises(RuntimeError) as raised:
             config.ensure_production_config(
                 env="production", values=_with(PLATFORM_CONSOLE_ENABLED=True)
             )
 
-        self.assertIn("PLATFORM_CONSOLE_ENABLED", str(raised.exception))
+        self.assertIn("OPERATOR_ALLOWED_NETWORKS", str(raised.exception))
 
     def test_development_startup_needs_no_production_configuration(self):
         # Pin the profile: an APP_ENV=production shell must not turn this

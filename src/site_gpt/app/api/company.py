@@ -14,7 +14,7 @@ from site_gpt.app.db.session import get_db
 from site_gpt.app.schemas.app import PaginatedResponse
 from site_gpt.app.schemas.company import CompanyRes, CompanyUpdate
 from site_gpt.app.schemas.user import UserCreate, UserRes, UserUpdate
-from site_gpt.app.services import entitlements
+from site_gpt.app.services import audit, entitlements
 
 router = APIRouter()
 
@@ -116,7 +116,7 @@ def create_user(
         raise HTTPException(status_code=403, detail=exc.detail) from exc
     try:
         hashed_password = hash_password(user_in.password)
-        user = models.User(
+        member = models.User(
             email=user_in.email,
             password_hash=hashed_password,
             company_id=user.company_id,
@@ -126,10 +126,21 @@ def create_user(
             status=user_in.status or "active",
             phone=user_in.phone or None,
         )
-        db.add(user)
+        db.add(member)
+        # The audit row lands in the same transaction as the insert (V6-14).
+        db.flush()
+        audit.record(
+            db,
+            company_id=user.company_id,
+            action="user.create",
+            target_type="user",
+            target_id=member.id,
+            actor=user,
+            detail={"role": member.role, "status": member.status},
+        )
         db.commit()
-        db.refresh(user)
-        return UserRes.model_validate(user)
+        db.refresh(member)
+        return UserRes.model_validate(member)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -174,6 +185,14 @@ def delete_user(
         if not query:
             raise HTTPException(status_code=404, detail="User not found")
         db.delete(query)
+        audit.record(
+            db,
+            company_id=user.company_id,
+            action="user.delete",
+            target_type="user",
+            target_id=query.id,
+            actor=user,
+        )
         db.commit()
         return {"status": "ok"}
     except Exception as e:
@@ -198,18 +217,41 @@ def update_user(
         )
         if not query:
             raise HTTPException(status_code=404, detail="User not found")
+        # Field names, the new role and status — never the email, name, phone
+        # or anything else the request carried (V6-14 stores metadata only).
+        changed: list[str] = []
         if user_in.email:
             query.email = user_in.email
+            changed.append("email")
         if user_in.first_name:
             query.first_name = user_in.first_name
+            changed.append("first_name")
         if user_in.last_name:
             query.last_name = user_in.last_name
+            changed.append("last_name")
         if user_in.role:
             query.role = user_in.role or query.role
+            changed.append("role")
         if user_in.status:
             query.status = user_in.status or query.status
+            changed.append("status")
         if user_in.phone:
             query.phone = user_in.phone
+            changed.append("phone")
+        if changed:
+            audit.record(
+                db,
+                company_id=user.company_id,
+                action="user.update",
+                target_type="user",
+                target_id=query.id,
+                actor=user,
+                detail={
+                    "fields": sorted(set(changed)),
+                    "role": query.role,
+                    "status": query.status,
+                },
+            )
         db.commit()
         db.refresh(query)
         return UserRes.model_validate(query)
@@ -236,6 +278,15 @@ def change_password(
         if not query:
             raise HTTPException(status_code=404, detail="User not found")
         query.password_hash = hash_password(password)
+        # A credential event, never the credential itself.
+        audit.record(
+            db,
+            company_id=user.company_id,
+            action="user.password.change",
+            target_type="user",
+            target_id=query.id,
+            actor=user,
+        )
         db.commit()
         return {"status": "ok"}
     except Exception as e:

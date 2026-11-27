@@ -10,6 +10,7 @@ from site_gpt.app.core.config import (
 )
 from site_gpt.app.db.session import get_db
 from site_gpt.app.schemas.setting import SettingRes
+from site_gpt.app.services import audit
 from site_gpt.app.services.quota import parse_limit
 
 router = APIRouter()
@@ -130,12 +131,20 @@ def company_setting(db: Session, company_id, key: str) -> str | None:
 
 
 def apply_settings(
-    db: Session, company_id, pairs: list[tuple[str, str]]
+    db: Session,
+    company_id,
+    pairs: list[tuple[str, str]],
+    *,
+    actor=None,
+    actor_label: str | None = None,
 ) -> int:
     """Upsert `(key, value)` rows for one company; returns how many were written.
 
     Shared by the admin `PUT /api/settings` and `PUT /api/v1/settings`, so the
     upsert (and its "create the row for an older company" behaviour) exists once.
+    Both callers also produce one `settings.update` audit row (V6-14): the key
+    names only — a value can carry a handoff address or a model override, and the
+    trail is metadata, not a copy of the settings table.
     """
     if not pairs:
         return 0
@@ -156,6 +165,16 @@ def apply_settings(
             # Upsert so companies created before a key existed can still store
             # it (e.g. widget_position, greeting_message, widget_language).
             db.add(models.Setting(key=key, value=value, company_id=company_id))
+    audit.record(
+        db,
+        company_id=company_id,
+        action="settings.update",
+        target_type="company",
+        target_id=company_id,
+        actor=actor,
+        actor_label=actor_label,
+        detail={"keys": sorted({key for key, _ in pairs})},
+    )
     db.commit()
     return len(pairs)
 
@@ -205,7 +224,10 @@ def update_settings(
     user=Depends(get_admin_user),
 ):
     apply_settings(
-        db, user.company_id, [(setting.key, setting.value) for setting in settings]
+        db,
+        user.company_id,
+        [(setting.key, setting.value) for setting in settings],
+        actor=user,
     )
     return {"message": "Settings updated successfully"}
 

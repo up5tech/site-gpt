@@ -125,6 +125,42 @@ class TrustedProxyAllowlistTests(unittest.TestCase):
         self.assertEqual(_trusted_networks([]), [])
 
 
+class OperatorClientIpTests(unittest.TestCase):
+    """V6-11: the allowlist forwards only from a listed proxy."""
+
+    def test_private_peer_is_not_a_proxy_unless_listed(self):
+        request = make_request(
+            {"x-forwarded-for": "1.1.1.1"}, client=("10.0.0.5", 5000)
+        )
+
+        with patch.object(ratelimit.config, "TRUSTED_PROXY_IPS", ()):
+            self.assertEqual(ratelimit.operator_client_ip(request), "10.0.0.5")
+            # The limiter keeps its wider rule for the very same peer.
+            self.assertEqual(_client_ip(request), "1.1.1.1")
+
+    def test_listed_private_peer_may_forward(self):
+        request = make_request(
+            {"x-forwarded-for": "1.1.1.1, 2.2.2.2"}, client=("10.0.0.5", 5000)
+        )
+
+        with patch.object(ratelimit.config, "TRUSTED_PROXY_IPS", ("10.0.0.0/8",)):
+            self.assertEqual(ratelimit.operator_client_ip(request), "1.1.1.1")
+
+    def test_malformed_or_missing_values_fall_back_as_the_limiter_does(self):
+        malformed = make_request(
+            {"x-forwarded-for": "not-an-ip"}, client=("127.0.0.1", 1)
+        )
+        headerless = make_request(client=("10.0.0.5", 1))
+        unknown = make_request({"x-forwarded-for": "1.1.1.1"}, client=None)
+
+        with patch.object(
+            ratelimit.config, "TRUSTED_PROXY_IPS", ("10.0.0.0/8", "127.0.0.1")
+        ):
+            self.assertEqual(ratelimit.operator_client_ip(malformed), "127.0.0.1")
+            self.assertEqual(ratelimit.operator_client_ip(headerless), "10.0.0.5")
+            self.assertEqual(ratelimit.operator_client_ip(unknown), "unknown")
+
+
 class MemoryBackendTests(unittest.TestCase):
     def test_memory_backend_is_the_default_and_limits(self):
         self.assertEqual(ratelimit.RATE_LIMIT_BACKEND, "memory")

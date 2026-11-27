@@ -1,4 +1,6 @@
-from fastapi import HTTPException, Header, status, Depends
+import logging
+
+from fastapi import HTTPException, Header, Request, status, Depends
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from datetime import datetime, timedelta, UTC
 from uuid import UUID
@@ -9,8 +11,10 @@ from requests import Session
 
 import site_gpt.app.models as models
 from site_gpt.app.core.config import JWT_ALGORITHM, JWT_SECRET_KEY
+from site_gpt.app.core.logging import log_event
 from site_gpt.app.db.session import get_db
 from site_gpt.app.services.api_keys import find_api_key, scopes_of
+from site_gpt.app.services import operator_access
 from site_gpt.app.services import platform as platform_service
 
 
@@ -168,16 +172,31 @@ def require_scope(key, scope: str) -> None:
 
 
 def require_platform_owner(
+    request: Request,
     user=Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """The operator boundary (V5-40, D10).
+    """The operator boundary (V5-40, D10; V6-11 network allowlist).
 
     Deliberately stricter than `get_admin_user` and independent of it: a tenant
     `admin` is not an operator, and the grant this reads can only be created out
     of band by `scripts/platform_owner.py`. Revocation is a timestamp, so the
     very next request after `revoke_owner` is refused.
+
+    V6-11 / D5 (reopened 2026-11-27): the approved control is an operator
+    network allowlist, checked here — in the application, on every route — so
+    no `Host`, alternate API origin or proxy header can substitute for it. An
+    empty list means "not restricted" outside production, where the production
+    validator refuses to enable the console without a non-blanket list. A
+    refusal uses the same 403 and detail as a missing grant, so a caller outside
+    the network learns nothing about whether the surface exists.
     """
+    if not operator_access.is_allowed(request):
+        log_event("platform.network_refused", level=logging.WARNING)
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not enough permissions",
+        )
     if not platform_service.is_owner(db, user.id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

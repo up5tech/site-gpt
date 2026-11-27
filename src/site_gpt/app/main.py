@@ -6,6 +6,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 
 from site_gpt.app.api.api_key import router as api_key_router
+from site_gpt.app.api.audit import router as audit_router
 from site_gpt.app.api.billing import router as billing_router
 from site_gpt.app.api.chat_page import router as chat_page_router
 from site_gpt.app.api.company import router as company_router
@@ -184,6 +185,7 @@ app.include_router(ops_router)  # /health/live, /health/ready, /api/ops/status (
 # The hosted chat page (V4 F5) carries its own /chat/{website_id} path.
 app.include_router(chat_page_router)
 app.include_router(company_router, prefix="/api/companies")
+app.include_router(audit_router, prefix="/api/audit")
 app.include_router(setting_router, prefix="/api/settings")
 app.include_router(document_router, prefix="/api/documents")
 app.include_router(upload_router, prefix="/api/uploads")

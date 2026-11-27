@@ -158,7 +158,8 @@ npm install && npm run dev   # :5173
 | `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` | — | backend-only Stripe API and webhook signing secrets; required only when billing is explicitly enabled; never use `VITE_*` |
 | `STRIPE_API_VERSION` | `2026-11-18.endive` | explicit Stripe API version used for SDK/webhook requests; review/pin against the installed Stripe SDK before enabling billing |
 | `STRIPE_PRICE_IDS` | *(empty)* | optional legacy private plan-code → Stripe Price ID fallback (`code:interval=price_...` or JSON); the platform catalog's active `PlanPrice.stripe_price_id` wins, and a plan with neither cannot be bought. Never expose it to the frontend |
-| `PLATFORM_CONSOLE_ENABLED` | `false` | V5 operator-console master switch; off makes every `/api/platform/*` path a 404. Keep false until D5 approves strong auth/private network — `APP_ENV=production` refuses to boot with it on (V6-11) |
+| `PLATFORM_CONSOLE_ENABLED` | `false` | V5 operator-console master switch; off makes every `/api/platform/*` path a 404. When on, `OPERATOR_ALLOWED_NETWORKS` restricts it to an operator network, and `APP_ENV=production` refuses to boot without a valid, non-blanket list (V6-11) |
+| `OPERATOR_ALLOWED_NETWORKS` | *(empty)* | V6-11 operator allowlist (comma-separated IPs/CIDRs) checked on every `/api/platform` request against the socket address; `X-Forwarded-For` is honoured only from a peer listed in `TRUSTED_PROXY_IPS` (loopback/private peers are not trusted implicitly here). Empty means unrestricted outside production and is refused in production while the console is on |
 | `LOG_LEVEL` | `INFO` | structured JSON log level (V6-22, D8): one event per line with a redacted field set and a request/job id; the access event is DEBUG for a 2xx, WARNING for a 4xx and ERROR for a 5xx |
 | `DIGEST_ENABLED` | `false` | global switch for the worker's weekly-digest loop (each company also needs its `digest_enabled` setting) |
 | `DIGEST_CHECK_SECONDS` | `3600` | how often the digest loop looks for companies whose send hour has come |
@@ -835,6 +836,8 @@ uv run python scripts/platform_owner.py grant --email ops@example.com \
 ```
 
 and revoked the same way (`revoke`), effective on the very next request while the grant row stays as history. A tenant `admin` is not an operator.
+
+With the switch on, V6-11's approved control also applies: `OPERATOR_ALLOWED_NETWORKS` must list the operator's IPs/CIDRs (a blank, malformed or `0.0.0.0/0` list is refused in production), and it is checked on every request rather than by hostname, so an alternate API origin cannot bypass it. Forwarded headers are honoured only from a peer listed in `TRUSTED_PROXY_IPS`: a process on the same host or VPC that forges `X-Forwarded-For` is judged by its own address. The tenant-side trail for admin actions is separate: `GET /api/audit` (company admin) reads `tenant_audit_logs`, the V6-14 record of user, API-key, settings, export, erasure and retention actions. `docs/platform.md` records the remaining operator-control deferral and its residual.
 
 With the switch on, `/platform` (a separate shell, not `/app`) and the owner-only API offer:
 

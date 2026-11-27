@@ -44,6 +44,7 @@ from site_gpt.app.services import entitlements, plan_catalog
 TABLES = [
     models.Company.__table__,
     models.User.__table__,
+    models.TenantAuditLog.__table__,
     models.Website.__table__,
     models.Subscription.__table__,
     models.CatalogPlan.__table__,

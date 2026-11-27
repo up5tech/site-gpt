@@ -8,6 +8,7 @@ from site_gpt.app import models
 from site_gpt.app.core.auth import get_admin_user
 from site_gpt.app.db.session import get_db
 from site_gpt.app.schemas.api_key import ApiKeyCreate, ApiKeyCreated, ApiKeyRes
+from site_gpt.app.services import audit
 from site_gpt.app.services.api_keys import (
     ALLOWED_SCOPES,
     create_api_key,
@@ -68,6 +69,18 @@ def create_key(
     key, raw_key = create_api_key(
         db, company_id=user.company_id, name=name, scopes=body.scopes
     )
+    # The raw key is in this response only; the trail keeps the prefix, never the
+    # key or its hash (V6-14).
+    audit.record(
+        db,
+        company_id=user.company_id,
+        action="api_key.create",
+        target_type="api_key",
+        target_id=key.id,
+        actor=user,
+        detail={"name": key.name, "prefix": key.key_prefix, "scopes": key.scopes},
+        commit=True,
+    )
     return ApiKeyCreated(**_to_res(key).model_dump(), key=raw_key)
 
 
@@ -92,5 +105,13 @@ def revoke_key(
         )
     if key.revoked_at is None:
         key.revoked_at = datetime.now(UTC)
+        audit.record(
+            db,
+            company_id=user.company_id,
+            action="api_key.revoke",
+            target_type="api_key",
+            target_id=key.id,
+            actor=user,
+        )
         db.commit()
     return {"status": "revoked"}

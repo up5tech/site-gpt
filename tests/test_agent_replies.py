@@ -41,6 +41,7 @@ WEBSITE_URL = "https://customer.example.com"
 TABLES = [
     models.Company.__table__,
     models.User.__table__,
+    models.TenantAuditLog.__table__,
     models.Website.__table__,
     models.ChatMessage.__table__,
     models.Conversation.__table__,

@@ -54,17 +54,27 @@ no route that edits or deletes an audit row.
 
 ## The switch
 
-`PLATFORM_CONSOLE_ENABLED` (env, default `false`) gates the whole surface. Keep
-it false until D10's requirement — approved strong authentication (MFA/SSO)
-**or** a private operator-only network restriction — is approved and in place.
-Neither is approved, which is why the default is off. **V6-11 makes that state
-enforceable:** `APP_ENV=production` refuses to start with
-`PLATFORM_CONSOLE_ENABLED=true` (`core/config.py::production_config_errors`,
-setting name only), and `tests/test_platform_owner.py::ConsoleOffAtTheIngressTests`
-pins that no `Host`, `X-Forwarded-*` or `Origin` header reveals the surface or
-stands in for the owner check. The `/platform` UI shows
-"not enabled" when the API answers 404 and "operator access required" for a
-tenant account.
+`PLATFORM_CONSOLE_ENABLED` (env, default `false`) gates the whole surface. When
+it is false every `/api/platform` path is a 404. When it is on, V6-11's approved
+control applies (D5 was reopened by the owner on 2026-11-27 with an
+application-level operator network allowlist): `OPERATOR_ALLOWED_NETWORKS` is a
+comma-separated list of IPs/CIDRs checked by
+`core.auth.require_platform_owner` on **every** request. The address is the
+socket peer; `X-Forwarded-For` is honoured only when that peer is listed in
+`TRUSTED_PROXY_IPS` — stricter than the rate limiter, which also accepts a
+loopback/private peer — so a `Host`, `X-Forwarded-*` or `Origin` header, an
+alternate API origin, or a forged header from a neighbouring container cannot
+substitute for it.
+`APP_ENV=production` refuses to start with the console on unless the list is
+non-empty, valid, and not a blanket `0.0.0.0/0`/`::/0`
+(`core/config.py::production_config_errors`, setting name only). Outside
+production an empty list means "not restricted".
+
+The allowlist is a network boundary, not authentication: MFA/SSO and operator
+re-authentication remain deferred to 2027-02-28 (R2), so put an ingress
+allowlist in front of the console as well when it is exposed. The `/platform` UI
+shows "not enabled" when the API answers 404 and "operator access required" for
+a tenant account.
 
 ## Granting, revoking and recovery
 

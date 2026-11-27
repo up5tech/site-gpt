@@ -31,7 +31,7 @@ from site_gpt.app.schemas.privacy import (
     RetentionPurgeRequest,
     RetentionPurgeResult,
 )
-from site_gpt.app.services import retention
+from site_gpt.app.services import audit, retention
 from site_gpt.app.services.conversations import erase_session
 
 router = APIRouter()
@@ -100,6 +100,18 @@ def export_website_data(
         .filter(models.Conversation.website_id == website.id)
         .order_by(models.Conversation.created_at.asc())
         .all()
+    )
+
+    # A read of everything the company holds is itself auditable (V6-14): who
+    # exported which website and when, never the rows that were returned.
+    audit.record(
+        db,
+        company_id=user.company_id,
+        action="data.export",
+        target_type="website",
+        target_id=website.id,
+        actor=user,
+        commit=True,
     )
 
     return PrivacyExport(
@@ -217,6 +229,17 @@ def erase_conversation(
         db, user.company_id, erased_moments, commit=True
     )
 
+    audit.record(
+        db,
+        company_id=user.company_id,
+        action="data.erase",
+        target_type="website",
+        target_id=website.id,
+        actor=user,
+        detail={"rows": deleted, "topic_windows": deleted_clusters},
+        commit=True,
+    )
+
     return PrivacyDeletionResult(
         website_id=website.id,
         session_id=session_id,
@@ -248,6 +271,22 @@ def purge_expired_data(
         days=body.retention_days,
         dry_run=body.dry_run,
     )
+    # Only an applied purge is an erasure; a preview changes nothing and is not
+    # audited as one (V6-14).
+    if not result["dry_run"]:
+        audit.record(
+            db,
+            company_id=user.company_id,
+            action="data.retention.apply",
+            target_type="company",
+            target_id=user.company_id,
+            actor=user,
+            detail={
+                "retention_days": result["retention_days"],
+                "rows": result["total"],
+            },
+            commit=True,
+        )
     logger.info(
         "retention purge (%s) for company %s: %s rows",
         "dry run" if result["dry_run"] else "applied",
@@ -294,6 +333,20 @@ def erase_contact(
         .delete()
     )
     db.commit()
+
+    audit.record(
+        db,
+        company_id=user.company_id,
+        action="data.erase_contact",
+        target_type="website",
+        target_id=website.id,
+        actor=user,
+        detail={
+            "contacts": deleted_contacts,
+            "handoff_requests": deleted_handoffs,
+        },
+        commit=True,
+    )
 
     return PrivacyDeletionResult(
         website_id=website.id,

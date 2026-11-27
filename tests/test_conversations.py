@@ -34,6 +34,7 @@ NOW = datetime(2026, 11, 19, 12, 0, tzinfo=UTC)
 TABLES = [
     models.Company.__table__,
     models.User.__table__,
+    models.TenantAuditLog.__table__,
     models.Website.__table__,
     models.ChatMessage.__table__,
     models.ChatFeedback.__table__,

@@ -52,6 +52,10 @@ M12_REVISION = "0b22b30bf930"
 M12_PATH = (
     ROOT / "alembic" / "versions" / f"{M12_REVISION}_v5_m12_platform_owner_and_audit.py"
 )
+M13_REVISION = "c1f4a7d29b30"
+M13_PATH = (
+    ROOT / "alembic" / "versions" / f"{M13_REVISION}_v6_m13_tenant_audit_logs.py"
+)
 ACTIVE_INDEX = "uq_embed_tokens_website_id_active"
 
 
@@ -178,7 +182,7 @@ class EmbedTokenMigrationTests(unittest.TestCase):
         # Each migration must stay exactly one step behind the next one and the
         # chain must still start at the V2 head, or a later one was rebased onto
         # the wrong parent.
-        self.assertEqual(script.get_heads(), [M12_REVISION])
+        self.assertEqual(script.get_heads(), [M13_REVISION])
         self.assertEqual(script.get_revision(M9_REVISION).down_revision, M8_REVISION)
         self.assertEqual(script.get_revision(M8_REVISION).down_revision, M7_REVISION)
         self.assertEqual(script.get_revision(M7_REVISION).down_revision, M7_PARENT)
@@ -335,7 +339,7 @@ class TopicClusterMigrationTests(unittest.TestCase):
         config.set_main_option("script_location", str(ROOT / "alembic"))
         script = ScriptDirectory.from_config(config)
 
-        self.assertEqual(script.get_heads(), [M12_REVISION])
+        self.assertEqual(script.get_heads(), [M13_REVISION])
         self.assertEqual(script.get_revision(M8_REVISION).down_revision, M7_REVISION)
 
 
@@ -619,6 +623,61 @@ class BillingEventSchemaTests(unittest.TestCase):
         self.assertIn("idx_billing_events_created_at", names)
 
 
+class TenantAuditMigrationTests(unittest.TestCase):
+    """M13 adds the tenant audit trail and leaves one linear head."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.source = M13_PATH.read_text()
+
+    def test_m13_chains_from_m12(self):
+        self.assertTrue(M13_PATH.exists(), f"missing migration {M13_PATH.name}")
+        self.assertIn(
+            'down_revision: Union[str, Sequence[str], None] = "0b22b30bf930"',
+            self.source,
+        )
+
+    def test_m13_is_the_single_head(self):
+        config = Config(str(ROOT / "alembic.ini"))
+        config.set_main_option("script_location", str(ROOT / "alembic"))
+        script = ScriptDirectory.from_config(config)
+
+        self.assertEqual(script.get_heads(), [M13_REVISION])
+        self.assertEqual(
+            script.get_revision(M13_REVISION).down_revision, M12_REVISION
+        )
+
+    def test_the_table_carries_metadata_only(self):
+        self.assertEqual(
+            set(models.TenantAuditLog.__table__.columns.keys()),
+            {
+                "company_id",
+                "actor_user_id",
+                "actor_label",
+                "action",
+                "target_type",
+                "target_id",
+                "detail",
+                "id",
+                "created_at",
+                "updated_at",
+            },
+        )
+
+    def test_the_read_and_purge_indexes_exist(self):
+        names = {index.name for index in models.TenantAuditLog.__table__.indexes}
+
+        self.assertIn("idx_tenant_audit_logs_company_created", names)
+        self.assertIn("idx_tenant_audit_logs_created_at", names)
+
+    def test_the_migration_creates_it_with_both_fks(self):
+        self.assertIn('create_table(\n        "tenant_audit_logs",', self.source)
+        self.assertIn('["company_id"], ["companies.id"], ondelete="CASCADE"', self.source)
+        self.assertIn(
+            '["actor_user_id"], ["users.id"], ondelete="SET NULL"', self.source
+        )
+
+
 class SubscriptionMigrationTests(unittest.TestCase):
     """M11 chains from M10, keeps only its two tables, and undoes them."""
 
@@ -638,7 +697,7 @@ class SubscriptionMigrationTests(unittest.TestCase):
         config.set_main_option("script_location", str(ROOT / "alembic"))
         script = ScriptDirectory.from_config(config)
 
-        self.assertEqual(script.get_heads(), [M12_REVISION])
+        self.assertEqual(script.get_heads(), [M13_REVISION])
         self.assertEqual(
             script.get_revision(M11_REVISION).down_revision, M10_REVISION
         )
@@ -766,9 +825,12 @@ class PlatformMigrationTests(unittest.TestCase):
         config.set_main_option("script_location", str(ROOT / "alembic"))
         script = ScriptDirectory.from_config(config)
 
-        self.assertEqual(script.get_heads(), [M12_REVISION])
+        self.assertEqual(script.get_heads(), [M13_REVISION])
         self.assertEqual(
             script.get_revision(M12_REVISION).down_revision, M11_REVISION
+        )
+        self.assertEqual(
+            script.get_revision(M13_REVISION).down_revision, M12_REVISION
         )
 
     def test_migration_creates_both_tables_and_the_partial_index(self):

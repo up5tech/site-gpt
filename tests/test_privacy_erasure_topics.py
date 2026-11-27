@@ -51,6 +51,8 @@ class EraseConversationTopicsTests(unittest.TestCase):
                 # the inbox row and the K4 token must go with the messages.
                 models.Conversation.__table__,
                 models.SessionToken.__table__,
+                # M13: the erasure writes its own audit row.
+                models.TenantAuditLog.__table__,
             ],
         )
         self.db = sessionmaker(bind=self.engine)()

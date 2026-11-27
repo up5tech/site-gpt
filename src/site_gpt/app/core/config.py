@@ -304,6 +304,19 @@ TRUSTED_PROXY_IPS = tuple(
     if entry.strip()
 )
 
+# Comma-separated IPs/CIDRs allowed to reach the platform-owner console (V6-11;
+# D5 reopened by the owner on 2026-11-27 with this allowlist as the approved
+# control). Empty means "not restricted", which is a development-only posture:
+# `production_config_errors` refuses to enable the console without a non-blanket
+# list. Loopback and private peers are deliberately NOT implicit here — an
+# allowance has to be written down, otherwise one NAT rule would put the console
+# on the public internet.
+OPERATOR_ALLOWED_NETWORKS = tuple(
+    entry.strip()
+    for entry in os.getenv("OPERATOR_ALLOWED_NETWORKS", "").split(",")
+    if entry.strip()
+)
+
 # Verbose SQL logging. Off by default in production; set SQL_ECHO=true to debug.
 SQL_ECHO = os.getenv("SQL_ECHO", "false").lower() in ("1", "true", "yes", "on")
 
@@ -342,6 +355,13 @@ DELIVERY_RETENTION_DAYS = int(os.getenv("DELIVERY_RETENTION_DAYS", "30"))
 DELIVERY_RETENTION_CHECK_SECONDS = int(
     os.getenv("DELIVERY_RETENTION_CHECK_SECONDS", "3600")
 )
+
+# How long tenant-admin audit rows are kept, in days (D7: one year). Unlike the
+# visitor-data policy this is not per company: the trail exists so an admin can
+# answer "who changed this and when" for a year, and a per-tenant switch would
+# let an admin erase the record of their own actions. 0 keeps the rows for ever.
+# See `services/audit.purge_expired`.
+AUDIT_RETENTION_DAYS = int(os.getenv("AUDIT_RETENTION_DAYS", "365"))
 
 # How often the worker queues the retention purge for companies that set a
 # `retention_days` policy. Daily: the purge removes rows older than the policy,
@@ -427,6 +447,55 @@ def _explicit_origins(raw: str) -> bool:
     return True
 
 
+def operator_network_allows(
+    client_ip: str | None, networks: Any = None
+) -> bool:
+    """Whether `client_ip` may reach the operator console (V6-11).
+
+    Empty configuration means "not restricted", which production refuses to
+    combine with the console switch. An address that cannot be parsed, or a
+    request whose peer is unknown, is refused rather than guessed: the boundary
+    fails closed, and a malformed entry in the list is ignored (it can never
+    widen access).
+    """
+    entries = _proxy_entries(
+        OPERATOR_ALLOWED_NETWORKS if networks is None else networks
+    )
+    if not entries:
+        return True
+    try:
+        address = ipaddress.ip_address(str(client_ip or "").strip())
+    except ValueError:
+        return False
+    for entry in entries:
+        try:
+            network = ipaddress.ip_network(entry, strict=False)
+        except ValueError:
+            continue
+        if address in network:
+            return True
+    return False
+
+
+def valid_operator_networks(value: Any) -> bool:
+    """True for a non-empty list of valid, non-blanket IPs/CIDRs.
+
+    `0.0.0.0/0` and `::/0` are exactly what the allowlist exists to exclude, so
+    they count as no control at all rather than as a valid entry.
+    """
+    entries = _proxy_entries(value)
+    if not entries:
+        return False
+    for entry in entries:
+        try:
+            network = ipaddress.ip_network(entry, strict=False)
+        except ValueError:
+            return False
+        if network.prefixlen == 0:
+            return False
+    return True
+
+
 def _proxy_entries(value: Any) -> list[str]:
     if value is None:
         return []
@@ -458,6 +527,7 @@ def _production_values() -> dict[str, Any]:
         "TRUSTED_PROXY_IPS": TRUSTED_PROXY_IPS,
         "DOCS_ENABLED": DOCS_ENABLED,
         "PLATFORM_CONSOLE_ENABLED": PLATFORM_CONSOLE_ENABLED,
+        "OPERATOR_ALLOWED_NETWORKS": OPERATOR_ALLOWED_NETWORKS,
         "REDIS_SOCKET_TIMEOUT_SECONDS": REDIS_SOCKET_TIMEOUT_SECONDS,
         "INBOX_STREAM_HEARTBEAT_SECONDS": INBOX_STREAM_HEARTBEAT_SECONDS,
     }
@@ -499,14 +569,15 @@ def production_config_errors(
     if "DOCS_ENABLED" not in source or _truthy(source.get("DOCS_ENABLED")):
         problems.append("DOCS_ENABLED")
 
-    # V6-11 / D5: the operator console's approved state for this launch is off,
-    # and no approved MFA/SSO or operator-only network is enforced at the
-    # ingress. A production boot with the switch on would therefore expose an
-    # operator surface protected by nothing but a tenant JWT plus an out-of-band
-    # grant, so refuse to start rather than trust a deployment to leave it off.
-    # Reopening the console needs a new D5 answer and a verified ingress control.
-    if _truthy(source.get("PLATFORM_CONSOLE_ENABLED")):
-        problems.append("PLATFORM_CONSOLE_ENABLED")
+    # V6-11 / D5 (reopened by the owner on 2026-11-27): the console may be on in
+    # production only behind the approved control — an operator network allowlist
+    # enforced on every /api/platform request (`core.auth.require_platform_owner`).
+    # A missing, malformed or blanket list is not a control, so the boot is
+    # refused by name instead of trusting the deployment to leave the switch off.
+    if _truthy(source.get("PLATFORM_CONSOLE_ENABLED")) and not (
+        valid_operator_networks(source.get("OPERATOR_ALLOWED_NETWORKS"))
+    ):
+        problems.append("OPERATOR_ALLOWED_NETWORKS")
 
     # V6-23: the socket timeout exists to fail a hung Redis promptly, but the
     # inbox stream legitimately waits `INBOX_STREAM_HEARTBEAT_SECONDS` for its

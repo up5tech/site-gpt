@@ -65,6 +65,8 @@ class RetentionEndpointTests(unittest.TestCase):
                 models.SessionToken.__table__,
                 # M10: the derived insight row cascades with its conversation.
                 models.ConversationInsight.__table__,
+                # M13: the applied purge writes its own audit row.
+                models.TenantAuditLog.__table__,
             ],
         )
         self.db = sessionmaker(bind=self.engine)()

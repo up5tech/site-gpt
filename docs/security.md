@@ -115,10 +115,18 @@ These are listed because the code cannot enforce them and because the defaults i
 
 ### Platform owner console
 
-- Keep `PLATFORM_CONSOLE_ENABLED=false` until D10's requirement — approved
-  MFA/SSO **or** a private operator-only network — is in place. The switch is a
-  404 gate, not an authentication control; the grant check is the authorization
-  control.
+- Keep `PLATFORM_CONSOLE_ENABLED=false` unless you need the console. When it is
+  on, V6-11's approved control (D5 reopened 2026-11-27) applies:
+  `OPERATOR_ALLOWED_NETWORKS` is checked in `require_platform_owner` on every
+  request against the client's socket address; `X-Forwarded-For` counts only
+  when that peer is listed in `TRUSTED_PROXY_IPS`, because a loopback/private
+  peer is not a proxy here (any process on the same host or VPC could claim a
+  listed address). And `APP_ENV=production` refuses to boot unless that list
+  is non-empty, valid and not a blanket `0.0.0.0/0`/`::/0`. The allowlist is a
+  network restriction, not authentication — MFA/SSO and operator
+  re-authentication remain deferred (R2) — so expose the console only on a
+  network you control and prefer an ingress allowlist in front of it too. The
+  grant check remains the authorization control; the switch is a 404 gate.
 - Provision grants only with `scripts/platform_owner.py` from a host holding the
   deployment `DATABASE_URL`. Treat database write access as operator access.
 - Grant the application role no `UPDATE`/`DELETE` on `platform_audit_logs` if the
@@ -128,6 +136,25 @@ These are listed because the code cannot enforce them and because the defaults i
   shape, not a content guarantee: never pass a credential to an audit writer.
 - CSRF is not applicable to the bearer-JWT API; the trade-off is that an XSS can
   read the token in `localStorage`. Keep the frontend free of untrusted HTML.
+
+### Tenant admin audit (V6-14, D13 reopened for this scope 2026-11-27)
+
+- `tenant_audit_logs` (M13, `c1f4a7d29b30`) is the tenant-side trail: one
+  append-only row per audited action with the actor's id and email, company,
+  action, target, time and an already-redacted JSON detail. No transcript,
+  request body, password, API key or token column exists, and there is no
+  update path.
+- Audited: user create, role/status update, delete and password change; API-key
+  issue and revoke; settings and model changes (`settings.update` names the keys,
+  never the values); data export; conversation and contact erasure; an applied
+  retention purge. A retention preview changes nothing and is not audited.
+- Read access is `GET /api/audit`: company admin only, company-scoped, at most
+  100 rows per page, newest first. Another tenant's rows are never returned.
+- Retention is the approved one year (D7). The worker's daily retention tick
+  deletes older rows in bounded batches. Unlike visitor data this is not a
+  per-company setting — an admin cannot shorten the record of their own actions.
+- The tenant trail does not replace the platform trail: an `/api/platform`
+  action writes `platform_audit_logs` and never a tenant row.
 
 ### Stripe billing
 

@@ -40,6 +40,8 @@ class V1IngestTests(unittest.TestCase):
                 models.Company.__table__,
                 models.Website.__table__,
                 models.ApiKey.__table__,
+                # M13: key issue/revoke and the /api/v1 settings write audit.
+                models.TenantAuditLog.__table__,
             ],
         )
         self.db = sessionmaker(bind=self.engine)()

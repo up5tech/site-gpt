@@ -944,6 +944,50 @@ class PlatformAuditLog(BaseModel):
     actor = relationship("User", passive_deletes=True)
 
 
+class TenantAuditLog(BaseModel):
+    """One tenant-admin action, append-only (V6-14, D13 reopened 2026-11-27).
+
+    Metadata only: actor, company, action, target and time, plus a JSON detail
+    the writer already redacted. There is deliberately no column for a
+    transcript, request body, password, API key or session token, and no update
+    path — the only delete is the one-year retention purge.
+
+    `actor_label` keeps the actor's email at the time of the action, so a trail
+    for a since-deleted account still answers "who" (the FK itself is
+    `SET NULL`). The company FK cascades: deleting a company removes its trail
+    with the rest of its data.
+    """
+
+    __tablename__ = "tenant_audit_logs"
+
+    __table_args__ = (
+        # Every read is company-scoped and newest-first.
+        Index(
+            "idx_tenant_audit_logs_company_created",
+            "company_id",
+            "created_at",
+        ),
+        # The retention purge's only filter.
+        Index("idx_tenant_audit_logs_created_at", "created_at"),
+    )
+
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
+    )
+    actor_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    # The actor's email at the time, for a trail that outlives the account. Not
+    # a credential and never checked as one.
+    actor_label: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    action: Mapped[str] = mapped_column(String(64), nullable=False)
+    target_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    target_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    detail: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+    actor = relationship("User", passive_deletes=True)
+
+
 class CatalogPlan(BaseModel):
     """A durable, operator-managed plan definition (M12, V5-42).
 

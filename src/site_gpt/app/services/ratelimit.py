@@ -30,6 +30,7 @@ from collections import deque
 
 from fastapi import HTTPException, Request
 
+from site_gpt.app.core import config
 from site_gpt.app.core.config import RATE_LIMIT_BACKEND, TRUSTED_PROXY_IPS
 
 log = logging.getLogger(__name__)
@@ -198,6 +199,63 @@ def _client_ip(request: Request) -> str:
 
     peer = request.client.host
     if not _is_trusted_peer(peer):
+        return peer
+
+    forwarded = request.headers.get("x-forwarded-for")
+    if not forwarded:
+        return peer
+
+    candidate = forwarded.split(",")[0].strip()
+    if _parse_ip(candidate) is None:
+        # Malformed/forged header entry: fall back to the socket address.
+        return peer
+    return candidate
+
+
+def client_ip(request: Request) -> str:
+    """Public name for the rate limiter's proxy-aware client address.
+
+    Loopback and private peers may forward here (see `_client_ip`), which is
+    what a proxy on the same host or VPC looks like. The operator allowlist
+    deliberately does not use this value; it calls `operator_client_ip`.
+    """
+    return _client_ip(request)
+
+
+def _is_configured_proxy(value: str) -> bool:
+    """Whether `value` is explicitly listed in `TRUSTED_PROXY_IPS`.
+
+    Read from the config module at call time so a test can patch the value and
+    so a restart is the only thing that changes a deployment's proxy list.
+    """
+    addr = _parse_ip(value)
+    if addr is None:
+        return False
+    return any(
+        addr in network
+        for network in _trusted_networks(config.TRUSTED_PROXY_IPS)
+    )
+
+
+def operator_client_ip(request: Request) -> str:
+    """Client address for the operator allowlist (V6-11).
+
+    `client_ip` trusts a loopback or private peer implicitly, because for the
+    rate limiter a proxy on the same host, Docker network or VPC is the normal
+    shape. The operator allowlist cannot inherit that: any process sharing that
+    network — an unprivileged shell, a neighbouring container — could then
+    claim a listed operator address with one header, and the allowlist would
+    describe where a request passed through rather than who sent it.
+
+    So `X-Forwarded-For` is honoured only when the direct peer is explicitly
+    listed in `TRUSTED_PROXY_IPS`; every other peer, loopback and private
+    included, is judged by its socket address. The limiter's rule is unchanged.
+    """
+    if request.client is None:
+        return "unknown"
+
+    peer = request.client.host
+    if not _is_configured_proxy(peer):
         return peer
 
     forwarded = request.headers.get("x-forwarded-for")

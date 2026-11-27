@@ -143,6 +143,9 @@ def put_settings_v1(
         db,
         api_key.company_id,
         [(setting.key, setting.value) for setting in settings],
+        # An API-key caller has no user session; the prefix identifies the key
+        # without storing the key or its hash (V6-14).
+        actor_label=f"api-key:{api_key.key_prefix}",
     )
     return {"updated": written}
 
