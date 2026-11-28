@@ -85,10 +85,10 @@
 | Attempt count bounded | no | yes (in payload) | yes (column) | yes (vendor) |
 | Dead letter with the payload | no | yes (Redis list) | yes (terminal row) | yes (vendor) |
 | Replay from a stored record | no | yes, until the list is lost | yes | yes |
-| New migration | no | yes, for `digest_recipients` only (8.7; the suppression half stays in Redis) | **yes (M14) — one revision, 2 tables: the job record and `digest_recipients`** | yes, the same record; the broker replaces the transport, not the record |
+| New migration | no | 0 or 1: only if the per-recipient `digest` state is the same table (§12; the suppression half stays in Redis either way) | **yes (M14) — one revision, 2 tables: the job record and `digest_recipients`** | yes, the same record; the broker replaces the transport, not the record |
 | New dependency | no | no | no | **yes (vendor)** |
 | Closes V6-20's Done-when | **no** | yes, with handler fixes | yes, with handler fixes | yes, plus a record anyway |
-| **Counted surface** (measured in this checkout) | one document, no code path | 11 `enqueue_job` call sites, 6 job types, the 141-line seam in `services/delivery.py`, 2 new settings, 1 migration holding only `digest_recipients`, plus the 6 producer areas the suppression rule touches and the per-recipient `digest` record | the same call sites and seam, plus 1 migration revision holding **2 tables** (the job record and `digest_recipients`) and a `job_queue` service (the closest existing pattern, `services/integrations.py`, is 772 lines) | **everything in C's column**, then a vendor account, credentials, a local emulator and a second write path next to PostgreSQL |
+| **Counted surface** (measured in this checkout) | one document, no code path | 11 `enqueue_job` call sites, 6 job types, the 141-line seam in `services/delivery.py`, 2 new settings, 0 or 1 migration depending on where `digest_recipients` lives for B (§12), plus the 6 producer areas the suppression rule touches and the per-recipient `digest` record | the same call sites and seam, plus 1 migration revision holding **2 tables** (the job record and `digest_recipients`) and a `job_queue` service (the closest existing pattern, `services/integrations.py`, is 772 lines) | **everything in C's column**, then a vendor account, credentials, a local emulator and a second write path next to PostgreSQL |
 | Effort (judgement, **not measured**) | 1–2 days | 6–8 days | 11–15 days | **14–20 days**: C's work plus the vendor path |
 
 Days are judgement, not measurement: no option has been built, so there is no
@@ -111,8 +111,10 @@ recommendation and **both are mechanism-independent, so they raise B and C
 alike**: the producer suppression rule (8.4), which needs a producer-visible
 stopped key — a Redis `queue:dead:<key>` for B, the unique-index conflict for
 C — and the per-recipient `digest` record with its pre-send stamp (8.7), which
-changes `services/digest.py` and needs its `digest_recipients` table whichever
-mechanism delivers the job. They are
+changes `services/digest.py` **and** needs a durable per-recipient record
+whichever mechanism delivers the job. For C that record is the
+`digest_recipients` table; for B, whether it is the same table or Redis keys is
+the open line in §12, not a settled detail of this section. They are
 counted in both columns above and in §10. They do not change which option is
 cheaper; they do mean the 4–6 and 8–12 figures in earlier drafts no longer
 describe what is being signed. D pays for both as well, on top of its vendor
@@ -166,15 +168,19 @@ lands in `queue:dead`.
 `RedisDelivery` in `services/delivery.py` against the three-call seam (~150–200
 lines), a consumer change plus a reaper loop in `worker.py` (~100), two settings
 (visibility timeout, max attempts), 15–20 suite cases, and V6-2G items for
-redelivery and the dead list. The per-recipient `digest` record (8.7) is a table,
-so B takes the **same one migration revision holding `digest_recipients`** as C;
-only the suppression half stays schema-free, because `queue:dead:<key>` is Redis. B absorbs both amendments: producer suppression as a
+redelivery and the dead list. The per-recipient `digest` record (8.7) has to
+survive a restart, and **where it lives under B is a decision, not a detail**:
+either the same `digest_recipients` table as C (then B takes that one migration
+revision too, and the only schema-free half is suppression, because
+`queue:dead:<key>` is Redis) or per-recipient keys in Redis (then B stays
+schema-free, but a Redis flush or eviction can resurrect a `sending` recipient
+as a duplicate send). §12 carries the choice; this brief does not pre-empt it. B absorbs both amendments: producer suppression as a
 `queue:dead:<key>` check in the six producer paths (the durable alternative — a
 suppression table — is C's schema anyway), and the per-recipient `digest`
 record with its pre-send stamp in `services/digest.py`. Counted surface: 11
 `enqueue_job` call sites, 6 job types, the existing 141-line seam, two new
-settings, one migration (`digest_recipients`). Effort is judgement, not
-measured: **6–8 days** — the
+settings, 0 or 1 migration (`digest_recipients`, per §12). Effort is judgement,
+not measured: **6–8 days** — the
 4–6 in earlier drafts excluded the amendments.
 
 **Risk.** The failure R5 names is unchanged at the storage layer: the queued and
@@ -398,9 +404,9 @@ V6-20 plus a recorded R5 residual — a separate decision, not this one.
 
 | | A | B | C (recommended) | D (not recommended) |
 |---|---|---|---|---|
-| Counted surface | one document | 11 call sites, 6 types, seam + 2 settings + 6 producer areas + 1 revision (`digest_recipients`) | + 1 revision, 2 tables, `job_queue`, 6 producer areas, `digest` record | C's surface, then a vendor account, credentials, emulator and second write path |
+| Counted surface | one document | 11 call sites, 6 types, seam + 2 settings + 6 producer areas + 0–1 revision (`digest_recipients`, per §12) | + 1 revision, 2 tables, `job_queue`, 6 producer areas, `digest` record | C's surface, then a vendor account, credentials, emulator and second write path |
 | Effort (judgement, not measured) | 1–2 days | 6–8 days | 11–15 days | 14–20 days |
-| Migration | — | 1 (`digest_recipients`, 8.7) | 1 (next revision, 2 tables) | 1 (the same record; the broker does not replace it) |
+| Migration | — | 0 or 1 (`digest_recipients`, per §12) | 1 (next revision, 2 tables) | 1 (the same record; the broker does not replace it) |
 | New dependency | — | — | — | yes (vendor) |
 | New settings | — | visibility timeout, max attempts | poll interval, visibility timeout, max attempts, retention — the suppression rule and the `digest_recipients` stamp add **no** key; they are a partial unique index and a table | C's, plus endpoint, credentials and the dead-letter queue |
 | Closes R5 | no | partly (Redis loss remains) | yes | yes, through the record, not the broker |
@@ -436,6 +442,7 @@ To sign, record on this row (and copy into `plans/PLAN_V6.md` §4 and
 | Visibility | ☐ `dead` rows + ops counters + 30-day purge (recommended) ☐ other: |
 | Replay | ☐ operator CLI + `platform_audit_logs` (recommended) ☐ other: |
 | `digest` duplicate | ☐ stamp `sending` before the send + per-recipient record (recommended: at-most-once per recipient, detected loss) ☐ accept and count duplicates (class downgrade) ☐ guard: |
+| `digest_recipients` under B — only if B is signed | ☐ the same PostgreSQL table (recommended: a `sending` row has to survive a restart) ☐ Redis keys only, accepting that a Redis loss can re-send a `sending` recipient ☐ not applicable (C signed) |
 | Migration in V6-20 scope | ☐ yes (required by C) ☐ not applicable |
 | Approver / role | |
 | Date | |
