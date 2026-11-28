@@ -196,8 +196,10 @@ supposed to record.
 
 **Evidence it would need.** Scenarios 1, 2, 5, 6 and 7 of the matrix pass on
 disposable infrastructure (kill → reaper → retry; attempts bounded; dead list
-observed); scenario 3 (crash after an external send) can only be *counted*, and
-scenario 4 needs the `ingest` claim fix. Plus a documented reaper interval and
+observed); scenario 3 (crash after an external send) is prevented per recipient
+by the pre-send stamp — the same 8.7 fix C carries — provided B's record is
+durable, and a Redis-only record can lose the stamp mid-flight (§12); scenario 4
+needs the `ingest` claim fix. Plus a documented reaper interval and
 visibility timeout, a dead-list retention rule, and the Redis-durability
 statement already required by V6-23.
 
@@ -223,8 +225,9 @@ a reaper returns rows whose lease expired; settled rows are purged on the
 **Cost.** A migration (next revision; M13 is the head), a models entry, a
 `services/job_queue.py` (~300 lines), `SqlDelivery` behind the existing seam,
 producer changes in six places, the consumer loop's `BRPOP` replaced by a claim
-plus wait, a reaper/settle rule, two counters on `GET /api/ops/status`, a replay
-CLI, 25–35 suite cases, and gate items for redelivery, dead-letter and replay.
+plus wait, a reaper/settle rule, the `GET /api/ops/status` counters (queued, processing,
+dead, oldest age) plus `queue.suppressed` (8.4), a replay CLI, 25–35 suite
+cases, and gate items for redelivery, dead-letter, suppression and replay.
 Effort is judgement, not measured: **11–15 days**; the counted surface is the
 same 11 call sites, 6 job types and seam, plus **one migration revision holding
 two tables** (the job record and `digest_recipients`) and the six producer
@@ -293,8 +296,9 @@ wake-up nudge.** Reasons, in order of weight:
    `integration_deliveries` (claim, attempt record, terminal state, purge), so
    the reviewable risk is integration, not design.
 
-The cost is a migration and a poll interval. Signing C puts **one migration in
-V6-20's scope** — the existing D9 appendix requires that to be stated
+The cost is one migration (the job record, the `digest_recipients` table and the
+suppression index), the producer and worker edits, and a poll interval. Signing
+C puts **one migration in V6-20's scope** — the existing D9 appendix requires that to be stated
 explicitly — and keeps `queue:jobs` as a nudge only, so a Redis outage degrades
 latency rather than delivery.
 
@@ -385,11 +389,11 @@ them.**
 |---|---|---|---|
 | 1 crash before the handler | ✗ nothing re-delivers | ✓ reaper returns the entry | ✓ lease expiry re-queues the row |
 | 2 crash during the handler | ✗ | ✓ retry, partial state as documented | ✓ |
-| 3 crash after an external send, before ack | ✗ | ✓ counted, not prevented | ✓ prevented per recipient: a `sending` row is never re-sent, the loss is detected (8.7) |
+| 3 crash after an external send, before ack | ✗ | ✓ prevented per recipient by the same 8.7 stamp, **if** the record is durable; a Redis-only record can lose it (§12) | ✓ prevented per recipient: a `sending` row is never re-sent, the loss is detected (8.7) |
 | 4 crash after the commit, before ack | ✗ | ✓ no-op by the type's key (needs 8.7 for `ingest`) | ✓ |
 | 5 transient provider/DB failure | ✗ next tick only | ✓ approved backoff | ✓ |
 | 6 poison job | ✗ repeats every tick | ✓ dead list (with producer suppression) | ✓ `dead` row + producer suppression (8.4) |
-| 7 duplicate delivery | ✗ measured repeats | ✓ idempotency key | ✓ |
+| 7 duplicate delivery | ✗ measured repeats | ✓ the job's own key; for `digest`, the recipient row (8.7) | ✓ the job's own key; for `digest`, the recipient row (8.7) |
 | Operator procedure (replay + audit) | producer tick only, unaudited | Redis dead list + CLI | row + CLI + audit |
 | Gate V6-2G box 1 | **not signable** | signable after the matrix | signable after the matrix |
 
@@ -397,7 +401,8 @@ Under **B or C**, V6-20's deliverable is: the seven-scenario matrix run per type
 on disposable infrastructure, one row per type (command, output, timestamp,
 commit) pasted into `plans/PLAN_V6.md` in the V6-40 table shape, the operator
 procedure per type, and suite tests that pin the attempt counter, the terminal
-state and the replay transition. Under **A**, the deliverable is a reworded
+state, the replay transition, a `dead` row suppressing its producer (8.4) and a
+`sending` recipient row never being re-sent (8.7). Under **A**, the deliverable is a reworded
 V6-20 plus a recorded R5 residual — a separate decision, not this one.
 
 ## 10. Cost summary
@@ -425,6 +430,8 @@ gives the verdict against it.
 - It does not choose `digest`'s class for the owner beyond the recommendation:
   8.7 keeps the strict class by stamping before the send and accepting a
   detected loss; signing the duplicate instead would be an explicit downgrade.
+- It does not decide where B's per-recipient `digest` record lives: §5 states
+  both branches and the `digest_recipients` row in §12 asks the owner to pick.
 - It does not authorise a production change: V6-20 is a Wave 2 task and this
   launch gate (V6-5G) is unrelated to it.
 
@@ -443,7 +450,7 @@ To sign, record on this row (and copy into `plans/PLAN_V6.md` §4 and
 | Replay | ☐ operator CLI + `platform_audit_logs` (recommended) ☐ other: |
 | `digest` duplicate | ☐ stamp `sending` before the send + per-recipient record (recommended: at-most-once per recipient, detected loss) ☐ accept and count duplicates (class downgrade) ☐ guard: |
 | `digest_recipients` under B — only if B is signed | ☐ the same PostgreSQL table (recommended: a `sending` row has to survive a restart) ☐ Redis keys only, accepting that a Redis loss can re-send a `sending` recipient ☐ not applicable (C signed) |
-| Migration in V6-20 scope | ☐ yes (required by C) ☐ not applicable |
+| Migration in V6-20 scope | ☐ yes — C's record, or B's if the row above chooses the table ☐ not applicable |
 | Approver / role | |
 | Date | |
 | Evidence link | |
