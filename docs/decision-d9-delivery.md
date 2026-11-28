@@ -9,7 +9,7 @@
 | Neutral record | The full option menu, per-type consequences and the scenario matrix are [`preflight-v6.md` §Appendix — D9](preflight-v6.md#appendix--d9-decision-brief). This brief adds the one thing that appendix deliberately withholds: a named combination and the reasons for it |
 | Evidence base | [`worker-delivery.md`](worker-delivery.md) (per-type matrix, findings 2–7, the 2026-11-26 crash/duplicate/unknown rehearsal), `services/delivery.py` (the seam, `NullDelivery`), `services/redis.py`, `worker.py`, `services/integrations.py`, `scripts/gate_v6_2g/` |
 | Date written | 2026-11-27 |
-| Revised | 2026-11-28 — stress-test amendments: per-class retry, producer suppression, `digest` stamped before the send |
+| Revised | 2026-11-28 — stress-test amendments: per-class retry, producer suppression, `digest` stamped before the send; then §8.3's producer clock corrected and the exclusion moved to the live-row index |
 
 ## 1. What the signature has to answer
 
@@ -215,9 +215,10 @@ written by the producer — inside the producer's transaction where one exists
 (`claim_ingest`, the `digest_log` claim, the privacy purge) — and claimed by the
 worker with `SELECT … FOR UPDATE SKIP LOCKED`; a partial unique index over the
 job's natural key (`type` plus `company_id` and, for `digest`,
-`period_start`) where `state = 'dead'` is what makes a stopped job suppress the
-producer's next insert for the same key rather than letting it re-enqueue at
-`attempt: 0` (8.4). The second table is `digest_recipients` (`company_id`,
+`period_start`) over the **live** states (`queued`, `processing`, `dead`) is what
+makes a stopped job — or a producer tick that lands inside a retry cycle, or
+beside a job that has not finished — suppress the producer's next insert for the
+same key rather than letting it re-enqueue at `attempt: 0` (8.4). The second table is `digest_recipients` (`company_id`,
 `period_start`, recipient, `state`, `attempt`, `last_error`), whose row moves to
 `sending` before the SMTP call and `sent` after the server accepts it (8.7). It
 is the one new store with a person in it, so the address is kept only while the
@@ -328,34 +329,62 @@ state that only a replay clears:
 
 | Profile | Types | Attempts and delays | Reason |
 |---|---|---|---|
-| **Interactive** | `ingest` | 5 attempts (first + 4): **1 m, 5 m, 30 m, 2 h, 6 h** | someone is waiting on the crawl; the first retries are fast enough to ride out a provider blip, and the budget ends in under 9 h |
-| **Periodic** | `retention`, `sitemap_scan`, `topic_clusters`, `insights` | 3 attempts: **1 m, 15 m, 2 h** | the type's own producer cadence (24 h, 30 min for `sitemap_scan`) is a better retry clock than the queue; further retries mostly spend provider credits on a cause no delay fixes |
+| **Interactive** | `ingest` | 6 attempts — the first, then **1 m, 5 m, 30 m, 2 h, 6 h**; 8 h 36 m end to end | someone is waiting on the crawl; the first retries are fast enough to ride out a provider blip, and the budget ends in under 9 h |
+| **Periodic** | `retention`, `sitemap_scan`, `topic_clusters`, `insights` | 4 attempts — the first, then **1 m, 15 m, 2 h**; 2 h 16 m end to end | every one of these producers checks once every 24 h (`RETENTION_CHECK_SECONDS`, `SITEMAP_SCAN_INTERVAL_SECONDS`, `TOPIC_CLUSTER_INTERVAL_SECONDS` and `INSIGHT_INTERVAL_SECONDS` are all `86400`), so the whole budget sits inside one tick and the producer is a better retry clock than a fourth delay; further retries mostly spend provider credits on a cause no delay fixes |
 | **Send** | `digest` | **1 attempt per job**; only the recipients still unsatisfied are retried at the next `digest_hour` (8.7) — whether a stopped job blocks that retry is the open point at the end of 8.7 | a retry at +2 h or +6 h can cross the send hour and deliver a stale weekly report at an odd time |
 
-The numbers are tied to alerting rather than invented: on both the interactive
-and the periodic profile, a deterministic failure trips
-**`JOB_FAILURE_ALERT_COUNT` (3)** inside **`JOB_FAILURE_WINDOW_SECONDS`
-(60 min)**, so an operator is paged during the first retry cycle rather than
-after the tail; and every profile's total budget is shorter than a day, which keeps the
-24 h producers clear of a retrying job. `topic_clusters` is the exception: its
-producer runs every 30 min, so a tick does land inside a retry cycle, and its
-own run claim (the unique row described in §2) is what stops the overlap from
-doing the work twice. A reaper returns a
-row whose lease is older than **30 min**, and `ingest` renews its lease while it
-crawls, because a full crawl can exceed that. All numbers are proposals; the
-signature fixes them.
+The numbers are tied to alerting rather than invented: on every profile a
+deterministic failure trips **`JOB_FAILURE_ALERT_COUNT` (3)** inside
+**`JOB_FAILURE_WINDOW_SECONDS` (60 min)** — the third failure lands at 6 min on
+the interactive profile and 16 min on the periodic one — so an operator is paged
+during the first retry cycle rather than after the tail. Each profile also ends
+inside a day, and the shortest producer tick is 24 h, so no budget outlives its
+own producer.
+
+**`topic_clusters`: neither clock changes, because one of them was reported
+wrong.** An earlier draft of this section said the type's producer runs every
+30 min, so a tick lands inside a retry cycle. Both halves fail on inspection.
+`TOPIC_CLUSTER_INTERVAL_SECONDS` is `86400` (`core/config.py:140–142`); the
+second enqueue path, `enqueue_due_digests`, queues the week's clusters just
+before the digest that reports them, but only when `now.hour` is the company's
+`digest_hour` (`worker.py`), which the hourly loop reaches once a day — so that
+path is daily too. The 30 minutes is `topics.STALE_RUN_AFTER`
+(`services/topics.py:70`), the age at which a `running` claim is taken over: a
+recovery clock, not a producer cadence. Each producer is 24 h from its own
+previous tick, and the 2 h 16 m budget fits inside that with 21 h 44 m to spare.
+
+Two *different* daily producers can still fall inside 2 h 16 m of each other —
+`topic_loop`'s phase comes from when the worker started, the digest-hour path
+from the company's hour — and no retry budget can rule that out: the gap can be
+anything from 0 to 24 h, so the only budget change that would is shrinking it
+towards zero, which is not a retry policy. So the exclusion moves out of the
+clocks and into the record: the producer's insert conflicts with **any live row
+for the key** — `queued`, `processing` or `dead` — not only a `dead` one (§6), so
+a tick that lands inside a retry cycle writes nothing and the retry stays the
+job's. The 24 h cadence, the `digest_hour` ordering and both budgets are
+unchanged.
+
+A reaper returns a row whose lease is older than **30 min**, and a handler
+renews its lease while it runs: the interactive budget ends at 8 h 36 m and the
+periodic one at 2 h 16 m, both well past the lease. All numbers are proposals;
+the signature fixes them.
 
 **8.4 Producer suppression: the attempt budget survives the producer.** Bounded
 attempts bound a *job*, not the *work*. `enqueue_due_insights`,
 `enqueue_due_digests` and the retention loop create a fresh job with
 `attempt: 0` on their next tick (`worker.py:1049–1054`), so without a rule a
 poison job still repeats every interval — exactly the behaviour scenario 6 is
-meant to rule out. The rule: **a `dead` row blocks a new job for the same key**
-(`type` plus its natural key, for example `company_id` and `period_start`). The
-producer's insert conflicts with the dead row, writes nothing, and increments a
-`queue.suppressed` counter (on `GET /api/ops/status`, and one log line per key at
-most once per tick). Only a replay clears the row (8.6), so a deterministic
-failure costs one dead row and one provider call, not one per tick. If the owner
+meant to rule out. The rule: **a live row blocks a new job for the same key** — `queued`,
+`processing` or `dead` (`type` plus its natural key, for example `company_id`
+and `period_start`). The producer's insert conflicts with the live row, writes
+nothing, and increments a `queue.suppressed` counter (on `GET /api/ops/status`,
+and one log line per key at most once per tick), so a tick that lands inside a
+retry cycle cannot start a second run (8.3). A `dead` row is cleared only by a
+replay (8.6), so a deterministic failure costs one dead row and one provider
+call, not one per tick. A row waiting on its backoff or its lease blocks its key
+the same way, which puts the queue's health on `queue.suppressed` beside queue
+age: a worker that stopped picking up `queued` rows shows there as suppression,
+not as a growing list. If the owner
 prefers automatic recovery over operator attention, the alternative is to carry
 the budget instead: a suppressed tick may push `not_before` forward on the dead
 row — a slow retry — but may not reset `attempt` to 0. Recommended: the dead row
@@ -443,8 +472,12 @@ picks one:
 
 Both keep the customer-visible guarantee — neither re-sends a recipient whose row
 is `sending` — and they differ in who finishes the period: the operator, or the
-next tick. The `digest` retry row in §12 carries the choice; this brief does not
-make it here.
+next tick. **A is recommended**, because the dead row is what the operator and
+the counters see, whereas B's automatic finish is up to 24 h later and only
+while that week is still the producer's `previous_period` — a period that has
+rolled is not re-enqueued by any tick, so B falls back to the operator anyway,
+later and without a dead row to page on. The `digest` retry row in §12 carries
+the choice.
 
 ## 9. Evidence V6-20 and gate V6-2G box 1 need, per option
 
@@ -496,11 +529,31 @@ gives the verdict against it.
 - It does not decide where B's per-recipient `digest` record lives: §5 states
   both branches and the `digest_recipients` row in §12 asks the owner to pick.
 - It does not choose between the two readings of `digest` retries against
-  suppression (the end of 8.7): the `digest` retry row in §12 settles that.
+  suppression (the end of 8.7): it recommends reading A, and the `digest` retry
+  row in §12 settles it.
 - It does not authorise a production change: V6-20 is a Wave 2 task and this
   launch gate (V6-5G) is unrelated to it.
 
 ## 12. Signature
+
+**What is still open, row by row.** Ten decisions and three fields. "Gates"
+names what cannot proceed without that answer; V6-20 starts only once the whole
+row is signed, and box 1 of gate V6-2G cannot be signed before V6-20's matrix
+runs, whatever is chosen here.
+
+| Row | Recommended | If you choose otherwise | Gates |
+|---|---|---|---|
+| Mechanism | C, durable job record | **B**: same at-most-once `digest` and the same seven scenarios, but the queued and in-flight work stay on one Redis, so R5 stays half-closed and a flush can still lose a `sending` stamp unless B also takes the table. **A**: V6-20 is reworded and R5 becomes a launch residual; box 1 stays unsignable | V6-20 start · box 1 |
+| Duplicate/loss rule | three classes (8.2) | one rule: `digest` loses its at-most-once send and §9's scenarios 3 and 7 can no longer be claimed per type. Six answers: no default for job types added later | box 1 |
+| Retry | per-class (8.3): `ingest` 6 attempts / 8 h 36 m, periodic 4 / 2 h 16 m, `digest` 1 per period | one table for every type: either `ingest` waits on a clock sized for a weekly job, or `digest` retries across its send hour and mails a stale week at an odd time | box 1 · V6-20 Done-when |
+| `digest` retry vs suppression | **A** — the dead period waits for a replay, and a recipient-level failure is written on its row without ending the job | **B**: the next `digest_hour` finishes the period by itself, but that is up to 24 h later and only while the week is still the "previous" one; it also needs an exception to 8.4 and a second way into a send | box 1 · V6-20 Done-when |
+| Producer suppression | a live row blocks the key (8.4) | only `dead` blocks: a tick inside a retry cycle starts a second run, one extra provider call per daily tick. Carry the budget: no operator step, slower recovery. None: repeats every tick, scenario 6 fails | box 1 |
+| Visibility | `dead` rows + ops counters + 30-day purge; address cleared at `sent` | keeping addresses after settle widens what a dump exposes for no operational gain; a shorter window undercuts the purge rule `integration_deliveries` already uses | box 1 · V6-20 Done-when |
+| Replay | operator CLI + `platform_audit_logs` | an HTTP route needs auth and scoping this replay has no use for; no audit row leaves no record of who resent a period | box 1 · V6-20 Done-when |
+| `digest` duplicate | stamp `sending` before the send + per-recipient row (detected loss) | accepting duplicates is customer-visible and unfixable afterwards; there is no guard to sign instead, because SMTP has no idempotency key | box 1 · V6-20 Done-when |
+| `digest_recipients` under B | the same PostgreSQL table | Redis keys only: B stays schema-free, but a flush resurrects a `sending` recipient as a duplicate email | only if B is signed |
+| Migration in V6-20 scope | yes — 2 tables | "not applicable" is honest only if B runs its per-recipient record in Redis; otherwise V6-20 ships without the record the rest of this brief is built on | V6-20 scope |
+| Approver / role, Date, Evidence link | fill in | a signature with no evidence link cannot be checked by the next reader | closes D9 |
 
 To sign, record on this row (and copy into `plans/PLAN_V6.md` §4 and
 [risk R5](risk-register-v6.md#r5)):
@@ -509,9 +562,9 @@ To sign, record on this row (and copy into `plans/PLAN_V6.md` §4 and
 |---|---|
 | Mechanism | ☐ C durable job record (recommended) ☐ B Redis ack list ☐ A status quo + reword V6-20 |
 | Duplicate/loss rule | ☐ three classes as in 8.2 (recommended) ☐ one rule ☐ six answers |
-| Retry | ☐ per-class (recommended): `ingest` 5× (1 m / 5 m / 30 m / 2 h / 6 h), periodic 3× (1 m / 15 m / 2 h), `digest` 1 per period, then `dead` ☐ other: |
-| `digest` retry vs suppression (8.3 × 8.4, open point at the end of 8.7) | ☐ A: a `dead` period waits for replay, and a recipient-level failure is recorded on its row without ending the job ☐ B: `digest` is exempt from suppression for its own period, so the next `digest_hour` re-enqueues with `not_before` advanced ☐ other: |
-| Producer suppression | ☐ a `dead` row blocks a new job for the same key until replay (recommended) ☐ carry the attempt budget across re-enqueues ☐ none (repeats every tick) |
+| Retry | ☐ per-class (recommended): `ingest` 6 attempts (first + 1 m / 5 m / 30 m / 2 h / 6 h, 8 h 36 m), periodic 4 attempts (first + 1 m / 15 m / 2 h, 2 h 16 m) against a 24 h producer tick, `digest` 1 per period, then `dead` ☐ other: |
+| `digest` retry vs suppression (8.3 × 8.4, open point at the end of 8.7) | ☐ A (recommended): a `dead` period waits for replay, and a recipient-level failure is recorded on its row without ending the job ☐ B: `digest` is exempt from suppression for its own period, so the next `digest_hour` re-enqueues with `not_before` advanced ☐ other: |
+| Producer suppression | ☐ a live row (`queued`, `processing` or `dead`) blocks a new job for the same key until it settles or is replayed (recommended — this is also what keeps a tick out of a retry cycle, 8.3) ☐ only a `dead` row blocks ☐ carry the attempt budget across re-enqueues ☐ none (repeats every tick) |
 | Visibility | ☐ `dead` rows + ops counters + 30-day purge, `digest_recipients` cleared at `sent` (recommended) ☐ other: |
 | Replay | ☐ operator CLI + `platform_audit_logs` (recommended) ☐ other: |
 | `digest` duplicate | ☐ stamp `sending` before the send + per-recipient record (recommended: at-most-once per recipient, detected loss) ☐ accept and count duplicates (class downgrade) ☐ guard: |
