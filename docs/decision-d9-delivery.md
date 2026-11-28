@@ -215,7 +215,9 @@ job's natural key (`type` plus `company_id` and, for `digest`,
 producer's next insert for the same key rather than letting it re-enqueue at
 `attempt: 0` (8.4). The second table is `digest_recipients` (`company_id`,
 `period_start`, recipient, `state`, `attempt`, `last_error`), whose row moves to
-`sending` before the SMTP call and `sent` after the server accepts it (8.7).
+`sending` before the SMTP call and `sent` after the server accepts it (8.7). It
+is the one new store with a person in it, so the address is kept only while the
+row is actionable and cleared once it settles (8.5).
 A `LPUSH` remains only as a wake-up nudge so
 latency stays sub-second; the row is the truth, so a lost nudge costs one poll
 interval, not the job. Completion and failure are state transitions on the row;
@@ -243,7 +245,11 @@ p95 handler time, or long handlers must renew their lease. Producer-side writes
 must share the transaction that already claims the work, or the record can
 disagree with the claim. The payload column holds ids and parameters, never a
 transcript or a secret, and the dead rows need the same redaction and expiry
-discipline as `integration_deliveries`.
+discipline as `integration_deliveries`. That includes `digest_recipients`, the
+only new table holding a person: its address column is cleared in the
+transaction that settles the row and its rows are deleted on
+`DELIVERY_RETENTION_DAYS`, through the batched purge that already exists — no
+new setting and no second retention policy (8.5).
 
 **Evidence it would need.** All seven scenarios pass on disposable
 infrastructure: kill before/during/after the handler, kill after a commit and
@@ -352,6 +358,30 @@ CLI, counted on `GET /api/ops/status` (queued, processing, dead, oldest queued
 age), never exposed through a tenant route. Retention follows the existing
 delivery rule (`DELIVERY_RETENTION_DAYS`, 30 days) through the existing batched
 purge; the payload column carries ids and parameters only.
+
+**`digest_recipients` holds addresses, so it carries its own rule — the delivery
+record's, not a new one.**
+
+- **While actionable.** `recipient` is stored in plaintext only in `pending` and
+  `sending`: the states in which the message still has to go out, and the only
+  state an operator replay (8.6) may resend from.
+- **On settle.** The address is cleared in the same transaction that stamps the
+  row `sent`. Nothing downstream needs it — a settled period is never retried,
+  and 8.7 already forbids re-sending a `sending` row automatically — while
+  `company_id`, `period_start`, `state`, `attempt` and `last_error` stay for the
+  counters and the audit.
+- **Expiry.** Rows in every state are deleted past `DELIVERY_RETENTION_DAYS`
+  (default 30, `core/config.py`) through the existing batched purge
+  (`retention.delete_in_batches`), the same setting and path
+  `integration_deliveries` already uses: no new key, no second clock. A `sending`
+  row therefore has a 30-day replay window and no longer, which is what keeps a
+  detected loss an operational fact with an end date.
+- **Never in a log or a payload.** One line per period carries counts by state,
+  never an address; `last_error` stores the provider's failure class after the
+  V6-22 redactor, so an address a provider echoes back cannot land in the row or
+  the log.
+- **Access.** No tenant route reads the table; the operator replay CLI (8.6) is
+  its only reader, and it reads a `sending` row.
 
 **8.6 Replay authority.** Operator-only, out of band — no HTTP route.
 `scripts/jobs.py replay --job-id …` (and `dead --limit`) from a host holding the
@@ -473,7 +503,7 @@ To sign, record on this row (and copy into `plans/PLAN_V6.md` §4 and
 | Retry | ☐ per-class (recommended): `ingest` 5× (1 m / 5 m / 30 m / 2 h / 6 h), periodic 3× (1 m / 15 m / 2 h), `digest` 1 per period, then `dead` ☐ other: |
 | `digest` retry vs suppression (8.3 × 8.4, open point at the end of 8.7) | ☐ A: a `dead` period waits for replay, and a recipient-level failure is recorded on its row without ending the job ☐ B: `digest` is exempt from suppression for its own period, so the next `digest_hour` re-enqueues with `not_before` advanced ☐ other: |
 | Producer suppression | ☐ a `dead` row blocks a new job for the same key until replay (recommended) ☐ carry the attempt budget across re-enqueues ☐ none (repeats every tick) |
-| Visibility | ☐ `dead` rows + ops counters + 30-day purge (recommended) ☐ other: |
+| Visibility | ☐ `dead` rows + ops counters + 30-day purge, `digest_recipients` cleared at `sent` (recommended) ☐ other: |
 | Replay | ☐ operator CLI + `platform_audit_logs` (recommended) ☐ other: |
 | `digest` duplicate | ☐ stamp `sending` before the send + per-recipient record (recommended: at-most-once per recipient, detected loss) ☐ accept and count duplicates (class downgrade) ☐ guard: |
 | `digest_recipients` under B — only if B is signed | ☐ the same PostgreSQL table (recommended: a `sending` row has to survive a restart) ☐ Redis keys only, accepting that a Redis loss can re-send a `sending` recipient ☐ not applicable (C signed) |
