@@ -318,7 +318,7 @@ state that only a replay clears:
 |---|---|---|---|
 | **Interactive** | `ingest` | 5 attempts (first + 4): **1 m, 5 m, 30 m, 2 h, 6 h** | someone is waiting on the crawl; the first retries are fast enough to ride out a provider blip, and the budget ends in under 9 h |
 | **Periodic** | `retention`, `sitemap_scan`, `topic_clusters`, `insights` | 3 attempts: **1 m, 15 m, 2 h** | the type's own producer cadence (24 h, 30 min for `sitemap_scan`) is a better retry clock than the queue; further retries mostly spend provider credits on a cause no delay fixes |
-| **Send** | `digest` | **1 attempt per job**; only the recipients still unsatisfied are retried at the next `digest_hour` (8.7) | a retry at +2 h or +6 h can cross the send hour and deliver a stale weekly report at an odd time |
+| **Send** | `digest` | **1 attempt per job**; only the recipients still unsatisfied are retried at the next `digest_hour` (8.7) — whether a stopped job blocks that retry is the open point at the end of 8.7 | a retry at +2 h or +6 h can cross the send hour and deliver a stale weekly report at an odd time |
 
 The numbers are tied to alerting rather than invented: on both the interactive
 and the periodic profile, a deterministic failure trips
@@ -359,8 +359,8 @@ database URL; it resets the row to `queued` with `attempt` preserved and writes
 one `platform_audit_logs` row (actor label, job id, type, previous state) through
 the existing writer. The producer tick stays the fallback for a lost wake-up.
 
-**8.7 Two handler fixes V6-20 must carry, because delivery alone does not close
-them.**
+**8.7 Two handler fixes V6-20 must carry — and one point they leave open, because
+delivery alone does not close them.**
 
 - **`ingest` must consult `claim_ingest`.** Otherwise a re-delivery re-crawls
   and re-embeds while another worker may be crawling the same site, and scenario
@@ -382,6 +382,30 @@ them.**
   downgrade in the signature — not recommended, because a duplicate is
   customer-visible and unfixable after the fact, while a detected loss is both
   visible and correctable.
+
+**The open point: what a stopped `digest` job does to the rest of its period.**
+8.3 promises the recipients still unsatisfied are retried at the next
+`digest_hour`; 8.4 makes a `dead` row block a new job for the same key, and a
+`digest` key includes `period_start`; this section gives `digest` one attempt per
+job. Read together they admit two readings, and nothing in the three sections
+picks one:
+
+- **A — 8.4 wins.** The one attempt ends in `dead`, so every later enqueue for
+  that period conflicts and is suppressed, and the unsatisfied recipients go out
+  only after an operator replay (8.6). 8.3's sentence then holds only for a job
+  that *completed* with rows still `pending` — which requires that a
+  recipient-level send failure is recorded on its row and does not end the job,
+  a rule none of the three sections states today.
+- **B — 8.3 wins.** `digest` is an explicit exception to 8.4 for its own period:
+  a suppressed tick may still enqueue that period with `not_before` moved forward
+  on the already-spent job attempt, and the recipient rows bound the repeats
+  because each is sent at most once. Suppression then still stops a poison
+  periodic job, but not the tick that exists to finish a partial send.
+
+Both keep the customer-visible guarantee — neither re-sends a recipient whose row
+is `sending` — and they differ in who finishes the period: the operator, or the
+next tick. The `digest` retry row in §12 carries the choice; this brief does not
+make it here.
 
 ## 9. Evidence V6-20 and gate V6-2G box 1 need, per option
 
@@ -432,6 +456,8 @@ gives the verdict against it.
   detected loss; signing the duplicate instead would be an explicit downgrade.
 - It does not decide where B's per-recipient `digest` record lives: §5 states
   both branches and the `digest_recipients` row in §12 asks the owner to pick.
+- It does not choose between the two readings of `digest` retries against
+  suppression (the end of 8.7): the `digest` retry row in §12 settles that.
 - It does not authorise a production change: V6-20 is a Wave 2 task and this
   launch gate (V6-5G) is unrelated to it.
 
@@ -445,6 +471,7 @@ To sign, record on this row (and copy into `plans/PLAN_V6.md` §4 and
 | Mechanism | ☐ C durable job record (recommended) ☐ B Redis ack list ☐ A status quo + reword V6-20 |
 | Duplicate/loss rule | ☐ three classes as in 8.2 (recommended) ☐ one rule ☐ six answers |
 | Retry | ☐ per-class (recommended): `ingest` 5× (1 m / 5 m / 30 m / 2 h / 6 h), periodic 3× (1 m / 15 m / 2 h), `digest` 1 per period, then `dead` ☐ other: |
+| `digest` retry vs suppression (8.3 × 8.4, open point at the end of 8.7) | ☐ A: a `dead` period waits for replay, and a recipient-level failure is recorded on its row without ending the job ☐ B: `digest` is exempt from suppression for its own period, so the next `digest_hour` re-enqueues with `not_before` advanced ☐ other: |
 | Producer suppression | ☐ a `dead` row blocks a new job for the same key until replay (recommended) ☐ carry the attempt budget across re-enqueues ☐ none (repeats every tick) |
 | Visibility | ☐ `dead` rows + ops counters + 30-day purge (recommended) ☐ other: |
 | Replay | ☐ operator CLI + `platform_audit_logs` (recommended) ☐ other: |
