@@ -88,13 +88,23 @@
 | New migration | no | no | **yes (M14)** | no |
 | New dependency | no | no | no | **yes (vendor)** |
 | Closes V6-20's Done-when | **no** | yes, with handler fixes | yes, with handler fixes | yes, plus a record anyway |
-| **Counted surface** (measured in this checkout) | one document, no code path | 11 `enqueue_job` call sites, 6 job types, the 141-line seam in `services/delivery.py`, 2 new settings, 0 migrations | the same call sites and seam, plus 1 migration and a `job_queue` service (the closest existing pattern, `services/integrations.py`, is 772 lines) | a vendor account, credentials and a local emulator, plus the record work |
-| Effort (judgement, **not measured**) | 1–2 days | 4–6 days | 8–12 days | 10–15 days + account |
+| **Counted surface** (measured in this checkout) | one document, no code path | 11 `enqueue_job` call sites, 6 job types, the 141-line seam in `services/delivery.py`, 2 new settings, 0 migrations, plus the 6 producer areas the suppression rule touches and the per-recipient `digest` record | the same call sites and seam, plus 1 migration revision holding **2 tables** (the job record and `digest_recipients`) and a `job_queue` service (the closest existing pattern, `services/integrations.py`, is 772 lines) | a vendor account, credentials and a local emulator, plus the record work |
+| Effort (judgement, **not measured**) | 1–2 days | 6–8 days | 11–15 days | 10–15 days + account |
 
 Days are judgement, not measurement: no option has been built, so there is no
 velocity, review time or test-run time to derive them from. They exist to rank
 the options, not to schedule them; the counted row is what this brief actually
 measured.
+
+**Amended scope, and who pays for it.** The stress test added two pieces to the
+recommendation and **both are mechanism-independent, so they raise B and C
+alike**: the producer suppression rule (8.4), which needs a producer-visible
+stopped key — a Redis `queue:dead:<key>` for B, the unique-index conflict for
+C — and the per-recipient `digest` record with its pre-send stamp (8.7), which
+changes `services/digest.py` whichever mechanism delivers the job. They are
+counted in both columns above and in §10. They do not change which option is
+cheaper; they do mean the 4–6 and 8–12 figures in earlier drafts no longer
+describe what is being signed.
 
 **Job volume the options are sized for.** The loop intervals fix a per-company
 rate; no recorded decision fixes the cohort size, so no absolute total exists.
@@ -144,9 +154,13 @@ lands in `queue:dead`.
 `services/delivery.py` against the three-call seam (~150–200 lines), a consumer
 change plus a reaper loop in `worker.py` (~100), two settings (visibility
 timeout, max attempts), 15–20 suite cases, and V6-2G items for redelivery and
-the dead list. Effort is judgement, not measured: **4–6 days**, against the
-counted surface of 11 `enqueue_job` call sites, 6 job types, the existing
-141-line seam and two new settings, with no migration.
+the dead list. B absorbs both amendments: producer suppression as a
+`queue:dead:<key>` check in the six producer paths (the durable alternative — a
+suppression table — is C's schema anyway), and the per-recipient `digest`
+record with its pre-send stamp in `services/digest.py`. Counted surface: 11
+`enqueue_job` call sites, 6 job types, the existing 141-line seam, two new
+settings, 0 migrations. Effort is judgement, not measured: **6–8 days** — the
+4–6 in earlier drafts excluded the amendments.
 
 **Risk.** The failure R5 names is unchanged at the storage layer: the queued and
 in-flight entries sit on the **same single-copy Redis**, so a flush, an eviction
@@ -183,10 +197,13 @@ a reaper returns rows whose lease expired; settled rows are purged on the
 producer changes in six places, the consumer loop's `BRPOP` replaced by a claim
 plus wait, a reaper/settle rule, two counters on `GET /api/ops/status`, a replay
 CLI, 25–35 suite cases, and gate items for redelivery, dead-letter and replay.
-Effort is judgement, not measured: **8–12 days**; the counted surface is the
-same 11 call sites, 6 job types and seam plus one migration, and the case count
-and line counts in this list are judgement scaled from the 772-line existing
-pattern. No new dependency.
+Effort is judgement, not measured: **11–15 days**; the counted surface is the
+same 11 call sites, 6 job types and seam, plus **one migration revision holding
+two tables** (the job record and `digest_recipients`) and the six producer
+suppression sites, while the case and line counts in this list are judgement
+scaled from the 772-line existing pattern. No new dependency. The amendments —
+suppression and the digest path — are what moved the range from the 8–12 in
+earlier drafts.
 
 **Risk.** More moving parts than B: a schema to migrate, a poll interval, row
 growth and a purge rule (adjacent D7), and a lease that can expire under a
@@ -357,8 +374,8 @@ V6-20 plus a recorded R5 residual — a separate decision, not this one.
 
 | | A | B | C (recommended) |
 |---|---|---|---|
-| Counted surface | one document | 11 call sites, 6 types, seam + 2 settings | + 1 migration, `job_queue`, 6 producer areas |
-| Effort (judgement, not measured) | 1–2 days | 4–6 days | 8–12 days |
+| Counted surface | one document | 11 call sites, 6 types, seam + 2 settings + 6 producer areas + `digest` record | + 1 revision, 2 tables, `job_queue`, 6 producer areas, `digest` record |
+| Effort (judgement, not measured) | 1–2 days | 6–8 days | 11–15 days |
 | Migration | — | — | 1 (next revision) |
 | New dependency | — | — | — |
 | New settings | — | visibility timeout, max attempts | poll interval, visibility timeout, max attempts, retention |
