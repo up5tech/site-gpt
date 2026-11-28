@@ -9,7 +9,7 @@
 | Neutral record | The full option menu, per-type consequences and the scenario matrix are [`preflight-v6.md` §Appendix — D9](preflight-v6.md#appendix--d9-decision-brief). This brief adds the one thing that appendix deliberately withholds: a named combination and the reasons for it |
 | Evidence base | [`worker-delivery.md`](worker-delivery.md) (per-type matrix, findings 2–7, the 2026-11-26 crash/duplicate/unknown rehearsal), `services/delivery.py` (the seam, `NullDelivery`), `services/redis.py`, `worker.py`, `services/integrations.py`, `scripts/gate_v6_2g/` |
 | Date written | 2026-11-27 |
-| Revised | 2026-11-28 — stress-test amendments: per-class retry, producer suppression, `digest` stamped before the send; then §8.3's producer clock corrected and the exclusion moved to the live-row index |
+| Revised | 2026-11-28 — stress-test amendments: per-class retry, producer suppression, `digest` stamped before the send; then §8.3's producer clock corrected and the exclusion moved to the live-row index; then the suppression counter split by blocker, the no-producer-`UPDATE` rule and their test pin |
 
 ## 1. What the signature has to answer
 
@@ -270,7 +270,7 @@ claim. V6-20 therefore does one of two things; the brief recommends the second.
 `services/job_queue.py` (~300 lines), `SqlDelivery` behind the existing seam,
 producer changes in six places, the consumer loop's `BRPOP` replaced by a claim
 plus wait, a reaper/settle rule, the `GET /api/ops/status` counters (queued, processing,
-dead, oldest age) plus `queue.suppressed` (8.4), a replay CLI, 25–35 suite
+dead, oldest age) plus `queue.suppressed{blocker=dead|live}` (8.4), a replay CLI, 25–35 suite
 cases, and gate items for redelivery, dead-letter, suppression and replay.
 Effort is judgement, not measured: **11–15 days**; the counted surface is the
 same 11 call sites, 6 job types and seam, plus **one migration revision holding
@@ -418,17 +418,34 @@ attempts bound a *job*, not the *work*. `enqueue_due_insights`,
 poison job still repeats every interval — exactly the behaviour scenario 6 is
 meant to rule out. The rule: **a live row blocks a new job for the same key** — `queued`,
 `processing` or `dead` (`type` plus its natural key, for example `company_id`
-and `period_start`). The producer's insert conflicts with the live row, writes
-nothing, and increments a `queue.suppressed` counter (on `GET /api/ops/status`,
-and one log line per key at most once per tick), so a tick that lands inside a
-retry cycle cannot start a second run (8.3). A `dead` row is cleared only by a
-replay (8.6), which adds a budget rather than resetting the count — `attempt`
-kept, `max_attempts` raised — so a deterministic failure costs one dead row and
-one provider call, not one per tick, and the operator's grant is the only way
-back to a full profile. A row waiting on its backoff or its lease blocks its key
-the same way, which puts the queue's health on `queue.suppressed` beside queue
-age: a worker that stopped picking up `queued` rows shows there as suppression,
-not as a growing list. If the owner
+and `period_start`). The producer's insert conflicts with the live row and writes nothing, so a tick
+that lands inside a retry cycle cannot start a second run (8.3). That insert is
+also the producer's **only** write: **no producer issues an `UPDATE` on a job
+row.** A row is updated by its own handler while it runs (claim, `attempt`,
+`not_before`, terminal state) and by exactly two repair paths — the reaper's
+revival and the replay's grant (8.6) — so a tick that finds a live row cannot
+disturb that row's backoff, attempt or lease; it can only count, once per tick
+per key. (The compensating claim flip in §6 writes `websites.ingest_status`, not
+the job row.) A `dead` row is cleared only by a replay (8.6), which adds a budget
+rather than resetting the count — `attempt` kept, `max_attempts` raised — so a
+deterministic failure costs one dead row and one provider call, not one per
+tick, and the operator's grant is the only way back to a full profile.
+
+**The counter is split by the blocking row's state, because only one half is a
+page.** `queue.suppressed{blocker="dead"}` means an operator action is waiting:
+the key does not run again until someone replays it, so every tick that finds it
+is one daily or weekly job not delivered, and this is the series the alert rule
+in 8.3 is set on. `queue.suppressed{blocker="live"}` means the tick landed
+inside a retry cycle or under a live lease — the state 8.3 says a slow job is
+*supposed* to be in — and the retry or the lease moves the row by itself, so
+this series is read as a rate, not a threshold: it should stay near zero because
+every budget is short next to the 24 h tick, and a `live` count that climbs while
+`oldest queued age` stays flat points at a worker that stopped picking up
+`queued` rows rather than at keys waiting on a retry. The one-line-per-key log
+carries the same split (`blocker=live` is a note, `blocker=dead` is the event).
+Counting the two together would page an operator on a job that is behaving
+exactly as 8.3 specifies, so the split is part of the rule rather than a
+dashboard detail. If the owner
 prefers automatic recovery over operator attention, the alternative is to carry
 the budget instead: a suppressed tick may push `not_before` forward on the dead
 row — a slow retry — but may not reset `attempt` to 0. Recommended: the dead row
@@ -471,8 +488,8 @@ path, because today all three re-enqueue:
   stays the work's claim, the job row the delivery's.
 
 A revival preserves `attempt` and never accumulates budget — it resumes the same
-profile; only 8.6's replay adds attempts. It also does not increment
-`queue.suppressed`, because it did not insert.
+profile; only 8.6's replay adds attempts. It also increments neither suppression
+series, because it did not insert.
 
 What this rules out is the competing repair: a second row for the same key,
 which would let one row's reaper and another row's producer run the work twice
@@ -612,7 +629,11 @@ commit) pasted into `plans/PLAN_V6.md` in the V6-40 table shape, the operator
 procedure per type, and suite tests that pin the attempt counter, the terminal
 state, the replay transition and its grant (`attempt` kept, `max_attempts`
 raised, backoff clamped — 8.6), a `dead` row suppressing its producer (8.4) and a
-`sending` recipient row never being re-sent (8.7). Under **A**, the deliverable is a reworded
+`sending` recipient row never being re-sent (8.7); and one case per half of the
+suppression counter — a producer tick arriving **during a live job** writes
+nothing, leaves that row's `attempt` and `not_before` exactly as they were, and
+counts once on `blocker="live"` and zero on `blocker="dead"`, while a tick
+against a `dead` row writes nothing and counts once on `blocker="dead"`. Under **A**, the deliverable is a reworded
 V6-20 plus a recorded R5 residual — a separate decision, not this one.
 
 ## 10. Cost summary
@@ -678,7 +699,7 @@ To sign, record on this row (and copy into `plans/PLAN_V6.md` §4 and
 | Duplicate/loss rule | ☐ three classes as in 8.2 (recommended) ☐ one rule ☐ six answers |
 | Retry | ☐ per-class (recommended): `ingest` 6 attempts (first + 1 m / 5 m / 30 m / 2 h / 6 h, 8 h 36 m), periodic 4 attempts (first + 1 m / 15 m / 2 h, 2 h 16 m) against a 24 h producer tick, `digest` 1 per period, then `dead` ☐ other: |
 | `digest` retry vs suppression (8.3 × 8.4, open point at the end of 8.7) | ☐ A (recommended): a `dead` period waits for replay, and a recipient-level failure is recorded on its row without ending the job ☐ B: `digest` is exempt from suppression for its own period, so the next `digest_hour` re-enqueues with `not_before` advanced ☐ other: |
-| Producer suppression | ☐ a live row (`queued`, `processing` or `dead`) blocks a new job for the same key until it settles or is replayed, and every recovery moves that row instead of inserting a second one (recommended — this is also what keeps a tick out of a retry cycle, 8.3) ☐ only a `dead` row blocks ☐ carry the attempt budget across re-enqueues ☐ none (repeats every tick) |
+| Producer suppression | ☐ a live row (`queued`, `processing` or `dead`) blocks a new job for the same key until it settles or is replayed, and every recovery moves that row instead of inserting a second one (recommended — this is also what keeps a tick out of a retry cycle, 8.3); no producer `UPDATE`s a job row, and the counter is split so only a `dead` blocker is paged ☐ only a `dead` row blocks ☐ carry the attempt budget across re-enqueues ☐ none (repeats every tick) |
 | Visibility | ☐ `dead` rows + ops counters + 30-day purge, `digest_recipients` cleared at `sent` (recommended) ☐ other: |
 | Replay | ☐ operator CLI + `platform_audit_logs` (recommended); a replay keeps `attempt` and raises `max_attempts` by one profile, it never resets the count (8.6) ☐ a replay resets `attempt` to 0 (not recommended: it erases the history the dead count and the log pairing rely on) ☐ other: |
 | `digest` duplicate | ☐ stamp `sending` before the send + per-recipient record (recommended: at-most-once per recipient, detected loss) ☐ accept and count duplicates (class downgrade) ☐ guard: |
