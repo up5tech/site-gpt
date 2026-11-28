@@ -48,7 +48,9 @@
   `digest_log` row claimed before the mail; a claim older than
   `DIGEST_CHECK_SECONDS` is re-queued in the company's `digest_hour`.
   `topic_clusters` / `insights`: unique rows, 30 min stale takeover.
-  `retention` / `sitemap_scan`: **no claim row at all**.
+  `retention` / `sitemap_scan`: **no claim row at all**. The first three
+  re-enqueue from the producer side; 8.4 states what each of them becomes under
+  C.
 - **Measured behaviour (2026-11-26 rehearsal, disposable Redis + PostgreSQL).**
   `kill -9` mid-job for all six types, then a fresh worker for 8 s: **no
   redelivery, no failure line, no compensation** for any type — the only
@@ -218,7 +220,10 @@ job's natural key (`type` plus `company_id` and, for `digest`,
 `period_start`) over the **live** states (`queued`, `processing`, `dead`) is what
 makes a stopped job — or a producer tick that lands inside a retry cycle, or
 beside a job that has not finished — suppress the producer's next insert for the
-same key rather than letting it re-enqueue at `attempt: 0` (8.4). The second table is `digest_recipients` (`company_id`,
+same key rather than letting it re-enqueue at `attempt: 0` (8.4). It constrains
+`INSERT`s only, which is why every recovery path revives the row it is
+recovering instead of adding a second one: a recovery cannot be suppressed by
+that row (8.4). The second table is `digest_recipients` (`company_id`,
 `period_start`, recipient, `state`, `attempt`, `last_error`), whose row moves to
 `sending` before the SMTP call and `sent` after the server accepts it (8.7). It
 is the one new store with a person in it, so the address is kept only while the
@@ -391,6 +396,43 @@ row — a slow retry — but may not reset `attempt` to 0. Recommended: the dead
 suppresses, and the operator escalates. Cost: a partial unique index, the six
 producer call sites, the counter and 4–6 tests, already inside C's judgement-based effort range.
 
+**A recovery moves the row; it never inserts a second one — so no path needs a
+carve-out.** The index constrains inserts, and every repair path is a transition
+on the row it is repairing, which the index never sees. Naming each path, because
+today all three re-enqueue:
+
+- **The reaper is the job-level recovery**, and suppression is not in its way:
+  `processing` with a lease past `now` → `queued`, lease cleared, `attempt`
+  unchanged, one `UPDATE` on that same row. A dead process's row is the row that
+  gets revived — which is precisely why a second insert cannot be the mechanism.
+- **`requeue_stuck_ingests`** (§2) keeps its work-level half — `ingest_status`
+  `processing → failed` past `STUCK_INGEST_AFTER` (6 h) — and loses
+  `enqueue_job`: when a row exists for that website it re-arms it
+  (`state='queued'`, `not_before=now`, `attempt` preserved) in the same
+  transaction as the claim flip, and inserts only when the key has no row at
+  all — after this section, only a claim left by a pre-D9 process. A `dead` row
+  is **not** re-armed here; it belongs to 8.6.
+- **The digest re-arm** in `enqueue_due_digests` (`period_settled` false because
+  the claim is older than `DIGEST_CHECK_SECONDS`) is the same transition with
+  `type='digest'` and the period as the key. It is what makes 8.3's "the
+  unsatisfied recipients go out at the next `digest_hour`" true for a period
+  whose job **completed** with rows still `pending`; a period whose job is
+  `dead` is 8.6's, under whichever reading §12 signs.
+- **`recover_stale_runs`** (`services/topics.py`) keeps flipping a dead
+  `running` claim to `failed`; the tick then re-arms that window's job row, and
+  the job's own `claim_run` takes the `failed` run over in place. The run row
+  stays the work's claim, the job row the delivery's.
+
+A re-arm preserves `attempt` and does not increment `queue.suppressed` — it did
+not insert, and it resumes the same budget; only an insert conflict is counted.
+What this rules out is the competing repair: a second row for the same key,
+which would let one row's reaper and another row's producer run the work twice
+and would make the one-live-row guarantee unenforceable. One consequence outside
+the loops: `POST /api/ingest` and `/api/v1/ingest` claim
+`websites.ingest_status` first, which cannot see a `dead` job row for that
+website, so those routes must answer from the insert conflict instead of
+reporting the crawl as accepted.
+
 **8.5 Visibility.** The `dead` row is the dead letter: readable by an operator
 CLI, counted on `GET /api/ops/status` (queued, processing, dead, oldest queued
 age), never exposed through a tenant route. Retention follows the existing
@@ -547,7 +589,7 @@ runs, whatever is chosen here.
 | Duplicate/loss rule | three classes (8.2) | one rule: `digest` loses its at-most-once send and §9's scenarios 3 and 7 can no longer be claimed per type. Six answers: no default for job types added later | box 1 |
 | Retry | per-class (8.3): `ingest` 6 attempts / 8 h 36 m, periodic 4 / 2 h 16 m, `digest` 1 per period | one table for every type: either `ingest` waits on a clock sized for a weekly job, or `digest` retries across its send hour and mails a stale week at an odd time | box 1 · V6-20 Done-when |
 | `digest` retry vs suppression | **A** — the dead period waits for a replay, and a recipient-level failure is written on its row without ending the job | **B**: the next `digest_hour` finishes the period by itself, but that is up to 24 h later and only while the week is still the "previous" one; it also needs an exception to 8.4 and a second way into a send | box 1 · V6-20 Done-when |
-| Producer suppression | a live row blocks the key (8.4) | only `dead` blocks: a tick inside a retry cycle starts a second run, one extra provider call per daily tick. Carry the budget: no operator step, slower recovery. None: repeats every tick, scenario 6 fails | box 1 |
+| Producer suppression | a live row blocks the key, and recoveries re-arm that row (8.4) | only `dead` blocks: a tick inside a retry cycle starts a second run, one extra provider call per daily tick. Carry the budget: no operator step, slower recovery. None: repeats every tick, scenario 6 fails | box 1 |
 | Visibility | `dead` rows + ops counters + 30-day purge; address cleared at `sent` | keeping addresses after settle widens what a dump exposes for no operational gain; a shorter window undercuts the purge rule `integration_deliveries` already uses | box 1 · V6-20 Done-when |
 | Replay | operator CLI + `platform_audit_logs` | an HTTP route needs auth and scoping this replay has no use for; no audit row leaves no record of who resent a period | box 1 · V6-20 Done-when |
 | `digest` duplicate | stamp `sending` before the send + per-recipient row (detected loss) | accepting duplicates is customer-visible and unfixable afterwards; there is no guard to sign instead, because SMTP has no idempotency key | box 1 · V6-20 Done-when |
@@ -564,7 +606,7 @@ To sign, record on this row (and copy into `plans/PLAN_V6.md` §4 and
 | Duplicate/loss rule | ☐ three classes as in 8.2 (recommended) ☐ one rule ☐ six answers |
 | Retry | ☐ per-class (recommended): `ingest` 6 attempts (first + 1 m / 5 m / 30 m / 2 h / 6 h, 8 h 36 m), periodic 4 attempts (first + 1 m / 15 m / 2 h, 2 h 16 m) against a 24 h producer tick, `digest` 1 per period, then `dead` ☐ other: |
 | `digest` retry vs suppression (8.3 × 8.4, open point at the end of 8.7) | ☐ A (recommended): a `dead` period waits for replay, and a recipient-level failure is recorded on its row without ending the job ☐ B: `digest` is exempt from suppression for its own period, so the next `digest_hour` re-enqueues with `not_before` advanced ☐ other: |
-| Producer suppression | ☐ a live row (`queued`, `processing` or `dead`) blocks a new job for the same key until it settles or is replayed (recommended — this is also what keeps a tick out of a retry cycle, 8.3) ☐ only a `dead` row blocks ☐ carry the attempt budget across re-enqueues ☐ none (repeats every tick) |
+| Producer suppression | ☐ a live row (`queued`, `processing` or `dead`) blocks a new job for the same key until it settles or is replayed, and every recovery re-arms that row instead of inserting (recommended — this is also what keeps a tick out of a retry cycle, 8.3) ☐ only a `dead` row blocks ☐ carry the attempt budget across re-enqueues ☐ none (repeats every tick) |
 | Visibility | ☐ `dead` rows + ops counters + 30-day purge, `digest_recipients` cleared at `sent` (recommended) ☐ other: |
 | Replay | ☐ operator CLI + `platform_audit_logs` (recommended) ☐ other: |
 | `digest` duplicate | ☐ stamp `sending` before the send + per-recipient record (recommended: at-most-once per recipient, detected loss) ☐ accept and count duplicates (class downgrade) ☐ guard: |
