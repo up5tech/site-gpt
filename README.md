@@ -881,7 +881,9 @@ V6 is the production-readiness plan in [`plans/PLAN_V6.md`](plans/PLAN_V6.md).
 V6-01…V6-04 are done, and the ten Wave 0/Wave 1 decisions (D1–D8, D11, D13) were
 approved on 2026-11-24 by the repository owner, recorded as the single approver
 for all roles. D12 is not applicable because Track B was not chosen; D9 and D10
-stay open for Waves 2–3. The recorded answers, owners and consequences are in
+stay open for Waves 2–3, and D9's answer to record is drafted, unsigned, in
+[PENDING — Recorded decision D9](docs/preflight-v6.md#pending--recorded-decision-d9).
+The recorded answers, owners and consequences are in
 [`docs/preflight-v6.md`](docs/preflight-v6.md), the target topology and
 threat-model classification in [`docs/architecture-v6.md`](docs/architecture-v6.md),
 and the owned risk register in [`docs/risk-register-v6.md`](docs/risk-register-v6.md).

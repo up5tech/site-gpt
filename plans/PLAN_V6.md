@@ -80,7 +80,7 @@ Track B is an additional gate, not an assumption of Track A. It requires all Tra
 
 ## 4. Pre-flight decisions (blocking for the affected tasks)
 
-Record a decision owner, approver, date and evidence. A proposed default is not an approval. The live record for every row is [`docs/preflight-v6.md`](../docs/preflight-v6.md); the Decision brief column links to that decision's appendix, which lays out the options and the evidence an approver must sign. **On 2026-11-24 the repository owner (Jacky, recorded as the single approver for all roles) approved the ten Wave 0/Wave 1 decisions for Track A** — the full text and consequences are in [`docs/preflight-v6.md` → Recorded decisions](../docs/preflight-v6.md#recorded-decisions--2026-11-24). D9 and D10 remain unapproved, and D12 does not apply because Track B was not chosen.
+Record a decision owner, approver, date and evidence. A proposed default is not an approval. The live record for every row is [`docs/preflight-v6.md`](../docs/preflight-v6.md); the Decision brief column links to that decision's appendix, which lays out the options and the evidence an approver must sign. **On 2026-11-24 the repository owner (Jacky, recorded as the single approver for all roles) approved the ten Wave 0/Wave 1 decisions for Track A** — the full text and consequences are in [`docs/preflight-v6.md` → Recorded decisions](../docs/preflight-v6.md#recorded-decisions--2026-11-24). D9 and D10 remain unapproved — D9's answer to record is drafted, unsigned, in the block at the end of this section — and D12 does not apply because Track B was not chosen.
 
 | ID | Recorded answer (2026-11-24) | Status |
 |---|---|---|
@@ -116,7 +116,7 @@ Record a decision owner, approver, date and evidence. A proposed default is not 
 
 ### D9 — text to record on signature (pending; nothing here is in force until it is signed)
 
-**Status: PENDING SIGNATURE.** D9 stays **UNAPPROVED** and V6-20 stays blocked until the ten boxes and the Approver/Date/Evidence fields in the signature table of [`docs/decision-d9-delivery.md`](../docs/decision-d9-delivery.md) are ticked. The answers below are that brief's recommendations (§12), written out so signing is a copy rather than a rewrite: tick the boxes there, then move the row below into the table above with the same wording, and replace the R5 approval cell in [`docs/risk-register-v6.md`](../docs/risk-register-v6.md#r5) as stated in that row's pending note. No other document changes at signature.
+**Status: PENDING SIGNATURE.** D9 stays **UNAPPROVED** and V6-20 stays blocked until the ten boxes and the Approver/Date/Evidence fields in the signature table of [`docs/decision-d9-delivery.md`](../docs/decision-d9-delivery.md) are ticked. The answers below are that brief's recommendations (§12), written out so signing is a copy rather than a rewrite: tick the boxes there, then move the row below into the table above with the same wording, and replace the R5 approval cell in [`docs/risk-register-v6.md`](../docs/risk-register-v6.md#r5) as stated in that row's pending note. No other document changes at signature beyond the sentences that call D9 open, which that page's pending section lists.
 
 | ID | Answer to record | Status on signature |
 |---|---|---|
