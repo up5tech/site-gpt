@@ -85,10 +85,10 @@
 | Attempt count bounded | no | yes (in payload) | yes (column) | yes (vendor) |
 | Dead letter with the payload | no | yes (Redis list) | yes (terminal row) | yes (vendor) |
 | Replay from a stored record | no | yes, until the list is lost | yes | yes |
-| New migration | no | no | **yes (M14)** | no |
+| New migration | no | yes, for `digest_recipients` only (8.7; the suppression half stays in Redis) | **yes (M14) — one revision, 2 tables: the job record and `digest_recipients`** | yes, the same record; the broker replaces the transport, not the record |
 | New dependency | no | no | no | **yes (vendor)** |
 | Closes V6-20's Done-when | **no** | yes, with handler fixes | yes, with handler fixes | yes, plus a record anyway |
-| **Counted surface** (measured in this checkout) | one document, no code path | 11 `enqueue_job` call sites, 6 job types, the 141-line seam in `services/delivery.py`, 2 new settings, 0 migrations, plus the 6 producer areas the suppression rule touches and the per-recipient `digest` record | the same call sites and seam, plus 1 migration revision holding **2 tables** (the job record and `digest_recipients`) and a `job_queue` service (the closest existing pattern, `services/integrations.py`, is 772 lines) | **everything in C's column**, then a vendor account, credentials, a local emulator and a second write path next to PostgreSQL |
+| **Counted surface** (measured in this checkout) | one document, no code path | 11 `enqueue_job` call sites, 6 job types, the 141-line seam in `services/delivery.py`, 2 new settings, 1 migration holding only `digest_recipients`, plus the 6 producer areas the suppression rule touches and the per-recipient `digest` record | the same call sites and seam, plus 1 migration revision holding **2 tables** (the job record and `digest_recipients`) and a `job_queue` service (the closest existing pattern, `services/integrations.py`, is 772 lines) | **everything in C's column**, then a vendor account, credentials, a local emulator and a second write path next to PostgreSQL |
 | Effort (judgement, **not measured**) | 1–2 days | 6–8 days | 11–15 days | **14–20 days**: C's work plus the vendor path |
 
 Days are judgement, not measurement: no option has been built, so there is no
@@ -111,7 +111,8 @@ recommendation and **both are mechanism-independent, so they raise B and C
 alike**: the producer suppression rule (8.4), which needs a producer-visible
 stopped key — a Redis `queue:dead:<key>` for B, the unique-index conflict for
 C — and the per-recipient `digest` record with its pre-send stamp (8.7), which
-changes `services/digest.py` whichever mechanism delivers the job. They are
+changes `services/digest.py` and needs its `digest_recipients` table whichever
+mechanism delivers the job. They are
 counted in both columns above and in §10. They do not change which option is
 cheaper; they do mean the 4–6 and 8–12 figures in earlier drafts no longer
 describe what is being signed. D pays for both as well, on top of its vendor
@@ -161,16 +162,19 @@ returns; a reaper returns entries whose worker stopped once a visibility
 timeout elapsed; `attempt` rides in the existing envelope and a terminal attempt
 lands in `queue:dead`.
 
-**Cost.** No migration and no new dependency: `RedisDelivery` in
-`services/delivery.py` against the three-call seam (~150–200 lines), a consumer
-change plus a reaper loop in `worker.py` (~100), two settings (visibility
-timeout, max attempts), 15–20 suite cases, and V6-2G items for redelivery and
-the dead list. B absorbs both amendments: producer suppression as a
+**Cost.** No new dependency, and no migration for the transport itself:
+`RedisDelivery` in `services/delivery.py` against the three-call seam (~150–200
+lines), a consumer change plus a reaper loop in `worker.py` (~100), two settings
+(visibility timeout, max attempts), 15–20 suite cases, and V6-2G items for
+redelivery and the dead list. The per-recipient `digest` record (8.7) is a table,
+so B takes the **same one migration revision holding `digest_recipients`** as C;
+only the suppression half stays schema-free, because `queue:dead:<key>` is Redis. B absorbs both amendments: producer suppression as a
 `queue:dead:<key>` check in the six producer paths (the durable alternative — a
 suppression table — is C's schema anyway), and the per-recipient `digest`
 record with its pre-send stamp in `services/digest.py`. Counted surface: 11
 `enqueue_job` call sites, 6 job types, the existing 141-line seam, two new
-settings, 0 migrations. Effort is judgement, not measured: **6–8 days** — the
+settings, one migration (`digest_recipients`). Effort is judgement, not
+measured: **6–8 days** — the
 4–6 in earlier drafts excluded the amendments.
 
 **Risk.** The failure R5 names is unchanged at the storage layer: the queued and
@@ -193,11 +197,18 @@ statement already required by V6-23.
 
 ## 6. Option C — durable job record in PostgreSQL
 
-**What it is.** One table (type, payload, attempts, max attempts, `not_before`,
-state, last error, lease owner/time, timestamps) written by the producer —
-inside the producer's transaction where one exists (`claim_ingest`, the
-`digest_log` claim, the privacy purge) — and claimed by the worker with
-`SELECT … FOR UPDATE SKIP LOCKED`. A `LPUSH` remains only as a wake-up nudge so
+**What it is.** Two tables, not one. The job record (type, payload, attempts,
+max attempts, `not_before`, state, last error, lease owner/time, timestamps) is
+written by the producer — inside the producer's transaction where one exists
+(`claim_ingest`, the `digest_log` claim, the privacy purge) — and claimed by the
+worker with `SELECT … FOR UPDATE SKIP LOCKED`; a partial unique index over the
+job's natural key (`type` plus `company_id` and, for `digest`,
+`period_start`) where `state = 'dead'` is what makes a stopped job suppress the
+producer's next insert for the same key rather than letting it re-enqueue at
+`attempt: 0` (8.4). The second table is `digest_recipients` (`company_id`,
+`period_start`, recipient, `state`, `attempt`, `last_error`), whose row moves to
+`sending` before the SMTP call and `sent` after the server accepts it (8.7).
+A `LPUSH` remains only as a wake-up nudge so
 latency stays sub-second; the row is the truth, so a lost nudge costs one poll
 interval, not the job. Completion and failure are state transitions on the row;
 a reaper returns rows whose lease expired; settled rows are purged on the
@@ -387,11 +398,11 @@ V6-20 plus a recorded R5 residual — a separate decision, not this one.
 
 | | A | B | C (recommended) | D (not recommended) |
 |---|---|---|---|---|
-| Counted surface | one document | 11 call sites, 6 types, seam + 2 settings + 6 producer areas + `digest` record | + 1 revision, 2 tables, `job_queue`, 6 producer areas, `digest` record | C's surface, then a vendor account, credentials, emulator and second write path |
+| Counted surface | one document | 11 call sites, 6 types, seam + 2 settings + 6 producer areas + 1 revision (`digest_recipients`) | + 1 revision, 2 tables, `job_queue`, 6 producer areas, `digest` record | C's surface, then a vendor account, credentials, emulator and second write path |
 | Effort (judgement, not measured) | 1–2 days | 6–8 days | 11–15 days | 14–20 days |
-| Migration | — | — | 1 (next revision) | 1 (the same record; the broker does not replace it) |
+| Migration | — | 1 (`digest_recipients`, 8.7) | 1 (next revision, 2 tables) | 1 (the same record; the broker does not replace it) |
 | New dependency | — | — | — | yes (vendor) |
-| New settings | — | visibility timeout, max attempts | poll interval, visibility timeout, max attempts, retention | C's, plus endpoint, credentials and the dead-letter queue |
+| New settings | — | visibility timeout, max attempts | poll interval, visibility timeout, max attempts, retention — the suppression rule and the `digest_recipients` stamp add **no** key; they are a partial unique index and a table | C's, plus endpoint, credentials and the dead-letter queue |
 | Closes R5 | no | partly (Redis loss remains) | yes | yes, through the record, not the broker |
 | Closes V6-2G box 1 | no | yes | yes | yes, after the record work |
 
