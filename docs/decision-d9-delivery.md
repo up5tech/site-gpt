@@ -62,18 +62,22 @@
 - **Nothing bounds repeats.** `digest` / `topic_clusters` / `insights` re-queue
   on a timer with no attempt count, so a deterministic failure repeats every
   tick and its provider spend repeats with it.
-- **The queue has exactly one copy.** V6-23 already reads
-  `maxmemory-policy`/`appendonly`/`save` and alerts when the instance could
-  evict or restart the list away (`queue:jobs` is not recoverable from inside
-  the app). A flush or eviction loses queued **and** in-flight work together.
+- **The queue has exactly one copy.** V6-23's code scope reads
+  `maxmemory-policy`/`appendonly`/`save` and raises `redis.durability_unsafe`
+  when the instance could evict or restart the list away (`queue:jobs` is not
+  recoverable from inside the app). That code is implemented and **unticked**:
+  its evidence is a local rehearsal, never a real instance, so the deployed
+  setting is not yet known. A flush or eviction loses queued **and** in-flight work together.
 - **A durable claim-per-row pattern already runs here.**
   `integration_deliveries`: a row written before the first send, claimed with
   `SELECT … FOR UPDATE SKIP LOCKED`, one attempt recorded per send, a terminal
   state, a purge window — 41 tests. It is the working example of option C in
   this codebase.
-- **What is already green.** 80 Python modules / 1390 tests, 46/46 node checks,
-  `scripts/exercise_platform_disable.py` 15/15, gate V6-2G **11 passed / 3
-  blocked / 0 failed** with box 1 blocked on D9. None of that measures delivery.
+- **What was already green when this brief was written.** 80 Python modules /
+  1390 tests, 46/46 node checks, `scripts/exercise_platform_disable.py` 15/15,
+  gate V6-2G **11 passed / 3 blocked / 0 failed** with box 1 blocked on D9 —
+  recorded 2026-11-27 on this branch and **not re-run for this brief**. None of
+  that measures delivery.
 
 ## 3. The options at a glance
 
@@ -88,7 +92,7 @@
 | New migration | no | 0 or 1: only if the per-recipient `digest` state is the same table (§12; the suppression half stays in Redis either way) | **yes (M14) — one revision, 2 tables: the job record and `digest_recipients`** | yes, the same record; the broker replaces the transport, not the record |
 | New dependency | no | no | no | **yes (vendor)** |
 | Closes V6-20's Done-when | **no** | yes, with handler fixes | yes, with handler fixes | yes, plus a record anyway |
-| **Counted surface** (measured in this checkout) | one document, no code path | 11 `enqueue_job` call sites, 6 job types, the 141-line seam in `services/delivery.py`, 2 new settings, 0 or 1 migration depending on where `digest_recipients` lives for B (§12), plus the 6 producer areas the suppression rule touches and the per-recipient `digest` record | the same call sites and seam, plus 1 migration revision holding **2 tables** (the job record and `digest_recipients`) and a `job_queue` service (the closest existing pattern, `services/integrations.py`, is 772 lines) | **everything in C's column**, then a vendor account, credentials, a local emulator and a second write path next to PostgreSQL |
+| **Surface** (call sites, types and line counts measured in this checkout; settings and migrations are design) | one document, no code path | 11 `enqueue_job` call sites, 6 job types, the 141-line seam in `services/delivery.py`, 2 new settings, 0 or 1 migration depending on where `digest_recipients` lives for B (§12), plus the 6 producer areas the suppression rule touches and the per-recipient `digest` record | the same call sites and seam, plus 1 migration revision holding **2 tables** (the job record and `digest_recipients`) and a `job_queue` service (the closest existing pattern, `services/integrations.py`, is 772 lines) | **everything in C's column**, then a vendor account, credentials, a local emulator and a second write path next to PostgreSQL |
 | Effort (judgement, **not measured**) | 1–2 days | 6–8 days | 11–15 days | **14–20 days**: C's work plus the vendor path |
 
 Days are judgement, not measurement: no option has been built, so there is no
@@ -284,8 +288,8 @@ record, and it adds the one thing the approved topology does not have.
 **8.1 Mechanism: C, a durable job record, with the Redis push kept as a
 wake-up nudge.** Reasons, in order of weight:
 
-1. **It removes the single-copy failure that makes R5 a P0-adjacent P1.**
-   V6-23 already tells operators that a flush or an eviction silently deletes
+1. **It removes the single-copy failure R5 records as a P1.**
+   V6-23's code scope already names a flush or an eviction as a silent delete of
    queued work; an acknowledgement list reproduces that exposure for both the
    queued and the in-flight set. A PostgreSQL row survives a Redis restart, a
    deploy and an eviction.
@@ -298,9 +302,11 @@ wake-up nudge.** Reasons, in order of weight:
 4. **Backlog, age and dead jobs become queries**, which is what V6-21's
    `queue.age_high` alert currently approximates from a single `last_pop`
    timestamp.
-5. **The pattern is already proven in this repository** by
-   `integration_deliveries` (claim, attempt record, terminal state, purge), so
-   the reviewable risk is integration, not design.
+5. **A close pattern already runs in this repository** — `integration_deliveries`
+   (claim, attempt record, terminal state, purge) — so the claim/settle/purge
+   vocabulary is familiar and reviewed. It is not the same shape: no lease, no
+   reaper, no wake-up nudge and no suppression key. The reviewable risk is
+   therefore smaller than for a new design, not absent.
 
 The cost is one migration (the job record, the `digest_recipients` table and the
 suppression index), the producer and worker edits, and a poll interval. Signing
@@ -330,8 +336,11 @@ The numbers are tied to alerting rather than invented: on both the interactive
 and the periodic profile, a deterministic failure trips
 **`JOB_FAILURE_ALERT_COUNT` (3)** inside **`JOB_FAILURE_WINDOW_SECONDS`
 (60 min)**, so an operator is paged during the first retry cycle rather than
-after the tail; and every profile's total budget is shorter than a day, so the
-periodic producer never competes with a still-retrying job. A reaper returns a
+after the tail; and every profile's total budget is shorter than a day, which keeps the
+24 h producers clear of a retrying job. `topic_clusters` is the exception: its
+producer runs every 30 min, so a tick does land inside a retry cycle, and its
+own run claim (the unique row described in §2) is what stops the overlap from
+doing the work twice. A reaper returns a
 row whose lease is older than **30 min**, and `ingest` renews its lease while it
 crawls, because a full crawl can exceed that. All numbers are proposals; the
 signature fixes them.
@@ -405,8 +414,8 @@ delivery alone does not close them.**
   keep: a crash after the server accepted leaves the row stuck in `sending`, and
   it is **never automatically re-sent**. `digest.send_unknown` counts it and an
   operator replays that one recipient (8.6, audited). The residual is therefore
-  a **detected, operator-resolved non-delivery of at most the recipient in
-  flight**, not a duplicate email — which is what the class in 8.2 requires.
+  a **detected, operator-resolved non-delivery of at most the recipient whose
+  row never left `sending`**, not a duplicate email — which is what the class in 8.2 requires.
   SMTP still has no idempotency key, so the opposite residual (at-least-once
   email with a counted duplicate) stays available only as an explicit class
   downgrade in the signature — not recommended, because a duplicate is
@@ -467,8 +476,8 @@ V6-20 plus a recorded R5 residual — a separate decision, not this one.
 | Effort (judgement, not measured) | 1–2 days | 6–8 days | 11–15 days | 14–20 days |
 | Migration | — | 0 or 1 (`digest_recipients`, per §12) | 1 (next revision, 2 tables) | 1 (the same record; the broker does not replace it) |
 | New dependency | — | — | — | yes (vendor) |
-| New settings | — | visibility timeout, max attempts | poll interval, visibility timeout, max attempts, retention — the suppression rule and the `digest_recipients` stamp add **no** key; they are a partial unique index and a table | C's, plus endpoint, credentials and the dead-letter queue |
-| Closes R5 | no | partly (Redis loss remains) | yes | yes, through the record, not the broker |
+| New settings | — | visibility timeout, max attempts | poll interval, visibility timeout, max attempts (retention reuses `DELIVERY_RETENTION_DAYS`; the suppression rule and the `digest_recipients` stamp add **no** key — they are a partial unique index and a table) | C's, plus endpoint, credentials and the dead-letter queue |
+| Closes R5 | no | partly (Redis loss remains) | yes, with the `digest` residual 8.7 bounds | yes, through the record, not the broker |
 | Closes V6-2G box 1 | no | yes | yes | yes, after the record work |
 
 D is C's range shifted up, not a rival to it: **14–20 against 11–15**, because
