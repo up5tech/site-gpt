@@ -88,13 +88,23 @@
 | New migration | no | no | **yes (M14)** | no |
 | New dependency | no | no | no | **yes (vendor)** |
 | Closes V6-20's Done-when | **no** | yes, with handler fixes | yes, with handler fixes | yes, plus a record anyway |
-| **Counted surface** (measured in this checkout) | one document, no code path | 11 `enqueue_job` call sites, 6 job types, the 141-line seam in `services/delivery.py`, 2 new settings, 0 migrations, plus the 6 producer areas the suppression rule touches and the per-recipient `digest` record | the same call sites and seam, plus 1 migration revision holding **2 tables** (the job record and `digest_recipients`) and a `job_queue` service (the closest existing pattern, `services/integrations.py`, is 772 lines) | a vendor account, credentials and a local emulator, plus the record work |
-| Effort (judgement, **not measured**) | 1–2 days | 6–8 days | 11–15 days | 10–15 days + account |
+| **Counted surface** (measured in this checkout) | one document, no code path | 11 `enqueue_job` call sites, 6 job types, the 141-line seam in `services/delivery.py`, 2 new settings, 0 migrations, plus the 6 producer areas the suppression rule touches and the per-recipient `digest` record | the same call sites and seam, plus 1 migration revision holding **2 tables** (the job record and `digest_recipients`) and a `job_queue` service (the closest existing pattern, `services/integrations.py`, is 772 lines) | **everything in C's column**, then a vendor account, credentials, a local emulator and a second write path next to PostgreSQL |
+| Effort (judgement, **not measured**) | 1–2 days | 6–8 days | 11–15 days | **14–20 days**: C's work plus the vendor path |
 
 Days are judgement, not measurement: no option has been built, so there is no
 velocity, review time or test-run time to derive them from. They exist to rank
 the options, not to schedule them; the counted row is what this brief actually
 measured.
+
+**D is not the cheap column.** D closes V6-20 "plus a record anyway" — the row
+above says so — which makes its surface a superset of C's: the same 11 call
+sites, the same six producer suppression sites, the same `digest_recipients`
+record and the same migration, and only then a broker on top. Its effort is
+therefore C's range shifted up by 3–5 days for the account, the credentials, the
+emulator and the second write path (**14–20**, against C's 11–15), not a lower
+number that competes with C. The 10–15 in earlier drafts priced the vendor
+integration by itself and let the record be assumed; §7's verdict is that the
+broker does not remove that record, so that figure undercounted D.
 
 **Amended scope, and who pays for it.** The stress test added two pieces to the
 recommendation and **both are mechanism-independent, so they raise B and C
@@ -104,7 +114,8 @@ C — and the per-recipient `digest` record with its pre-send stamp (8.7), which
 changes `services/digest.py` whichever mechanism delivers the job. They are
 counted in both columns above and in §10. They do not change which option is
 cheaper; they do mean the 4–6 and 8–12 figures in earlier drafts no longer
-describe what is being signed.
+describe what is being signed. D pays for both as well, on top of its vendor
+path.
 
 **Job volume the options are sized for.** The loop intervals fix a per-company
 rate; no recorded decision fixes the cohort size, so no absolute total exists.
@@ -226,9 +237,11 @@ authority and the audit row it writes.
 **What it is.** Replace the Redis list with a queue service that provides
 visibility timeouts and dead-lettering natively.
 
-**Cost.** Judgement, not measured: 10–15 days plus an account, credentials,
-per-message cost, egress, a local emulator for tests, and a second write path
-next to PostgreSQL that cannot share the producer's transaction.
+**Cost.** Judgement, not measured: **14–20 days** — C's record work (§6: 11–15)
+plus 3–5 for the account, credentials, a local emulator for tests and a second
+write path next to PostgreSQL that cannot share the producer's transaction —
+plus per-message cost and egress. It is not a cheaper C: the broker replaces the
+transport, not the record, so the floor is C's floor plus the vendor.
 
 **Risk.** Vendor lock-in and a credential to scope and rotate (D2 chose managed
 containers, Postgres and Redis); the broker's record cannot answer "what is the
@@ -372,15 +385,20 @@ V6-20 plus a recorded R5 residual — a separate decision, not this one.
 
 ## 10. Cost summary
 
-| | A | B | C (recommended) |
-|---|---|---|---|
-| Counted surface | one document | 11 call sites, 6 types, seam + 2 settings + 6 producer areas + `digest` record | + 1 revision, 2 tables, `job_queue`, 6 producer areas, `digest` record |
-| Effort (judgement, not measured) | 1–2 days | 6–8 days | 11–15 days |
-| Migration | — | — | 1 (next revision) |
-| New dependency | — | — | — |
-| New settings | — | visibility timeout, max attempts | poll interval, visibility timeout, max attempts, retention |
-| Closes R5 | no | partly (Redis loss remains) | yes |
-| Closes V6-2G box 1 | no | yes | yes |
+| | A | B | C (recommended) | D (not recommended) |
+|---|---|---|---|---|
+| Counted surface | one document | 11 call sites, 6 types, seam + 2 settings + 6 producer areas + `digest` record | + 1 revision, 2 tables, `job_queue`, 6 producer areas, `digest` record | C's surface, then a vendor account, credentials, emulator and second write path |
+| Effort (judgement, not measured) | 1–2 days | 6–8 days | 11–15 days | 14–20 days |
+| Migration | — | — | 1 (next revision) | 1 (the same record; the broker does not replace it) |
+| New dependency | — | — | — | yes (vendor) |
+| New settings | — | visibility timeout, max attempts | poll interval, visibility timeout, max attempts, retention | C's, plus endpoint, credentials and the dead-letter queue |
+| Closes R5 | no | partly (Redis loss remains) | yes | yes, through the record, not the broker |
+| Closes V6-2G box 1 | no | yes | yes | yes, after the record work |
+
+D is C's range shifted up, not a rival to it: **14–20 against 11–15**, because
+the vendor path is added to the record work rather than substituted for it. It
+is in this table only so the comparison cannot be read as "D is cheaper"; §7
+gives the verdict against it.
 
 ## 11. What this brief does not do
 
