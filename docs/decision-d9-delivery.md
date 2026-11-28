@@ -88,18 +88,36 @@
 | New migration | no | no | **yes (M14)** | no |
 | New dependency | no | no | no | **yes (vendor)** |
 | Closes V6-20's Done-when | **no** | yes, with handler fixes | yes, with handler fixes | yes, plus a record anyway |
-| Engineering estimate | 1–2 days (docs only) | 4–6 days | 8–12 days | 10–15 days + account |
+| **Counted surface** (measured in this checkout) | one document, no code path | 11 `enqueue_job` call sites, 6 job types, the 141-line seam in `services/delivery.py`, 2 new settings, 0 migrations | the same call sites and seam, plus 1 migration and a `job_queue` service (the closest existing pattern, `services/integrations.py`, is 772 lines) | a vendor account, credentials and a local emulator, plus the record work |
+| Effort (judgement, **not measured**) | 1–2 days | 4–6 days | 8–12 days | 10–15 days + account |
 
-Estimates are engineering judgement from the surface each option touches, not
-measurements.
+Days are judgement, not measurement: no option has been built, so there is no
+velocity, review time or test-run time to derive them from. They exist to rank
+the options, not to schedule them; the counted row is what this brief actually
+measured.
+
+**Job volume the options are sized for.** The loop intervals fix a per-company
+rate; no recorded decision fixes the cohort size, so no absolute total exists.
+With every flag on and `w` websites per company, the producers queue about
+**2 + 2w + 2/7 jobs per company per day**: `insights` one per
+`INSIGHT_INTERVAL_SECONDS` (86 400 s), `retention` one per
+`RETENTION_CHECK_SECONDS` (86 400 s), `sitemap_scan` one per website per
+`SITEMAP_SCAN_INTERVAL_SECONDS` (86 400 s), the `CRAWL_REFRESH_HOURS` (24 h)
+re-crawl one per website, and `digest` and `topic_clusters` one each per week.
+One website per company is therefore ≈4.3 jobs a day, a 10-company cohort ≈43
+and a 100-company cohort ≈430 — arithmetic on that formula, not measurements:
+D1 recorded a cohort without a size and D3 leaves capacity to the operator.
+On-demand `ingest` is additional and bounded by no interval above. The rehearsal
+(`worker-delivery.md`) pushed six jobs once per type, so it measures behaviour
+per job, not volume.
 
 ## 4. Option A — no queue-level guarantee (today)
 
 **What it is.** Keep `LPUSH`/`BRPOP`, rely on each handler's claim and scheduler
 tick, and document the waits.
 
-**Cost.** No migration, no new code path; ~1–2 days to finish the per-type
-procedure and record the measured waits.
+**Cost.** No migration, no new code path; judgement, not measured: ~1–2 days to
+finish the per-type procedure and record the measured waits.
 
 **Risk.** R5 stays exactly as it is: a lost message loses that job, recovery is
 a day for `retention`/`sitemap_scan`/`insights`, and two types have no claim to
@@ -126,7 +144,9 @@ lands in `queue:dead`.
 `services/delivery.py` against the three-call seam (~150–200 lines), a consumer
 change plus a reaper loop in `worker.py` (~100), two settings (visibility
 timeout, max attempts), 15–20 suite cases, and V6-2G items for redelivery and
-the dead list. ~4–6 engineering days.
+the dead list. Effort is judgement, not measured: **4–6 days**, against the
+counted surface of 11 `enqueue_job` call sites, 6 job types, the existing
+141-line seam and two new settings, with no migration.
 
 **Risk.** The failure R5 names is unchanged at the storage layer: the queued and
 in-flight entries sit on the **same single-copy Redis**, so a flush, an eviction
@@ -163,7 +183,10 @@ a reaper returns rows whose lease expired; settled rows are purged on the
 producer changes in six places, the consumer loop's `BRPOP` replaced by a claim
 plus wait, a reaper/settle rule, two counters on `GET /api/ops/status`, a replay
 CLI, 25–35 suite cases, and gate items for redelivery, dead-letter and replay.
-~8–12 engineering days. No new dependency.
+Effort is judgement, not measured: **8–12 days**; the counted surface is the
+same 11 call sites, 6 job types and seam plus one migration, and the case count
+and line counts in this list are judgement scaled from the 772-line existing
+pattern. No new dependency.
 
 **Risk.** More moving parts than B: a schema to migrate, a poll interval, row
 growth and a purge rule (adjacent D7), and a lease that can expire under a
@@ -186,9 +209,9 @@ authority and the audit row it writes.
 **What it is.** Replace the Redis list with a queue service that provides
 visibility timeouts and dead-lettering natively.
 
-**Cost.** 10–15 engineering days plus an account, credentials, per-message
-cost, egress, a local emulator for tests, and a second write path next to
-PostgreSQL that cannot share the producer's transaction.
+**Cost.** Judgement, not measured: 10–15 days plus an account, credentials,
+per-message cost, egress, a local emulator for tests, and a second write path
+next to PostgreSQL that cannot share the producer's transaction.
 
 **Risk.** Vendor lock-in and a credential to scope and rotate (D2 chose managed
 containers, Postgres and Redis); the broker's record cannot answer "what is the
@@ -271,7 +294,7 @@ prefers automatic recovery over operator attention, the alternative is to carry
 the budget instead: a suppressed tick may push `not_before` forward on the dead
 row — a slow retry — but may not reset `attempt` to 0. Recommended: the dead row
 suppresses, and the operator escalates. Cost: a partial unique index, the six
-producer call sites, the counter and 4–6 tests, already inside C's estimate.
+producer call sites, the counter and 4–6 tests, already inside C's judgement-based effort range.
 
 **8.5 Visibility.** The `dead` row is the dead letter: readable by an operator
 CLI, counted on `GET /api/ops/status` (queued, processing, dead, oldest queued
@@ -334,7 +357,8 @@ V6-20 plus a recorded R5 residual — a separate decision, not this one.
 
 | | A | B | C (recommended) |
 |---|---|---|---|
-| Days (estimate) | 1–2 | 4–6 | 8–12 |
+| Counted surface | one document | 11 call sites, 6 types, seam + 2 settings | + 1 migration, `job_queue`, 6 producer areas |
+| Effort (judgement, not measured) | 1–2 days | 4–6 days | 8–12 days |
 | Migration | — | — | 1 (next revision) |
 | New dependency | — | — | — |
 | New settings | — | visibility timeout, max attempts | poll interval, visibility timeout, max attempts, retention |
