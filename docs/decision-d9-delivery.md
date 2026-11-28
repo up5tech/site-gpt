@@ -9,6 +9,7 @@
 | Neutral record | The full option menu, per-type consequences and the scenario matrix are [`preflight-v6.md` §Appendix — D9](preflight-v6.md#appendix--d9-decision-brief). This brief adds the one thing that appendix deliberately withholds: a named combination and the reasons for it |
 | Evidence base | [`worker-delivery.md`](worker-delivery.md) (per-type matrix, findings 2–7, the 2026-11-26 crash/duplicate/unknown rehearsal), `services/delivery.py` (the seam, `NullDelivery`), `services/redis.py`, `worker.py`, `services/integrations.py`, `scripts/gate_v6_2g/` |
 | Date written | 2026-11-27 |
+| Revised | 2026-11-28 — stress-test amendments: per-class retry, producer suppression, `digest` stamped before the send |
 
 ## 1. What the signature has to answer
 
@@ -232,41 +233,81 @@ latency rather than delivery.
 | Class | Types | Rule |
 |---|---|---|
 | **must not lose** (repeat-safe by their own key) | `ingest`, `retention`, `sitemap_scan`, `insights`, `topic_clusters` | At-least-once. A repeat is allowed and safe because each type's key makes it a no-op or a bounded refresh; a loss is not allowed beyond the attempt limit. |
-| **must not duplicate a customer-visible send** | `digest` | At-least-once delivery, **at-most-once send per period**: the period is never re-sent by a redelivery; see 8.6 for the residual window. |
+| **must not duplicate a customer-visible send** | `digest` | At-least-once delivery, **at-most-once send per period per recipient**: a redelivery never re-sends a period, and a `sending` row that never confirmed is a detected, operator-resolved loss (8.7) rather than a duplicate. |
 | **job types added later** | — | Default to *must not lose* and to the strictest class until the owner records otherwise. |
 
-**8.3 Retry and terminal state.** Bounded attempts: **5** (the first plus four
-retries), backoff **1 min, 5 min, 30 min, 2 h, 6 h**, then a terminal **`dead`**
-state that only a replay clears. A reaper returns a row whose lease is older
-than **30 min**, and `ingest` renews its lease while it crawls, because a full
-crawl can exceed that. All four numbers are proposals; the signature fixes them.
+**8.3 Retry and terminal state — three profiles, not one table.** Bounded
+attempts and backoff differ by what the job is for, then a terminal **`dead`**
+state that only a replay clears:
 
-**8.4 Visibility.** The `dead` row is the dead letter: readable by an operator
+| Profile | Types | Attempts and delays | Reason |
+|---|---|---|---|
+| **Interactive** | `ingest` | 5 attempts (first + 4): **1 m, 5 m, 30 m, 2 h, 6 h** | someone is waiting on the crawl; the first retries are fast enough to ride out a provider blip, and the budget ends in under 9 h |
+| **Periodic** | `retention`, `sitemap_scan`, `topic_clusters`, `insights` | 3 attempts: **1 m, 15 m, 2 h** | the type's own producer cadence (24 h, 30 min for `sitemap_scan`) is a better retry clock than the queue; further retries mostly spend provider credits on a cause no delay fixes |
+| **Send** | `digest` | **1 attempt per job**; only the recipients still unsatisfied are retried at the next `digest_hour` (8.7) | a retry at +2 h or +6 h can cross the send hour and deliver a stale weekly report at an odd time |
+
+The numbers are tied to alerting rather than invented: on both the interactive
+and the periodic profile, a deterministic failure trips
+**`JOB_FAILURE_ALERT_COUNT` (3)** inside **`JOB_FAILURE_WINDOW_SECONDS`
+(60 min)**, so an operator is paged during the first retry cycle rather than
+after the tail; and every profile's total budget is shorter than a day, so the
+periodic producer never competes with a still-retrying job. A reaper returns a
+row whose lease is older than **30 min**, and `ingest` renews its lease while it
+crawls, because a full crawl can exceed that. All numbers are proposals; the
+signature fixes them.
+
+**8.4 Producer suppression: the attempt budget survives the producer.** Bounded
+attempts bound a *job*, not the *work*. `enqueue_due_insights`,
+`enqueue_due_digests` and the retention loop create a fresh job with
+`attempt: 0` on their next tick (`worker.py:1049–1054`), so without a rule a
+poison job still repeats every interval — exactly the behaviour scenario 6 is
+meant to rule out. The rule: **a `dead` row blocks a new job for the same key**
+(`type` plus its natural key, for example `company_id` and `period_start`). The
+producer's insert conflicts with the dead row, writes nothing, and increments a
+`queue.suppressed` counter (on `GET /api/ops/status`, and one log line per key at
+most once per tick). Only a replay clears the row (8.6), so a deterministic
+failure costs one dead row and one provider call, not one per tick. If the owner
+prefers automatic recovery over operator attention, the alternative is to carry
+the budget instead: a suppressed tick may push `not_before` forward on the dead
+row — a slow retry — but may not reset `attempt` to 0. Recommended: the dead row
+suppresses, and the operator escalates. Cost: a partial unique index, the six
+producer call sites, the counter and 4–6 tests, already inside C's estimate.
+
+**8.5 Visibility.** The `dead` row is the dead letter: readable by an operator
 CLI, counted on `GET /api/ops/status` (queued, processing, dead, oldest queued
 age), never exposed through a tenant route. Retention follows the existing
 delivery rule (`DELIVERY_RETENTION_DAYS`, 30 days) through the existing batched
 purge; the payload column carries ids and parameters only.
 
-**8.5 Replay authority.** Operator-only, out of band — no HTTP route.
+**8.6 Replay authority.** Operator-only, out of band — no HTTP route.
 `scripts/jobs.py replay --job-id …` (and `dead --limit`) from a host holding the
 database URL; it resets the row to `queued` with `attempt` preserved and writes
 one `platform_audit_logs` row (actor label, job id, type, previous state) through
 the existing writer. The producer tick stays the fallback for a lost wake-up.
 
-**8.6 Two handler fixes V6-20 must carry, because delivery alone does not close
+**8.7 Two handler fixes V6-20 must carry, because delivery alone does not close
 them.**
 
 - **`ingest` must consult `claim_ingest`.** Otherwise a re-delivery re-crawls
   and re-embeds while another worker may be crawling the same site, and scenario
   4 cannot pass for that type.
-- **`digest` sends per recipient.** The partial-send gap (some accepted, the
-  period stamped, the failures never retried) is closed by recording each
-  recipient's outcome and retrying only the missing ones. The remaining
-  duplicate window — the mail server accepted, the process died before the
-  record committed — cannot be closed: SMTP has no idempotency key, and adding
-  a provider API is out of scope for this launch. **Recommendation: accept that
-  window, count it, and alert on it** (`digest.duplicate_window`), rather than
-  build a second delivery channel to avoid one email per company per period.
+- **`digest` sends per recipient, and the row is stamped before the send.**
+  Two changes, not one. Each recipient of a period gets a row in a new
+  `digest_recipients` table (`company_id`, `period_start`, recipient, `state`,
+  `attempt`, `last_error`); the row moves `pending → sending` **before** the
+  SMTP call and `sending → sent` once the server accepts it. That closes the
+  partial-send gap (only the unsatisfied recipients are retried at the next
+  `digest_hour`) and it fixes the duplicate window by choosing which residual to
+  keep: a crash after the server accepted leaves the row stuck in `sending`, and
+  it is **never automatically re-sent**. `digest.send_unknown` counts it and an
+  operator replays that one recipient (8.6, audited). The residual is therefore
+  a **detected, operator-resolved non-delivery of at most the recipient in
+  flight**, not a duplicate email — which is what the class in 8.2 requires.
+  SMTP still has no idempotency key, so the opposite residual (at-least-once
+  email with a counted duplicate) stays available only as an explicit class
+  downgrade in the signature — not recommended, because a duplicate is
+  customer-visible and unfixable after the fact, while a detected loss is both
+  visible and correctable.
 
 ## 9. Evidence V6-20 and gate V6-2G box 1 need, per option
 
@@ -274,10 +315,10 @@ them.**
 |---|---|---|---|
 | 1 crash before the handler | ✗ nothing re-delivers | ✓ reaper returns the entry | ✓ lease expiry re-queues the row |
 | 2 crash during the handler | ✗ | ✓ retry, partial state as documented | ✓ |
-| 3 crash after an external send, before ack | ✗ | ✓ counted, not prevented | ✓ counted; `digest` per 8.6 |
-| 4 crash after the commit, before ack | ✗ | ✓ no-op by the type's key (needs 8.6 for `ingest`) | ✓ |
+| 3 crash after an external send, before ack | ✗ | ✓ counted, not prevented | ✓ prevented per recipient: a `sending` row is never re-sent, the loss is detected (8.7) |
+| 4 crash after the commit, before ack | ✗ | ✓ no-op by the type's key (needs 8.7 for `ingest`) | ✓ |
 | 5 transient provider/DB failure | ✗ next tick only | ✓ approved backoff | ✓ |
-| 6 poison job | ✗ repeats every tick | ✓ dead list | ✓ `dead` row |
+| 6 poison job | ✗ repeats every tick | ✓ dead list (with producer suppression) | ✓ `dead` row + producer suppression (8.4) |
 | 7 duplicate delivery | ✗ measured repeats | ✓ idempotency key | ✓ |
 | Operator procedure (replay + audit) | producer tick only, unaudited | Redis dead list + CLI | row + CLI + audit |
 | Gate V6-2G box 1 | **not signable** | signable after the matrix | signable after the matrix |
@@ -305,8 +346,9 @@ V6-20 plus a recorded R5 residual — a separate decision, not this one.
 - It implements nothing and changes no flag, queue, handler or schema.
 - It does not tick V6-20 or gate V6-2G box 1: those need the matrix run after
   the signature, on disposable infrastructure.
-- It does not decide `digest`'s duplicate window for the owner — 8.6 recommends
-  accepting and counting it; the signature is where that is accepted.
+- It does not choose `digest`'s class for the owner beyond the recommendation:
+  8.7 keeps the strict class by stamping before the send and accepting a
+  detected loss; signing the duplicate instead would be an explicit downgrade.
 - It does not authorise a production change: V6-20 is a Wave 2 task and this
   launch gate (V6-5G) is unrelated to it.
 
@@ -319,10 +361,11 @@ To sign, record on this row (and copy into `plans/PLAN_V6.md` §4 and
 |---|---|
 | Mechanism | ☐ C durable job record (recommended) ☐ B Redis ack list ☐ A status quo + reword V6-20 |
 | Duplicate/loss rule | ☐ three classes as in 8.2 (recommended) ☐ one rule ☐ six answers |
-| Retry | ☐ 5 attempts, 1 m / 5 m / 30 m / 2 h / 6 h, `dead` (recommended) ☐ other: |
+| Retry | ☐ per-class (recommended): `ingest` 5× (1 m / 5 m / 30 m / 2 h / 6 h), periodic 3× (1 m / 15 m / 2 h), `digest` 1 per period, then `dead` ☐ other: |
+| Producer suppression | ☐ a `dead` row blocks a new job for the same key until replay (recommended) ☐ carry the attempt budget across re-enqueues ☐ none (repeats every tick) |
 | Visibility | ☐ `dead` rows + ops counters + 30-day purge (recommended) ☐ other: |
 | Replay | ☐ operator CLI + `platform_audit_logs` (recommended) ☐ other: |
-| `digest` duplicate | ☐ accept, count and alert (recommended) ☐ guard: |
+| `digest` duplicate | ☐ stamp `sending` before the send + per-recipient record (recommended: at-most-once per recipient, detected loss) ☐ accept and count duplicates (class downgrade) ☐ guard: |
 | Migration in V6-20 scope | ☐ yes (required by C) ☐ not applicable |
 | Approver / role | |
 | Date | |
