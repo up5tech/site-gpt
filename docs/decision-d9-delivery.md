@@ -213,9 +213,10 @@ statement already required by V6-23.
 
 **What it is.** Two tables, not one. The job record (type, payload, attempts,
 max attempts, `not_before`, state, last error, lease owner/time, timestamps) is
-written by the producer — inside the producer's transaction where one exists
-(`claim_ingest`, the `digest_log` claim, the privacy purge) — and claimed by the
-worker with `SELECT … FOR UPDATE SKIP LOCKED`; a partial unique index over the
+written by the producer, in its own short transaction — **not** in the
+producer's claim transaction, because the helpers that hold those claims commit
+internally (§6's commit note) — and claimed by the worker with
+`SELECT … FOR UPDATE SKIP LOCKED`; a partial unique index over the
 job's natural key (`type` plus `company_id` and, for `digest`,
 `period_start`) over the **live** states (`queued`, `processing`, `dead`) is what
 makes a stopped job — or a producer tick that lands inside a retry cycle, or
@@ -234,6 +235,37 @@ interval, not the job. Completion and failure are state transitions on the row;
 a reaper returns rows whose lease expired; settled rows are purged on the
 `DELIVERY_RETENTION_DAYS` pattern.
 
+**Where the row is written, and the window that leaves.** The row cannot share
+the claim's transaction as the helpers stand today, and the earlier draft named
+the wrong producers. `ingest_claim.claim_ingest` runs `db.commit()` before it
+returns, and `recover_stuck_ingests` commits its `processing → failed` flips
+before `requeue_stuck_ingests` enqueues; the other two claims the draft cited are
+not producer-side at all — `claim_period` runs inside `handle_digest`
+(`services/digest.py`) and `claim_run` inside `handle_topic_clusters` — so the
+`digest` and `topic_clusters` producers enqueue **before** any claim exists, and
+`retention`, `insights`, `sitemap_scan` and the two scheduler ticks hold no work
+claim. V6-20 therefore does one of two things; the brief recommends the second.
+
+- **Change the helpers.** Add `commit=False` (or a transaction-scoped variant) to
+  `claim_ingest` and `recover_stuck_ingests`, and let the four ingest call sites
+  write the row in the same transaction: `api/routes.py:104`, `api/v1.py:96`,
+  `worker.py:1003` (sitemap diff) and `worker.py:1188` (crawl refresh). Touches
+  `tests/test_ingest_dedup.py`, the recovery cases in `tests/test_worker.py` and
+  the sitemap tests; the crawl-refresh path's manual compensation
+  (`processing → failed` when the enqueue fails, `worker.py:1196–1198`) becomes
+  unnecessary, because a failed insert rolls the claim back.
+- **Accept the window (recommended).** Claim commits, row commits, nudge after.
+  A crash between the first two leaves `processing` with no row for the key, and
+  that is the one case 8.4's insert path exists for: the claim's own takeover
+  (`STUCK_INGEST_AFTER` 6 h, `DIGEST_CHECK_SECONDS`, 30 min for topics) flips it
+  to `failed` and inserts the row, and the handler's `claim_ingest` then wins
+  because the status is no longer `processing` (8.7). The window itself is two
+  commits milliseconds apart; its bound is the takeover clock — stale content
+  for at most 6 h on `ingest`, and nothing on `digest` or `topic_clusters`, whose
+  claims are created only after their jobs exist. The compensating flip stays
+  (`worker.py:1196–1198`): if the row insert fails, the producer sets the claim
+  back to `failed` rather than leaving it `processing`.
+
 **Cost.** A migration (next revision; M13 is the head), a models entry, a
 `services/job_queue.py` (~300 lines), `SqlDelivery` behind the existing seam,
 producer changes in six places, the consumer loop's `BRPOP` replaced by a claim
@@ -251,9 +283,13 @@ earlier drafts.
 **Risk.** More moving parts than B: a schema to migrate, a poll interval, row
 growth and a purge rule (adjacent D7), and a lease that can expire under a
 genuinely slow handler and duplicate it — the visibility timeout must exceed the
-p95 handler time, or long handlers must renew their lease. Producer-side writes
-must share the transaction that already claims the work, or the record can
-disagree with the claim. The payload column holds ids and parameters, never a
+p95 handler time, or long handlers must renew their lease. Producer-side writes cannot
+share the transaction that claims the work until those helpers stop committing
+internally (see the commit note above), so the two can disagree for one commit
+window. The dangerous direction — a claim with no record — is the one the
+claim's own takeover recovers and its bound is stated there; the safe direction
+— a record whose claim then fails — costs a job that re-checks the claim and
+exits (8.7). The payload column holds ids and parameters, never a
 transcript or a secret, and the dead rows need the same redaction and expiry
 discipline as `integration_deliveries`. That includes `digest_recipients`, the
 only new table holding a person: its address column is cleared in the
@@ -303,8 +339,9 @@ wake-up nudge.** Reasons, in order of weight:
    the two types where a list entry cannot help, because the entry dies with the
    outcome it was meant to record.
 3. **It closes V6-20's `sitemap_scan` window.** The row can be written in the
-   same transaction as the page diff, so "pages changed, no ingest queued"
-   stops being possible; that is finding 5, not a delivery detail.
+   same transaction as the page diff — the one transaction this producer does
+   own, unlike the claim — so "pages changed, no ingest queued" stops being
+   possible; that is finding 5, not a delivery detail.
 4. **Backlog, age and dead jobs become queries**, which is what V6-21's
    `queue.age_high` alert currently approximates from a single `last_pop`
    timestamp.
@@ -408,9 +445,9 @@ today all three re-enqueue:
 - **`requeue_stuck_ingests`** (§2) keeps its work-level half — `ingest_status`
   `processing → failed` past `STUCK_INGEST_AFTER` (6 h) — and loses
   `enqueue_job`: when a row exists for that website it re-arms it
-  (`state='queued'`, `not_before=now`, `attempt` preserved) in the same
-  transaction as the claim flip, and inserts only when the key has no row at
-  all — after this section, only a claim left by a pre-D9 process. A `dead` row
+  (`state='queued'`, `not_before=now`, `attempt` preserved) immediately after the
+  claim flip commits — the two-commit window §6 names — and inserts only when the
+  key has no row at all — after this section, only a claim left by a pre-D9 process. A `dead` row
   is **not** re-armed here; it belongs to 8.6.
 - **The digest re-arm** in `enqueue_due_digests` (`period_settled` false because
   the claim is older than `DIGEST_CHECK_SECONDS`) is the same transition with
@@ -602,7 +639,7 @@ To sign, record on this row (and copy into `plans/PLAN_V6.md` §4 and
 
 | Field | Value |
 |---|---|
-| Mechanism | ☐ C durable job record (recommended) ☐ B Redis ack list ☐ A status quo + reword V6-20 |
+| Mechanism | ☐ C durable job record (recommended — accepts §6's one-commit claim/record window, bounded by the claim's own takeover) ☐ B Redis ack list ☐ A status quo + reword V6-20 |
 | Duplicate/loss rule | ☐ three classes as in 8.2 (recommended) ☐ one rule ☐ six answers |
 | Retry | ☐ per-class (recommended): `ingest` 6 attempts (first + 1 m / 5 m / 30 m / 2 h / 6 h, 8 h 36 m), periodic 4 attempts (first + 1 m / 15 m / 2 h, 2 h 16 m) against a 24 h producer tick, `digest` 1 per period, then `dead` ☐ other: |
 | `digest` retry vs suppression (8.3 × 8.4, open point at the end of 8.7) | ☐ A (recommended): a `dead` period waits for replay, and a recipient-level failure is recorded on its row without ending the job ☐ B: `digest` is exempt from suppression for its own period, so the next `digest_hour` re-enqueues with `not_before` advanced ☐ other: |
